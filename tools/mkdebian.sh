@@ -4,7 +4,7 @@
 set -e
 cd "$(dirname "$0")/.."
 for c in debootstrap cpio gzip sudo; do command -v "$c" >/dev/null || { echo "Falta '$c'. Instala con:  sudo apt update && sudo apt install -y debootstrap cpio gzip"; exit 1; }; done
-RAIZ=build/debroot
+RAIZ=${KNG_DEBROOT:-/var/tmp/kng-debroot}   # disco de Linux (en /mnt/c, NTFS, debootstrap falla)
 sudo rm -rf "$RAIZ"; mkdir -p build
 echo "[1/4] Descargando Debian base (unos minutos, necesita internet)..."
 sudo debootstrap --variant=minbase \
