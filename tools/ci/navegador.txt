@@ -8,7 +8,7 @@
 @esperar 2
 20|ejecutar /bin/sh -c "grep -c pni /proc/cpuinfo; ls /usr/lib/chromium | head -5"
 120|ejecutar /usr/bin/chromium --version
-20|rastro 1
+20|rastro 2
 300|ejecutar /usr/lib/chromium/chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/cr --headless --enable-logging=stderr --v=0 --dump-dom http://10.0.2.2:18090/hola.txt
 20|rastro 0
 20|procesos
