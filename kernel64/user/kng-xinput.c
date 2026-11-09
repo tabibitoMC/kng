@@ -29,8 +29,8 @@ static int xconnect(int disp){
     free(buf); return s;
 }
 static int xtest_opcode(void){
-    uint8_t req[20]; memset(req,0,sizeof req); req[0]=98; req[2]=2+((5+3)/4); req[4]=5; memcpy(req+8,"XTEST",5);
-    if(wr_all(xs,req,12)) return -1;
+    uint8_t req[16]; memset(req,0,sizeof req); req[0]=98; req[2]=4; req[4]=5; memcpy(req+8,"XTEST",5);   /* QueryExtension: 8 bytes de cabecera + nombre rellenado a 8 = 16 bytes (4 palabras) */
+    if(wr_all(xs,req,16)) return -1;
     uint8_t r[32]; if(rd_all(xs,r,32)||r[0]!=1||!r[8]) return -1;
     return r[9];
 }
