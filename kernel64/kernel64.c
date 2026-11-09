@@ -269,25 +269,35 @@ static int try_program(char *l){
     launch(path,n,a,bg); return 1;
 }
 /* pantalla: servidor X real (Xvfb) + puente de teclado/raton, mostrado en una ventana del escritorio */
-static void cmd_pantalla(void){
+static int x_up, x_gw=1024, x_gh=700;
+static void x_start(void){
     char xvfb[160], xin[160];
     if(!find_program("Xvfb",xvfb,sizeof xvfb)){ kprintf("pantalla: falta el servidor X. Instalalo con:  instalar xvfb\n"); return; }
     FsNode *v=fs_find(fs_root(),"var"); FsNode *lib=v?fs_find(v,"lib"):0; if(v&&!lib){ lib=fs_mkdir(v,"lib"); if(lib) lib->sys=1; }
     FsNode *xd=lib?fs_find(lib,"xvfb"):0; if(lib&&!xd){ xd=fs_mkdir(lib,"xvfb"); if(xd) xd->sys=1; }
     int gw=1280, gh=800; if(gui_mode&&gui_screen_size(&gw,&gh)==0){ gw-=80; gh-=170; if(gw>1600) gw=1600; if(gh>1000) gh=1000; }
-    gw&=~7; gh&=~7; if(gw<640) gw=640; if(gh<480) gh=480;
+    gw&=~7; gh&=~7; if(gw<640) gw=640; if(gh<480) gh=480; x_gw=gw; x_gh=gh;
     char geo[40]; { int n=0; int v1=gw; char t[12]; int k=0; while(v1){ t[k++]=(char)('0'+v1%10); v1/=10; } while(k) geo[n++]=t[--k]; geo[n++]='x'; v1=gh; k=0; while(v1){ t[k++]=(char)('0'+v1%10); v1/=10; } while(k) geo[n++]=t[--k]; const char *e="x24"; while(*e) geo[n++]=*e++; geo[n]=0; }
     char *a[16]; int n=0; a[n++]="Xvfb"; a[n++]=":0"; a[n++]="-screen"; a[n++]="0"; a[n++]=geo; a[n++]="-fbdir"; a[n++]="/var/lib/xvfb"; a[n++]="-ac"; a[n++]="-nolisten"; a[n++]="tcp";
     kprintf("pantalla: iniciando el servidor X (%s)...\n",geo);
     proc_exec(xvfb,n,a,1);
     if(find_program("kng-xinput",xin,sizeof xin)){ char *b[2]={"kng-xinput",0}; proc_exec(xin,1,b,1); }
     else kprintf("pantalla: falta kng-xinput (teclado y raton no llegaran a los programas)\n");
-    if(gui_mode) gui_open_xscreen(gw,gh);
+    x_up=1;
+}
+static void cmd_pantalla(void){ if(!x_up) x_start(); if(x_up&&gui_mode) gui_open_xscreen(x_gw,x_gh); }
+/* abrir <programa> [argumentos]: arranca la pantalla X si hace falta y abre el programa dentro de ella */
+static void cmd_abrir(char *args){
+    char *a[40]; int n=tokenize(args,a,38); if(!n){ kprintf("uso: abrir <programa> [argumentos]   (ej: abrir brave)\n"); return; }
+    char w[160]; if(!find_program("abrir-x",w,sizeof w)){ kprintf("abrir: falta /usr/local/bin/abrir-x (sistema base incompleto)\n"); return; }
+    cmd_pantalla(); if(!x_up) return;
+    char *b[42]; b[0]="abrir-x"; for(int i=0;i<n;i++) b[i+1]=a[i]; b[n+1]=0;
+    proc_exec(w,n+1,b,1);
 }
 static void run(char *l){
     while(*l==' ') l++;
     if(!*l) return;
-    if(streq(l,"help")) kprintf("help info mem heap uptime clear echo <txt> reboot halt | ejecutar <ruta> [&] programas procesos matar <pid> | red ping <host> dns <host> wget <url>\n");
+    if(streq(l,"help")) kprintf("help info mem heap uptime clear echo <txt> reboot halt | ejecutar <ruta> [&] programas procesos matar <pid> rastro [0-2] | red ping <host> dns <host> wget <url> | pantalla abrir <programa> actualizar instalar quitar buscar (ayuda-programas)\n");
     else if(streq(l,"info")) kprintf("kng-kernel %s (%s, Multiboot)\nParte de Konigreich OS. Modo largo, IDT, heap, interfaz grafica, red. Sin procesos todavia.\n",KNG_VERSION,KNG_ARCH);
     else if(streq(l,"mem")) kprintf("RAM usable: %lu KB | heap: %lu KB\n",ram_kb,heap_total/1024);
     else if(streq(l,"heap")){ u64 u,f,m; heap_stats(&u,&f,&m); kprintf("heap: total %lu KB | usado %lu B | libre %lu B | bloque libre mayor %lu B\n",heap_total/1024,u,f,m); }
@@ -298,6 +308,10 @@ static void run(char *l){
         if(n>1&&streq(a[n-1],"&")){ bg=1; n--; }
         if(n){ char path[160]; if(!find_program(a[0],path,sizeof path)) k_strcpy(path,a[0],sizeof path); launch(path,n,a,bg); } else kprintf("uso: ejecutar <ruta> [argumentos] [&]\n"); }
     else if(startswith(l,"rastro")){ extern int krastro; krastro=l[6]==' '&&l[7]>='0'&&l[7]<='2'?l[7]-'0':1; kprintf("rastro de llamadas al sistema: nivel %d (0 apagado, 1 solo errores, 2 todo)\n",krastro); }
+    else if(startswith(l,"xevento ")){                      /* prueba: manda un evento de entrada (tipo codigo valor, decimales) al servidor X */
+        int v[3]={0,0,0},k=0,neg=0; for(const char *q=l+8;*q&&k<3;q++){ if(*q==' '){ k++; neg=0; } else if(*q=='-') neg=1; else if(*q>='0'&&*q<='9') v[k]=neg?v[k]*10-(*q-'0'):v[k]*10+(*q-'0'); }
+        kinput_event(v[0],v[1],v[2]); kprintf("evento enviado %d %d %d\n",v[0],v[1],v[2]); }
+    else if(startswith(l,"abrir ")||streq(l,"abrir")) cmd_abrir(l+(l[5]?6:5));
     else if(streq(l,"pantalla")) cmd_pantalla();
     else if(streq(l,"procesos")||streq(l,"ps")) proc_ps();
     else if(startswith(l,"matar ")){ int pid=0; for(const char *q=l+6;*q>='0'&&*q<='9';q++) pid=pid*10+(*q-'0'); kprintf(proc_kill(pid,9)?"senal enviada\n":"no existe ese proceso\n"); }
@@ -333,6 +347,18 @@ static void fb_wc(uint32_t addr,uint32_t bytes){      /* framebuffer en write-co
 void kreboot(void){ outb(0x64,0xFE); for(;;) __asm__ volatile("hlt"); }
 void khalt(void){ kprintf("Apagando...\n"); outw(0x604,0x2000); outw(0xB004,0x2000); outw(0x4004,0x3400); for(;;) __asm__ volatile("cli;hlt"); }
 static uint8_t cmos(uint8_t r){ outb(0x70,r); return inb(0x71); }
+/* fecha y hora completas del reloj de la placa (se supone UTC), en segundos desde 1970 */
+static uint64_t days_from_civil(int y,int m,int d){ y-=m<=2; int era=(y>=0?y:y-399)/400; unsigned yoe=(unsigned)(y-era*400); unsigned doy=(153u*(unsigned)(m+(m>2?-3:9))+2)/5+(unsigned)d-1; unsigned doe=yoe*365+yoe/4-yoe/100+doy; return (uint64_t)((long)era*146097+(long)doe-719468); }
+uint64_t krtc_epoch(void){
+    int t=0; while((cmos(0x0A)&0x80)&&++t<10000);
+    uint8_t b=cmos(0x0B); int bcd=!(b&4);
+    #define BCDV(v) (bcd?((((v)>>4)*10)+((v)&15)):(v))
+    int s=BCDV(cmos(0)), mi=BCDV(cmos(2)); uint8_t hr=cmos(4); int pm=hr&0x80; int h=BCDV(hr&0x7F);
+    if(!(b&2)){ if(h==12) h=0; if(pm) h+=12; }
+    int d=BCDV(cmos(7)), mo=BCDV(cmos(8)), y=BCDV(cmos(9)); uint8_t c=cmos(0x32); int cen=BCDV(c); if(cen<19||cen>30) cen=20;
+    y+=cen*100; if(mo<1||mo>12||d<1||d>31) return 1767225600ull;     /* reloj ilegible: 2026-01-01 */
+    return days_from_civil(y,mo,d)*86400ull+(uint64_t)h*3600+(uint64_t)mi*60+(uint64_t)s;
+}
 int krtc(int *h,int *m){
     int t=0; while((cmos(0x0A)&0x80) && ++t<10000);
     uint8_t b=cmos(0x0B), hh=cmos(4), mm=cmos(2); int pm=hh&0x80; hh&=0x7F;

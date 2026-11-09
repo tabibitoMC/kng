@@ -8,7 +8,7 @@
 #include "net.h"
 #include "disk.h"
 
-enum { A_ABOUT, A_BROWSER, A_FILES, A_TERM, A_SETTINGS, A_VIEWER, A_NOTES, A_CALC, A_SNAKE, A_MONITOR, A_XSCR };
+enum { A_ABOUT, A_BROWSER, A_FILES, A_TERM, A_SETTINGS, A_VIEWER, A_NOTES, A_CALC, A_SNAKE, A_MONITOR, A_XSCR, A_PROGS };
 #define SGW 20
 #define SGH 16
 #define SCELL 20
@@ -212,6 +212,23 @@ static int xs_w=1024, xs_h=640;
 void gui_open_xscreen(int w,int h){ xs_w=w; xs_h=h; open_app(A_XSCR); dirty=1; }
 int  gui_screen_size(int *w,int *h){ if(!gw) return -1; *w=gw; *h=gh; return 0; }
 
+static Win *term_target;
+/* ---------------- Programas de Linux: lanzador de los programas reales instalados con 'instalar' ---------------- */
+typedef struct { const char *name, *desc, *cmd, *inst, *path; uint32_t col; } PApp;
+static const PApp PAPPS[]={
+    {"Brave","Navegador web","brave","instalar brave","/usr/bin/brave-browser",0xf97316},
+    {"Google Chrome","Navegador web","chrome","instalar chrome","/usr/bin/google-chrome-stable",0x4285f4},
+    {"Opera","Navegador web","opera","instalar opera","/usr/bin/opera",0xef4444},
+    {"Firefox","Navegador web","firefox-esr","instalar firefox","/usr/bin/firefox-esr",0xf59e0b},
+    {"Chromium","Navegador web","chromium","instalar chromium","/usr/bin/chromium",0x3b82f6},
+    {"LibreOffice","Textos, hojas y presentaciones","libreoffice","instalar libreoffice","/usr/bin/libreoffice",0x22c55e},
+    {"OpenOffice","Textos, hojas y presentaciones","openoffice","instalar openoffice","/opt/openoffice4/program/soffice",0x38bdf8},
+    {"Terminal X","Terminal con ventana de X","xterm","instalar xterm","/usr/bin/xterm",0x8a8fa8},
+};
+#define NPAPPS ((int)(sizeof PAPPS/sizeof *PAPPS))
+static int papp_installed(int i){ FsNode *f=fs_resolve(fs_root(),PAPPS[i].path); return f&&!f->dir; }
+static void run_in_terminal(const char *cmd){ Win *t=open_app(A_TERM); if(!t||t->busy) return; for(const char *q=cmd;*q;q++) gui_key((unsigned char)*q); gui_key('\n'); }
+static void run_quiet(const char *cmd){ char l[160]; k_strcpy(l,cmd,sizeof l); term_target=0; kcon_hook=0; kshell_exec(l); }
 static Win *open_app(int type){
     for(int i=0;i<nord;i++){ Win *e=&wins[order[i]]; if(e->type==type && type!=A_VIEWER){ focus(order[i]); return e; } }
     int wi=-1; for(int i=0;i<MAXW;i++) if(!wins[i].used){ wi=i; break; }
@@ -229,6 +246,7 @@ static Win *open_app(int type){
     case A_NOTES:    w->w=520; w->h=400; set_title(w,"Notas"); break;
     case A_CALC:     w->w=272; w->h=TB+1+316; set_title(w,"Calculadora"); break;
     case A_MONITOR:  w->w=420; w->h=TB+1+300; set_title(w,"Monitor del sistema"); break;
+    case A_PROGS:    w->w=560; w->h=TB+1+388; set_title(w,"Programas de Linux"); break;
     case A_XSCR:     w->xw=xs_w; w->xh=xs_h; w->w=w->xw+2; w->h=w->xh+TB+1; set_title(w,"Pantalla X (programas de Linux)"); w->xlx=w->xly=-1; break;
     case A_SNAKE:    w->w=SGW*SCELL+2; w->h=TB+1+34+SGH*SCELL; set_title(w,"Snake"); snake_reset(w); break;
     }
@@ -250,7 +268,6 @@ static void open_file(FsNode *n){
 }
 
 /* ---------------- terminal: comandos ---------------- */
-static Win *term_target;
 static void term_hook(char c){ if(term_target && term_target->used && term_target->type==A_TERM) term_put(term_target,c); }
 static void term_cmd(Win *w,char *line){
     while(*line==' ') line++;
@@ -755,6 +772,19 @@ static void draw_window(int wi,int focused){
         if(w->page.title[0]){ char t[40]="Navegador - "; cat(t,40,w->page.title); k_strcpy(w->title,t,40); }
         if(w->page.content_h>vh){ int bh=vh*vh/w->page.content_h; int by=vy+w->bscroll*(vh-bh)/k_max(1,w->page.content_h-vh); rrect(cx+cw-8,by,4,bh,2,C_DIM,160); }
         break; }
+    case A_PROGS:{
+        text_bold(cx+16,cy+12,"Programas de Linux",C_TXT);
+        text(cx+16,cy+34,"Son los programas reales de Debian. Se instalan con: instalar <nombre>",C_DIM);
+        button(cx+cw-196,cy+8,86,24,"Pantalla X",0); button(cx+cw-100,cy+8,84,24,"Actualizar",1);
+        int cwid=(cw-48)/2;
+        for(int i=0;i<NPAPPS;i++){
+            int x=cx+16+(i%2)*(cwid+16), y=cy+64+(i/2)*76, inst=papp_installed(i);
+            rrect(x,y,cwid,66,10,0x10111b,255);
+            circle(x+32,y+33,17,PAPPS[i].col,255); { char ini[2]={PAPPS[i].name[0],0}; text_bold(x+27,y+25,ini,0xffffff); }
+            text_bold(x+60,y+8,PAPPS[i].name,C_TXT); text(x+60,y+26,PAPPS[i].desc,C_DIM);
+            text(x+60,y+44,inst?"Instalado - clic para abrir":"No instalado - clic para instalar",inst?0x7ee787:0xf59e0b);
+        }
+        break; }
     case A_MONITOR:{
         char b[100]; int f,dr,by; fs_usage(&f,&dr,&by); int tot=(int)(kram_kb()/1024);
         text_bold(cx+20,cy+14,"Memoria",C_TXT);
@@ -851,11 +881,11 @@ static void draw_topbar(void){
     { int st=net_state(), nx=gw-132; for(int b=0;b<4;b++) fill(nx+b*5,BARH/2+6-(b+1)*3,3,(b+1)*3,st>=2?0x7ee787:C_DIM,st>=2?255:(b==0?200:70)); }
     { const char *lc=layout_code(kbd_layout()); char up[4]={(char)(lc[0]-32),(char)(lc[1]?lc[1]-32:0),(char)(lc[1]&&lc[2]?lc[2]-32:0),0}; text(gw-86-(k_strlen(up)-2)*4,6,up,C_DIM); } circle(gw-26,BARH/2,7,0x000000,0); circle(gw-26,BARH/2,6,C_DIM,255); circle(gw-26,BARH/2,4,0x05060c,255); fill(gw-27,BARH/2-9,2,8,C_DIM,255);
 }
-#define NDOCK 9
+#define NDOCK 10
 #define TILE 52
 static void dock_geom(int *bx,int *by,int *bw,int *bh){ *bw=NDOCK*TILE+(NDOCK-1)*14+28; *bh=TILE+16; *bx=(gw-*bw)/2; *by=gh-*bh-10; }
-static const int DOCK_APP[NDOCK]={A_ABOUT,A_BROWSER,A_FILES,A_TERM,A_NOTES,A_CALC,A_SNAKE,A_SETTINGS,A_MONITOR};
-static const char *DOCK_LBL[NDOCK]={"Inicio","Navegador","Archivos","Terminal","Notas","Calculadora","Snake","Ajustes","Monitor"};
+static const int DOCK_APP[NDOCK]={A_ABOUT,A_BROWSER,A_FILES,A_TERM,A_NOTES,A_CALC,A_SNAKE,A_SETTINGS,A_MONITOR,A_PROGS};
+static const char *DOCK_LBL[NDOCK]={"Inicio","Navegador","Archivos","Terminal","Notas","Calculadora","Snake","Ajustes","Monitor","Programas"};
 static void draw_icon(int i,int x,int y){
     rrect(x,y,TILE,TILE,13,0x1a1d33,255);
     clip_set(x,y,TILE,TILE/2); rrect(x,y,TILE,TILE,13,0xffffff,13); clip_reset();           /* brillo superior */
@@ -880,6 +910,7 @@ static void draw_icon(int i,int x,int y){
     case 7:{ static const short C8[8]={1000,707,0,-707,-1000,-707,0,707}, S8[8]={0,707,1000,707,0,-707,-1000,-707};
             for(int k=0;k<8;k++) circle(cx+17*C8[k]/1000,cy+17*S8[k]/1000,4,0x14b8a6,255);
             circle(cx,cy,15,0x14b8a6,255); circle(cx,cy,6,0x1a1d33,255); break; }
+    case 9: rrect(x+9,y+9,15,15,4,0xf97316,255); rrect(x+28,y+9,15,15,4,0x60a5fa,255); rrect(x+9,y+28,15,15,4,0x4ade80,255); rrect(x+28,y+28,15,15,4,0xe9c46a,255); break;
     case 8: rrect(x+9,y+10,34,32,5,0x0d0e16,255); fill(x+14,y+30,5,9,0x4ade80,255); fill(x+23,y+22,5,17,0x60a5fa,255); fill(x+32,y+16,5,23,0xf59e0b,255); break;
     }
 }
@@ -969,7 +1000,7 @@ void gui_frame(void){
     { int top=win_top(); static int ph; if(top>=0){ Win *tw=&wins[top];
         if(tw->type==A_TERM||tw->type==A_NOTES||(tw->type==A_BROWSER&&tw->editing)){ int p=(t/50)&1; if(p!=ph){ ph=p; dwin(tw); } } } }
     { static uint32_t nm; if(t>=nm){ nm=t+100; for(int i=0;i<nord;i++) if(wins[order[i]].type==A_MONITOR) dwin(&wins[order[i]]); } }
-    { for(int i=0;i<nord;i++){ Win *xw=&wins[order[i]]; if(xw->type==A_XSCR&&(int)(t-xw->xnext)>=0){ xw->xnext=t+3; dwin(xw); } } }       /* la pantalla X se redibuja ~30 veces por segundo */
+    { for(int i=0;i<nord;i++){ Win *xw=&wins[order[i]]; if(xw->type==A_XSCR&&(int)(t-xw->xnext)>=0){ xw->xnext=t+3; dwin(xw); } else if(xw->type==A_PROGS&&(int)(t-xw->xnext)>=0){ xw->xnext=t+100; dwin(xw); } } }       /* la pantalla X se redibuja ~30 veces por segundo */
     snake_tick(t); kngfs_tick();
     if(dirty||dr1x>dr0x) render();
     else if(cursor_dirty){ cursor_restore(); cursor_draw(); cursor_dirty=0; }
@@ -1043,6 +1074,12 @@ static void app_click(Win *w,int lx,int ly){
         break;
     case A_SNAKE:
         if(w->sover||!w->sstart) snake_key(w,' ');
+        break;
+    case A_PROGS:
+        if(in_rect(lx,ly,cw-196,8,86,24)){ run_quiet("pantalla"); dirty=1; }
+        else if(in_rect(lx,ly,cw-100,8,84,24)){ run_in_terminal("actualizar"); }
+        else { int cwid=(cw-48)/2; for(int i=0;i<NPAPPS;i++){ int x=16+(i%2)*(cwid+16), y=64+(i/2)*76;
+            if(in_rect(lx,ly,x,y,cwid,66)){ if(papp_installed(i)){ char c[80]="abrir "; cat(c,sizeof c,PAPPS[i].cmd); run_quiet(c); } else run_in_terminal(PAPPS[i].inst); dirty=1; break; } } }
         break;
     default: break;
     }

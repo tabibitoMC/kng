@@ -156,7 +156,8 @@ static u64 sys_setsockopt(u64 fdn,u64 level,u64 opt,u64 val,u64 len){
 static u64 sys_getsockopt(u64 fdn,u64 level,u64 opt,u64 val,u64 lenva){
     int s=fd_sock(fdn); if(s<0) return RET_ERR(fdn<MAXFD&&CP->fd[fdn].type?ENOTSOCK:EBADF);
     u32 v=0;
-    if(level==1){ if(opt==4) v=(u32)sock_take_err(s); else if(opt==3) v=(u32)sock_type(s); else if(opt==7||opt==8) v=65536; else if(opt==39) v=(u32)sock_family(s); else if(opt==30) v=0; }
+    if(level==1){ if(opt==4) v=(u32)sock_take_err(s); else if(opt==3) v=(u32)sock_type(s); else if(opt==7||opt==8) v=65536; else if(opt==39) v=(u32)sock_family(s);
+        else if(opt==17){ u32 uc[3]={(u32)cur->pid,0,0}; u32 hv=0; if(!lenva||ucopy_from(CP,&hv,lenva,4)) return RET_ERR(EFAULT); if(hv>12) hv=12; if(val&&ucopy_to(CP,val,uc,hv)) return RET_ERR(EFAULT); ucopy_to(CP,lenva,&hv,4); return 0; }   /* SO_PEERCRED */ else if(opt==30) v=0; }
     u32 have=0; if(!lenva||ucopy_from(CP,&have,lenva,4)) return RET_ERR(EFAULT);
     if(have>=4){ if(ucopy_to(CP,val,&v,4)) return RET_ERR(EFAULT); have=4; ucopy_to(CP,lenva,&have,4); }
     return 0;
@@ -164,7 +165,7 @@ static u64 sys_getsockopt(u64 fdn,u64 level,u64 opt,u64 val,u64 lenva){
 static u64 sys_shutdown(u64 fdn,u64 how){ int s=fd_sock(fdn); if(s<0) return RET_ERR(fdn<MAXFD&&CP->fd[fdn].type?ENOTSOCK:EBADF); int r=sock_shutdown(s,(int)how); return r<0?RET_ERR(-r):0; }
 
 /* descriptores pasados por AF_UNIX (SCM_RIGHTS): se guardan junto al socket que los recibira */
-static struct { int sock; FD fd; } scm_q[32];
+static struct { int sock; FD fd; } scm_q[128];
 static u64 sys_sendmsg(u64 fdn,u64 msgva,u64 flags){
     int s=fd_sock(fdn); if(s<0) return RET_ERR(fdn<MAXFD&&CP->fd[fdn].type?ENOTSOCK:EBADF);
     u64 m[7]; if(ucopy_from(CP,m,msgva,56)) return RET_ERR(EFAULT);
@@ -176,7 +177,7 @@ static u64 sys_sendmsg(u64 fdn,u64 msgva,u64 flags){
         for(u64 off=0;off+16<=cl;){ u64 len=*(u64*)(cb+off); int lvl=*(int*)(cb+off+8), typ=*(int*)(cb+off+12); if(len<16||off+len>cl) break;
             if(lvl==1&&typ==1){ int nfd=(int)((len-16)/4); int peer=sock_peer(s);
                 for(int k=0;k<nfd;k++){ int fx=*(int*)(cb+off+16+k*4); if(fx<0||fx>=MAXFD||!CP->fd[fx].type) return RET_ERR(EBADF);
-                    int slot=-1; for(int q=0;q<32;q++) if(!scm_q[q].fd.type){ slot=q; break; } if(slot<0) return RET_ERR(ENOMEM);
+                    int slot=-1; for(int q=0;q<128;q++) if(!scm_q[q].fd.type){ slot=q; break; } if(slot<0) return RET_ERR(ENOMEM);
                     fd_dup_into(&scm_q[slot].fd,&CP->fd[fx]); scm_q[slot].sock=peer>=0?peer:s; } }
             off+=(len+7)&~7ull; } }
     u32 ip=0; u16 port=0; char up[108]; int pl=0, fam=0, have=0;
@@ -212,7 +213,7 @@ static u64 sys_recvmsg(u64 fdn,u64 msgva,u64 flags){
     if(m[0]&&sock_family(s)==2) put_sockaddr(m[0],msgva+8,2,ip,port,"",0);
     u64 cused=0;
     if(ctl&&ctllen>=16){
-        int got[8],ng=0; for(int q=0;q<32&&ng<8;q++) if(scm_q[q].fd.type&&scm_q[q].sock==s){ int nf=fd_alloc(CP,0); if(nf<0) break; fd_dup_into(&CP->fd[nf],&scm_q[q].fd); CP->fd[nf].cloexec=(flags&0x40000000)?1:0; fd_close(&scm_q[q].fd); scm_q[q].sock=0; got[ng++]=nf; }
+        int got[8],ng=0; for(int q=0;q<128&&ng<8;q++) if(scm_q[q].fd.type&&scm_q[q].sock==s){ int nf=fd_alloc(CP,0); if(nf<0) break; fd_dup_into(&CP->fd[nf],&scm_q[q].fd); CP->fd[nf].cloexec=(flags&0x40000000)?1:0; fd_close(&scm_q[q].fd); scm_q[q].sock=0; got[ng++]=nf; }
         if(ng&&16+4*(u64)ng<=ctllen){ u8 cb[64]; memset(cb,0,sizeof cb); *(u64*)cb=16+4*(u64)ng; *(int*)(cb+8)=1; *(int*)(cb+12)=1; for(int k=0;k<ng;k++) *(int*)(cb+16+k*4)=got[k];
             cused=(16+4*(u64)ng+7)&~7ull; if(ucopy_to(CP,ctl,cb,cused)) return RET_ERR(EFAULT); }
     }

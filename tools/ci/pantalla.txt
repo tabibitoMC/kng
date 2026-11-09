@@ -1,0 +1,31 @@
+# Pantalla grafica para programas Linux: servidor X real (Xvfb), clientes X, y entrada (teclado/raton) por /dev/input/event0
+240|actualizar
+900|instalar xvfb x11-utils x11-apps xauth fonts-dejavu-core
+20|ejecutar /bin/mkdir -p /var/lib/xvfb /tmp/.X11-unix
+20|rastro 1
+20|ejecutar /usr/bin/Xvfb :0 -screen 0 800x600x24 -fbdir /var/lib/xvfb -ac -nolisten tcp &
+@esperar 10
+20|rastro 0
+20|ejecutar /bin/ls -l /var/lib/xvfb /tmp/.X11-unix
+60|ejecutar /usr/bin/xdpyinfo
+20|ejecutar /bin/kng-xinput &
+@esperar 3
+20|ejecutar /usr/bin/xlogo &
+@esperar 6
+60|ejecutar /usr/bin/xwininfo -root -tree
+30|ejecutar /bin/sh -c "tr -d '\000' < /var/lib/xvfb/Xvfb_screen0 | wc -c"
+20|ejecutar /usr/bin/xev -geometry 300x200+400+300 &
+@esperar 5
+10|xevento 3 0 450
+10|xevento 3 1 350
+10|xevento 0 0 0
+10|xevento 1 272 1
+10|xevento 0 0 0
+10|xevento 1 272 0
+10|xevento 0 0 0
+10|xevento 1 30 1
+10|xevento 0 0 0
+10|xevento 1 30 0
+10|xevento 0 0 0
+@esperar 4
+20|procesos

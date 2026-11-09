@@ -62,6 +62,11 @@ jobs:
           sleep 1
           python3 tools/ci_drive.py tools/ci/debian.txt deb64.log -- qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd debian.cpio,kng-extra.cpio -display none -serial stdio -m 3G -netdev user,id=n0 -device e1000,netdev=n0 || true
           echo "=== deb64 ==="; cat deb64.log
+      - name: Pantalla grafica (Xvfb + clientes X + entrada) sobre Debian real
+        timeout-minutes: 35
+        run: |
+          python3 tools/ci_drive.py tools/ci/pantalla.txt pan64.log -- qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd debian.cpio,kng-extra.cpio -display none -serial stdio -m 4G -netdev user,id=n0 -device e1000,netdev=n0 || true
+          echo "=== pan64 ==="; cat pan64.log
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: logs, path: "*.log" }

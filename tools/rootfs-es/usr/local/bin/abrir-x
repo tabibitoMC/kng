@@ -1,0 +1,6 @@
+#!/bin/sh
+# abrir-x <programa> [argumentos]: espera a que el servidor X este listo y abre el programa en la pantalla X
+n=0
+while [ ! -S /tmp/.X11-unix/X0 ] && [ $n -lt 150 ]; do sleep 0.2; n=$((n+1)); done
+export DISPLAY=:0 HOME=${HOME:-/root}
+exec "$@"

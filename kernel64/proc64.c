@@ -55,12 +55,12 @@ static void fs_shm_release(void *o);
 /* ---------- estructuras ---------- */
 #define SLAB_MAX   2048                  /* bloques de paginas por proceso: los 4 primeros de 64 paginas, el resto de 256 (hasta ~2 GB) */
 static inline int slab_cap(int idx){ return idx<4?64:256; }
-#define MAXFD 64
-#define MAXT  64
+#define MAXFD 512
+#define MAXT  512
 #define KSTK  32768
 struct Pipe { u8 buf[4096]; int r,w,count,readers,writers; };
 /* Objetos del kernel que se ven como descriptores (eventfd, epoll, timerfd, archivos generados como /proc) */
-#define EP_MAX 64
+#define EP_MAX 256
 typedef struct KObj {
     int refs, kind, flags; u64 cnt; u64 t_next, t_int;
     char *data; int size;
@@ -579,6 +579,7 @@ static const char *UN[6]={"Linux","kng","6.1.0-kng","kng-compat 1","x86_64","(no
 
 static u64 sys_clone(struct regs *r,u64 flags,u64 stack,u64 ptid,u64 ctid,u64 tls){
     int thread=(flags&0x10000)!=0;
+    if(flags&0x7E020000ull) return RET_ERR(EPERM);                 /* espacios de nombres (NEWNS, NEWUTS, NEWIPC, NEWUSER, NEWPID, NEWNET, NEWCGROUP): no hay */
     Task *t=task_alloc(); if(!t) return RET_ERR(EAGAIN);
     Proc *pr=CP;
     if(!thread){
@@ -620,21 +621,26 @@ static u64 sys_execve(struct regs *r,u64 path_va,u64 argv_va,u64 envp_va){
     k_strcpy(cur->name,path+(k_startswith(path,"/bin/")?5:0),sizeof cur->name);
     return EXEC_DONE;
 }
-static u64 sys_wait4(u64 pid,u64 status_va,u64 options){
+static long wait_core(long pid,u64 options,u32 *stp,int keep){
     for(;;){
         int have=0;
         for(int i=0;i<MAXT;i++){ Task *c=&tasks[i]; if(c->state==T_FREE||!c->leader||c->ppid!=cur->pid) continue;
-            if((long)pid>0&&c->pid!=(int)pid) continue;
+            if(pid>0&&c->pid!=(int)pid) continue;
             have=1;
             if(c->state==T_ZOMBIE){
-                int code=c->exit_code, rv=c->pid; u32 st=code<0?(u32)(-code):(((u32)code&0xFF)<<8);
-                if(status_va) ucopy_to(CP,status_va,&st,4);
-                c->state=T_FREE; return (u64)rv; } }
-        if(!have) return RET_ERR(ECHILD);
+                int code=c->exit_code, rv=c->pid; *stp=code<0?(u32)(-code):(((u32)code&0xFF)<<8);
+                if(!keep) c->state=T_FREE;
+                return rv; } }
+        if(!have) return -ECHILD;
         if(options&1) return 0;
-        if(INTR()) return RET_ERR(EINTR);
-        cur->wait_pid=(int)(long)pid; block(T_WAIT);
+        if(INTR()) return -EINTR;
+        cur->wait_pid=(int)pid; block(T_WAIT);
     }
+}
+static u64 sys_wait4(u64 pid,u64 status_va,u64 options){
+    u32 st=0; long r=wait_core((long)pid,options,&st,0);
+    if(r>0&&status_va) ucopy_to(CP,status_va,&st,4);
+    return r<0?RET_ERR(-r):(u64)r;
 }
 static u64 sys_futex(u64 uaddr,u64 op,u64 val,u64 timeout_va){
     int cmd=(int)(op&0x7F);
@@ -653,6 +659,7 @@ static u64 sys_futex(u64 uaddr,u64 op,u64 val,u64 timeout_va){
     if(cmd==3||cmd==4){ int w=0; futex_wake(CP,uaddr,0x7fffffff,&w); return (u64)w; }      /* REQUEUE: se despierta a todos (aproximacion) */
     return RET_ERR(ENOSYS);
 }
+#include "sys_extra.inc"
 static u64 sys_dispatch(struct regs *r){
     u64 nr=r->rax,a1=r->rdi,a2=r->rsi,a3=r->rdx,a4=r->r10,a5=r->r8,a6=r->r9;
     switch(nr){
@@ -794,7 +801,7 @@ static u64 sys_dispatch(struct regs *r){
     case 84: return sys_unlinkat(AT_FDCWD_L,a1,0x200);
     case 87: return sys_unlinkat(AT_FDCWD_L,a1,0);
     case 217: return sys_getdents64(a1,a2,a3);
-    case 96: { u64 t[2]; u32 k=kticks(); t[0]=k/100; t[1]=(u64)(k%100)*10000; return a1&&ucopy_to(CP,a1,t,16)?RET_ERR(EFAULT):0; }
+    case 96: { u64 t[2]; u32 k=kticks(); t[0]=wall_sec(); t[1]=(u64)(k%100)*10000; return a1&&ucopy_to(CP,a1,t,16)?RET_ERR(EFAULT):0; }
     case 99: { u8 si[112]; memset(si,0,sizeof si); *(u64*)si=kticks()/100; *(u64*)(si+32)=256ull<<20; *(u64*)(si+40)=128ull<<20; *(u32*)(si+104)=1; return ucopy_to(CP,a1,si,sizeof si)?RET_ERR(EFAULT):0; }
     case 102: case 104: case 107: case 108: case 112: case 105: case 106: return 0;
     case 110: return (u64)cur->ppid;
@@ -805,11 +812,36 @@ static u64 sys_dispatch(struct regs *r){
     case 203: return 0;
     case 218: cur->clear_tid=a1; return (u64)cur->tid;
     case 202: return sys_futex(a1,a2,a3,a4);
-    case 228: { u64 t[2]; u32 k=kticks(); t[0]=k/100; t[1]=(u64)(k%100)*10000000ull; return ucopy_to(CP,a2,t,16)?RET_ERR(EFAULT):0; }
+    case 228: return sys_clock_gettime(a1,a2);
     case 273: return 0;
-    case 302: { if(a4){ u64 rl[2]={8ull<<20,~0ull}; if(ucopy_to(CP,a4,rl,16)) return RET_ERR(EFAULT); } return 0; }
+    case 302: return a4?sys_getrlimit_k(a2,a4):0;
     case 318: { static u64 rs=0x9E3779B97F4A7C15ull; u8 b[256]; u64 n=a2>256?256:a2; rs^=kticks(); for(u64 i=0;i<n;i++){ rs^=rs<<13; rs^=rs>>7; rs^=rs<<17; b[i]=(u8)rs; } return ucopy_to(CP,a1,b,n)?RET_ERR(EFAULT):n; }
     case 334: return RET_ERR(ENOSYS);
+    case 97:  return sys_getrlimit_k(a1,a2);
+    case 160: return 0;                                             /* setrlimit */
+    case 201: { u64 t=wall_sec(); if(a1&&ucopy_to(CP,a1,&t,8)) return RET_ERR(EFAULT); return t; }
+    case 164: { u64 t[2]; if(!a1||ucopy_from(CP,t,a1,16)) return RET_ERR(EFAULT); wall_set(t[0]); return 0; }
+    case 227: return sys_settime(a1,a2);
+    case 229: { u64 t[2]={0,10000000ull}; return a2&&ucopy_to(CP,a2,t,16)?RET_ERR(EFAULT):0; }
+    case 247: return sys_waitid(a1,a2,a3,a4);
+    case 299: return sys_recvmmsg(a1,a2,a3,a4);
+    case 307: return sys_sendmmsg(a1,a2,a3,a4);
+    case 295: case 327: return sys_preadv(a1,a2,a3,a4,0);
+    case 296: case 328: return sys_preadv(a1,a2,a3,a4,1);
+    case 436: return sys_close_range(a1,a2,a3);
+    case 125: return sys_capget(a1,a2);
+    case 126: case 113: case 114: case 117: case 119: case 122: case 123: case 116: case 135: case 170: case 171: case 151: case 152: case 325: case 277: case 187: case 324: return 0;
+    case 118: case 120: { int z[3]={0,0,0}; if(a1&&ucopy_to(CP,a1,z,4)) return RET_ERR(EFAULT); if(a2&&ucopy_to(CP,a2,z,4)) return RET_ERR(EFAULT); if(a3&&ucopy_to(CP,a3,z,4)) return RET_ERR(EFAULT); return 0; }
+    case 115: return 0;                                             /* getgroups: ninguno */
+    case 140: return 20;                                            /* getpriority: nice 0 */
+    case 143: { int z=0; return a2&&ucopy_to(CP,a2,&z,4)?RET_ERR(EFAULT):0; }
+    case 147: return (a1==1||a1==2)?99:0;
+    case 148: return (a1==1||a1==2)?1:0;
+    case 309: { u32 z=0; if(a1&&ucopy_to(CP,a1,&z,4)) return RET_ERR(EFAULT); if(a2&&ucopy_to(CP,a2,&z,4)) return RET_ERR(EFAULT); return 0; }
+    case 272: return RET_ERR(EPERM);                                /* unshare: sin espacios de nombres */
+    case 188: case 189: case 190: return RET_ERR(95);               /* setxattr: no soportado */
+    case 191: case 192: case 193: case 197: case 198: case 199: return RET_ERR(61);   /* getxattr/removexattr: no existe */
+    case 194: case 195: case 196: return 0;                         /* listxattr: ninguno */
     default:
         kprintf("[syscall] numero %lu aun no implementado -> ENOSYS\n",nr); return RET_ERR(ENOSYS);
     }

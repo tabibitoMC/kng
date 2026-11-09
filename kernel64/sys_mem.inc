@@ -240,18 +240,18 @@ static u64 sys_memfd_create(u64 name_va,u64 flags){
     KObj *o=shm_new(0,0); if(!o) return RET_ERR(ENOMEM);
     FD *f=&CP->fd[fd]; memset(f,0,sizeof *f); f->type=12; f->obj=o; f->cloexec=(flags&1)?1:0; return (u64)fd;
 }
-static struct { int used, key, id, removed, nattach; KObj *o; u64 size; } shm_tab[64];
+static struct { int used, key, id, removed, nattach; KObj *o; u64 size; } shm_tab[256];
 static int shm_next_id=1;
 static u64 sys_shmget(u64 key,u64 size,u64 flags){
-    if((long)key!=0) for(int i=0;i<64;i++) if(shm_tab[i].used&&shm_tab[i].key==(int)key&&!shm_tab[i].removed){ if(size>shm_tab[i].size) return RET_ERR(EINVAL); return (u64)shm_tab[i].id; }
+    if((long)key!=0) for(int i=0;i<256;i++) if(shm_tab[i].used&&shm_tab[i].key==(int)key&&!shm_tab[i].removed){ if(size>shm_tab[i].size) return RET_ERR(EINVAL); return (u64)shm_tab[i].id; }
     if(!(flags&01000)&&(long)key!=0) return RET_ERR(ENOENT);
     if(!size||size>(1ull<<30)) return RET_ERR(EINVAL);
-    for(int i=0;i<64;i++) if(!shm_tab[i].used){ KObj *o=shm_new(size,0); if(!o) return RET_ERR(ENOMEM);
+    for(int i=0;i<256;i++) if(!shm_tab[i].used){ KObj *o=shm_new(size,0); if(!o) return RET_ERR(ENOMEM);
         shm_tab[i].used=1; shm_tab[i].key=(int)key; shm_tab[i].id=shm_next_id++; shm_tab[i].removed=0; shm_tab[i].nattach=0; shm_tab[i].o=o; shm_tab[i].size=size; return (u64)shm_tab[i].id; }
     return RET_ERR(ENOMEM);
 }
 static u64 sys_shmat(u64 id,u64 addr,u64 flags){
-    for(int i=0;i<64;i++) if(shm_tab[i].used&&shm_tab[i].id==(int)id){
+    for(int i=0;i<256;i++) if(shm_tab[i].used&&shm_tab[i].id==(int)id){
         u64 len=(shm_tab[i].size+4095)&~4095ull, va;
         if(addr) va=addr&~0xFFFull; else { va=CP->mmap_next; CP->mmap_next+=len+4096; }
         KObj *o=shm_tab[i].o; o->refs++;
@@ -267,7 +267,7 @@ static u64 sys_shmdt(u64 addr){
     return 0;
 }
 static u64 sys_shmctl(u64 id,u64 cmd,u64 buf){
-    for(int i=0;i<64;i++) if(shm_tab[i].used&&shm_tab[i].id==(int)id){
+    for(int i=0;i<256;i++) if(shm_tab[i].used&&shm_tab[i].id==(int)id){
         if(cmd==0){ shm_tab[i].removed=1; if(!shm_tab[i].nattach){ obj_unref(shm_tab[i].o); shm_tab[i].used=0; } return 0; }
         if(cmd==2||cmd==13){ u8 ds[112]; memset(ds,0,sizeof ds); *(u64*)(ds+48)=shm_tab[i].size; *(u64*)(ds+88)=(u64)shm_tab[i].nattach; if(buf&&ucopy_to(CP,buf,ds,sizeof ds)) return RET_ERR(EFAULT); return 0; }
         return 0; }

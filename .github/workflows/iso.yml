@@ -1,0 +1,25 @@
+name: construir-iso
+# Construye el ISO completo (con Debian real) y lo publica en "Releases" del repositorio para descargarlo.
+# Se ejecuta a mano: GitHub > Actions > construir-iso > Run workflow.
+on: workflow_dispatch
+jobs:
+  iso:
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Herramientas
+        run: sudo apt-get update && sudo apt-get install -y gcc gcc-multilib binutils grub-pc-bin xorriso mtools python3 debootstrap debian-archive-keyring cpio gzip
+      - name: Debian real (cache)
+        uses: actions/cache@v4
+        with:
+          path: build/debian.cpio.gz
+          key: debian-${{ hashFiles('tools/mkdebian.sh', 'tools/rootfs-es/**') }}
+      - name: Construir ISO
+        run: KNG_DEBIAN=1 bash tools/build-iso.sh
+      - name: Publicar en Releases
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh release view iso-latest >/dev/null 2>&1 || gh release create iso-latest --title "ISO mas reciente" --notes "ISO de Konigreich OS con Debian real. Se reemplaza en cada construccion." --prerelease
+          gh release upload iso-latest out/KonigreichOS-kng.iso out/KonigreichOS-kng.iso.sha256 --clobber
+          gh release edit iso-latest --notes "ISO de Konigreich OS con Debian real. Construido: $(date -u +%F' '%H:%M) UTC, commit ${GITHUB_SHA::7}"
