@@ -19,7 +19,7 @@ if python3 tools/mkrootfs.py build/iso/boot/rootfs.cpio; then ROOTFS=1; else ROO
 python3 tools/check-mb.py build/iso/boot/*.elf
 cat > build/iso/boot/grub/grub.cfg <<'CFG'
 set timeout=6
-set default=0
+set default=1
 insmod all_video
 menuentry "Königreich OS - 32 bits (grafico)" {
     set gfxpayload=1024x768x32
@@ -44,6 +44,7 @@ menuentry "Königreich OS - 64 bits (modo texto)" {
     boot
 }
 CFG
+[ "$ROOTFS" = 1 ] || sed -i '/rootfs.cpio/d' build/iso/boot/grub/grub.cfg
 # -d fuerza la plataforma BIOS (i386-pc): el kernel usa Multiboot 1, que GRUB UEFI no carga.
 grub-mkrescue -d /usr/lib/grub/i386-pc -o out/KonigreichOS-kng.iso build/iso 2>&1 | tail -3
 ( cd out && sha256sum KonigreichOS-kng.iso > KonigreichOS-kng.iso.sha256 )

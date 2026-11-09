@@ -20,13 +20,14 @@ jobs:
       - name: Programas Linux en ring 3 (64 bits)
         run: |
           python3 tools/mkrootfs.py rootfs.cpio
-          ( sleep 4; echo "programas"; sleep 1; echo "ejecutar /bin/hola"; sleep 3; echo "ejecutar /bin/hola-pie a b"; sleep 4; echo "ejecutar /bin/hola-static x"; sleep 4; echo "ejecutar /bin/hola-dyn y z"; sleep 6; echo "uptime"; sleep 2 ) | timeout 60 qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd rootfs.cpio -display none -serial stdio -m 512M > proc64.log 2>&1 || true
+          ( sleep 4; echo "programas"; sleep 1; echo "ejecutar /bin/hola"; sleep 3; echo "ejecutar /bin/hola-pie a b"; sleep 4; echo "ejecutar /bin/hola-static x"; sleep 4; echo "ejecutar /bin/hola-dyn y z"; sleep 6; echo "ejecutar /bin/multi-static"; sleep 10; echo "ejecutar /bin/multi-pie"; sleep 10; echo "ejecutar /bin/multi-dyn"; sleep 14; echo "procesos"; sleep 1; echo "uptime"; sleep 2 ) | timeout 100 qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd rootfs.cpio -display none -serial stdio -m 512M > proc64.log 2>&1 || true
           echo "=== proc64 ==="; cat proc64.log
           grep -q "termino con codigo 42" proc64.log && echo "PRUEBA hola (sin libc): OK" || echo "PRUEBA hola: FALLO"
           for t in pie static dyn; do n=$(grep -c "malloc 1 MB ok" proc64.log); done; echo "glibc 'malloc ok' veces: $n (esperado 3)"
           grep -q "argv\[1\]=a" proc64.log && echo "PRUEBA static-pie: OK" || echo "PRUEBA static-pie: FALLO"
           grep -q "argv\[1\]=x" proc64.log && echo "PRUEBA static no-PIE (direccion baja 0x400000): OK" || echo "PRUEBA static no-PIE: FALLO"
           grep -q "argv\[1\]=y" proc64.log && echo "PRUEBA dinamico (ld.so + libc.so.6): OK" || echo "PRUEBA dinamico: FALLO"
+          echo "multi 'TODO OK' veces: $(grep -c 'TODO OK' proc64.log) (esperado 3: estatico, static-pie, dinamico)"
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: logs, path: "*.log" }

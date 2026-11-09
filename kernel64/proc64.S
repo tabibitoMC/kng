@@ -1,101 +1,127 @@
-/* proc64.S — entrada/salida a modo usuario (ring 3) y la instruccion SYSCALL del kernel de 64 bits. */
+/* proc64.S — entrada y salida de modo usuario (ring 3), cambio de tarea y SYSCALL del kernel de 64 bits.
+ *
+ * Toda entrada desde ring 3 (llamada al sistema, interrupcion o excepcion) construye el MISMO marco "struct regs"
+ * (r15..rax, int_no, err, rip, cs, rflags, rsp, ss) en una pila estatica pequena (dentro de la imagen, visible con la CR3 del
+ * usuario), cambia a la CR3 del kernel, copia el marco a la pila propia de la tarea y llama a kernel_entry().
+ * Toda salida a ring 3 sale por iretq desde ret_to_user_frame. */
 .section .bss
 .align 16
-.skip 65536
-.global kstack_top           /* pila del kernel para llamadas y excepciones desde ring 3 (dentro de la imagen) */
+.skip 8192
+.global kstack_top
 kstack_top:
 
 .section .data
 .align 8
-.global kcr3, ucr3
+.global kcr3, ucr3, cur_ktop
 kcr3:       .quad 0        /* CR3 del kernel (identidad completa) */
-ucr3:       .quad 0        /* CR3 del proceso en curso */
+ucr3:       .quad 0        /* CR3 del proceso que va a ring 3 */
+cur_ktop:   .quad 0        /* tope de la pila de kernel de la tarea en curso */
 ursp:       .quad 0
-ksaved_rsp: .quad 0
-kcr3_save:  .quad 0
 
 .section .text
 .code64
-/* u64 user_enter(entry=rdi, user_rsp=rsi, cr3=rdx): salta a ring 3; "vuelve" cuando el proceso termina (user_leave) */
-.global user_enter
-user_enter:
+.global syscall_entry
+syscall_entry:             /* rax=numero, rdi,rsi,rdx,r10,r8,r9 = argumentos; rcx=RIP, r11=RFLAGS (ABI Linux x86-64) */
+    mov %rsp, ursp(%rip)
+    lea kstack_top(%rip), %rsp
+    pushq $0x1B
+    push ursp(%rip)
+    push %r11
+    pushq $0x23
+    push %rcx
+    pushq $0
+    pushq $0x80
+    push %rax
+    push %rcx
+    push %rdx
     push %rbx
     push %rbp
+    push %rsi
+    push %rdi
+    push %r8
+    push %r9
+    push %r10
+    push %r11
     push %r12
     push %r13
     push %r14
     push %r15
-    mov %rsp, ksaved_rsp(%rip)
-    mov %cr3, %rax
-    mov %rax, kcr3_save(%rip)
-    mov %rdx, %cr3
-    pushq $0x1B              /* SS: datos de usuario */
-    push %rsi                /* RSP de usuario */
-    pushq $0x202             /* RFLAGS: IF */
-    pushq $0x23              /* CS: codigo de usuario 64 bits */
-    push %rdi                /* RIP */
-    xor %eax,%eax
-    xor %ebx,%ebx
-    xor %ecx,%ecx
-    xor %edx,%edx
-    xor %esi,%esi
-    xor %edi,%edi
-    xor %ebp,%ebp
-    xor %r8d,%r8d
-    xor %r9d,%r9d
-    xor %r10d,%r10d
-    xor %r11d,%r11d
-    xor %r12d,%r12d
-    xor %r13d,%r13d
-    xor %r14d,%r14d
-    xor %r15d,%r15d
+    /* sigue en enter_from_user */
+
+.global enter_from_user
+enter_from_user:          /* rsp -> marco en la pila estatica */
+    mov kcr3(%rip), %rax
+    mov %rax, %cr3
+    mov cur_ktop(%rip), %rdi
+    sub $176, %rdi
+    mov %rsp, %rsi
+    mov %rdi, %rax
+    mov $22, %ecx
+    cld
+    rep movsq
+    mov %rax, %rsp
+    mov %rsp, %rdi
+    call kernel_entry
+    /* sigue en ret_to_user_frame */
+
+.global ret_to_user_frame
+ret_to_user_frame:        /* rsp -> marco de la tarea (en su pila de kernel) */
+    cli
+    lea kstack_top(%rip), %rcx
+    mov 168(%rsp), %r11
+    mov %r11, -8(%rcx)       /* ss */
+    mov 160(%rsp), %r11
+    mov %r11, -16(%rcx)      /* rsp */
+    mov 152(%rsp), %r11
+    mov %r11, -24(%rcx)      /* rflags */
+    mov 144(%rsp), %r11
+    mov %r11, -32(%rcx)      /* cs */
+    mov 136(%rsp), %r11
+    mov %r11, -40(%rcx)      /* rip */
+    mov 104(%rsp), %r11
+    mov %r11, -48(%rcx)      /* rcx final */
+    mov 32(%rsp), %r11
+    mov %r11, -56(%rcx)      /* r11 final */
+    mov 0(%rsp), %r15
+    mov 8(%rsp), %r14
+    mov 16(%rsp), %r13
+    mov 24(%rsp), %r12
+    mov 40(%rsp), %r10
+    mov 48(%rsp), %r9
+    mov 56(%rsp), %r8
+    mov 64(%rsp), %rdi
+    mov 72(%rsp), %rsi
+    mov 80(%rsp), %rbp
+    mov 88(%rsp), %rbx
+    mov 96(%rsp), %rdx
+    mov 112(%rsp), %rax
+    lea -56(%rcx), %r11
+    mov ucr3(%rip), %rcx
+    mov %rcx, %cr3
+    mov %r11, %rsp
+    pop %r11
+    pop %rcx
     iretq
 
-/* void user_leave(code=rdi): abandona el proceso y regresa de user_enter con rax=code */
-.global user_leave
-user_leave:
-    mov kcr3_save(%rip), %rax
-    mov %rax, %cr3
-    mov ksaved_rsp(%rip), %rsp
-    mov %rdi, %rax
+/* void switch_to(u64 *prev_ksp, u64 next_ksp) */
+.global switch_to
+switch_to:
+    push %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    mov %rsp, (%rdi)
+    mov %rsi, %rsp
     pop %r15
     pop %r14
     pop %r13
     pop %r12
-    pop %rbp
     pop %rbx
+    pop %rbp
     ret
 
-/* SYSCALL: rax=numero, rdi,rsi,rdx,r10,r8,r9 = argumentos; rcx=RIP de retorno, r11=RFLAGS (convencion de Linux x86-64) */
-.global syscall_entry
-syscall_entry:
-    mov %rsp, ursp(%rip)
-    lea kstack_top(%rip), %rsp
-    push ursp(%rip)
-    push %rcx
-    push %r11
-    push %rdi
-    push %rsi
-    push %rdx
-    push %r10
-    push %r8
-    push %r9
-    push %rax
-    mov kcr3(%rip), %rax       /* rax ya quedo guardado en la pila: se puede usar */
-    mov %rax, %cr3
-    mov %rsp, %rdi
-    cld
-    call sys_dispatch64
-    mov ucr3(%rip), %rcx       /* rcx tambien esta guardado; rax lleva el resultado */
-    mov %rcx, %cr3
-    add $8, %rsp
-    pop %r9
-    pop %r8
-    pop %r10
-    pop %rdx
-    pop %rsi
-    pop %rdi
-    pop %r11
-    pop %rcx
-    pop %rsp
-    sysretq
+.global task_start        /* primera vez que corre una tarea nueva: rsp -> su marco */
+task_start:
+    jmp ret_to_user_frame

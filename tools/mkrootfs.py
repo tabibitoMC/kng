@@ -12,6 +12,10 @@ try:
     subprocess.check_call(['gcc', '-O2', '-static-pie', '-o', tmp + '/bin/hola-pie', src])
     subprocess.check_call(['gcc', '-O2', '-static', '-no-pie', '-o', tmp + '/bin/hola-static', src])
     subprocess.check_call(['gcc', '-O2', '-o', tmp + '/bin/hola-dyn', src])
+    msrc = os.path.join(raiz, 'kernel64', 'user', 'multi.c')
+    subprocess.check_call(['gcc', '-O2', '-pthread', '-static-pie', '-o', tmp + '/bin/multi-pie', msrc])
+    subprocess.check_call(['gcc', '-O2', '-pthread', '-static', '-no-pie', '-o', tmp + '/bin/multi-static', msrc])
+    subprocess.check_call(['gcc', '-O2', '-pthread', '-o', tmp + '/bin/multi-dyn', msrc])
     ldd = subprocess.check_output(['ldd', tmp + '/bin/hola-dyn'], text=True)
     ld = libc = None
     for l in ldd.splitlines():
