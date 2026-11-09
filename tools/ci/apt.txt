@@ -1,0 +1,11 @@
+# Diagnostico de apt-get update (metodo http)
+20|rastro 1
+20|ejecutar /usr/bin/apt-get -o Debug::pkgAcquire::Worker=true -o Debug::Acquire::http=true update &
+@esperar 25
+20|procesos
+@esperar 25
+20|procesos
+20|rastro 2
+@esperar 4
+20|rastro 0
+20|procesos
