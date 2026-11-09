@@ -239,9 +239,11 @@ static u64 sys_access_at(long dirfd,u64 path_va){
     if(err==ENOENT&&path_full(dirfd,path,full,sizeof full)==0&&is_virtual_path(full)&&gen_proc(full,tmpb,sizeof tmpb)>=0) return 0;
     return RET_ERR(err);
 }
-static u64 sys_exists_noop(long dirfd,u64 path_va){        /* chmod/chown/utimes...: kng no guarda permisos ni fechas; solo se comprueba que exista */
+static u64 sys_exists_nf(long dirfd,u64 path_va,int follow);
+static u64 sys_exists_noop(long dirfd,u64 path_va){ return sys_exists_nf(dirfd,path_va,1); }
+static u64 sys_exists_nf(long dirfd,u64 path_va,int follow){        /* chmod/chown/utimes...: kng no guarda permisos ni fechas; solo se comprueba que exista */
     char path[PATH_MAX_]; int e=upath(path_va,path); if(e) return RET_ERR(-e);
-    int err=ENOENT; return lookup_at(dirfd,path,1,&err)?0:RET_ERR(err);
+    int err=ENOENT; return lookup_at(dirfd,path,follow,&err)?0:RET_ERR(err);
 }
 
 /* fechas de archivos: mode 0 = utimensat (times = 2 timespec), 1 = utimes/futimesat (2 timeval), 2 = utime (actime, modtime) */
