@@ -28,8 +28,14 @@ jobs:
           mkdir -p www; echo "hola desde el anfitrion" > www/hola.txt
           ( cd www && python3 -m http.server 18090 > ../http.log 2>&1 & )
           sleep 1
-          QMON=/tmp/qmon.sock KELF=kernel64/kng-kernel64-text.elf python3 tools/ci_drive.py "${{ inputs.lista }}" diag.log -- qemu-system-x86_64 -monitor unix:/tmp/qmon.sock,server,nowait -kernel kernel64/kng-kernel64-text.elf -initrd debian.cpio,kng-extra.cpio -display none -serial stdio -m ${{ inputs.ram }} -netdev user,id=n0 -device e1000,netdev=n0 || true
+          QMON=/tmp/qmon.sock KELF=kernel64/kng-kernel64-text.elf python3 tools/ci_drive.py "${{ inputs.lista }}" diag.log -- qemu-system-x86_64 -monitor unix:/tmp/qmon.sock,server,nowait -kernel kernel64/kng-kernel64-text.elf -initrd debian.cpio,kng-extra.cpio -display none -serial stdio -m ${{ inputs.ram }} -netdev user,id=n0 -object filter-dump,id=f1,netdev=n0,file=net.pcap -device e1000,netdev=n0 || true
           echo "=== diag ==="; cat diag.log
+          sudo apt-get install -y tcpdump > /dev/null 2>&1 || true
+          echo "=== DNS en la red ==="; sudo tcpdump -nn -tt -r net.pcap 'udp port 53' 2>&1 | head -80 || true
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: diag, path: "*.log" }
+        with:
+          name: diag
+          path: |
+            *.log
+            net.pcap
