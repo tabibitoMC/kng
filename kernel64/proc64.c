@@ -236,7 +236,7 @@ static u64 sys_dispatch(struct sc *s){
     case 16: return RET_ERR(ENOTTY);
     case 17: { if(a1>=MAXFD||!P.fd[a1]) return RET_ERR(EBADF); FsNode *f=P.fd[a1]; u64 left=a4<(u64)f->size?(u64)f->size-a4:0; if(a3>left) a3=left; if(a3&&ucopy_to(P.pml4,a2,f->data+a4,a3)) return RET_ERR(EFAULT); return a3; }
     case 20: { u64 tot=0; for(u64 i=0;i<a3&&i<64;i++){ u64 iov[2]; if(ucopy_from(P.pml4,iov,a2+i*16,16)) return RET_ERR(EFAULT); long r=(long)sys_write(a1,iov[0],iov[1]); if(r<0) return tot?tot:(u64)r; tot+=(u64)r; } return tot; }
-    case 21: case 89: return RET_ERR(ENOENT);
+    case 21: case 89: case 267: return RET_ERR(ENOENT);
     case 24: return 0;
     case 35: case 230: { u64 ts=s->nr==35?a1:a3; u64 t[2]; if(ucopy_from(P.pml4,t,ts,16)) return RET_ERR(EFAULT); u32 until=kticks()+(u32)(t[0]*100+t[1]/10000000ull); while((int)(kticks()-until)<0) __asm__ volatile("sti;hlt;cli"); return 0; }
     case 39: return 1;
