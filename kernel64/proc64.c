@@ -416,16 +416,22 @@ int proc_exec(char *path,int argc,char **argv,int bg){
     return code;
 }
 void proc_ps(void){
-    kprintf("  PID  PPID  ESTADO     SYS  NOMBRE / ESPERA\n");
+    kprintf("  TID PID PPID ESTADO SYS NOMBRE / ESPERA\n");
     static const char *st[]={"libre","listo","dormido","espera","entrada","futex","pipe","zombie","e/s"};
     for(int i=0;i<MAXT;i++){ Task *t=&tasks[i]; if(t->state==T_FREE) continue;
-        kprintf("  %-4d %-5d %-10s %-4d %s%s%s",t->tid,t->ppid,st[t->state],t->sysnr,t->name,t->leader?"":" (hilo)",t->fg?" [fg]":"");
+        kprintf("  %d %d %d %s sys=%d %s%s%s",t->tid,t->pid,t->ppid,st[t->state],t->sysnr,t->name,t->leader?"":" (hilo)",t->fg?" [fg]":"");
         if(t->state==T_WAIT) kprintf("  espera hijo %d",t->wait_pid);
         else if(t->state==T_PIPE) kprintf("  pipe fd %d",t->pipe_fd);
         else if(t->state==T_FUTEX) kprintf("  futex %lx",t->fut_key&0xFFFFFFFFull);
-        else if(t->state==T_FN) kprintf("  fd %d n %d mascara %x",t->wa_fd,t->wa_n,t->wa_mask);
+        else if(t->state==T_FN) kprintf("  poll/select n=%d",t->wa_n);
         else if(t->state==T_SLEEP) kprintf("  %d ticks",(int)((u32)t->wake_at-kticks()));
         kprintf("\n");
+        if(t->leader&&t->pr&&t->state!=T_ZOMBIE){                      /* descriptores abiertos (los 24 primeros) */
+            kprintf("      fds:");
+            for(int d=0;d<24;d++){ FD *f=&t->pr->fd[d]; if(!f->type) continue;
+                kprintf(" %d:t%d",d,f->type);
+                if(f->type==3||f->type==4){ struct Pipe *pp=f->pipe; kprintf("(%lx c=%d r=%d w=%d)",(u64)(uintptr_t)pp&0xFFFFFFull,pp->count,pp->readers,pp->writers); } }
+            kprintf("\n"); }
     }
 }
 int proc_kill(int pid,int sig){
