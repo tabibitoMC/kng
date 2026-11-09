@@ -205,7 +205,9 @@ static u16 ipid;
 /* ---------- ARP ---------- */
 struct arpe { u32 ip; u8 mac[6]; int ok; };
 static struct arpe arpt[8]; static int arp_next;
-static u8 pend[1600]; static int pend_len, pend_try; static u32 pend_ip, pend_t;
+/* paquetes que esperan la respuesta ARP (varios: el resolvedor de nombres manda dos consultas seguidas) */
+#define NPEND 8
+static struct { u8 d[1600]; int len; u32 ip, t; int tr; u32 seq; } pq[NPEND]; static u32 pq_seq;
 static u8 ob[1600];
 
 static int arp_find(u32 ip,u8 *m){ for(int i=0;i<8;i++) if(arpt[i].ok && arpt[i].ip==ip){ memcpy(m,arpt[i].mac,6); return 1; } return 0; }
@@ -226,7 +228,11 @@ static void arp_in(const u8 *p,int n){
     int op=rd16(p+6); u32 spa=rd32(p+14), tpa=rd32(p+24);
     if(spa) arp_learn(spa,p+8);
     if(op==1 && my_ip && tpa==my_ip) arp_send(2,p+8,p+8,spa);
-    if(pend_len && spa==pend_ip){ memcpy(pend,p+8,6); memcpy(pend+6,mac,6); nic->send(pend,pend_len); pend_len=0; }
+    for(;;){                                                    /* salen en el orden en que se pidieron */
+        int b=-1; for(int i=0;i<NPEND;i++) if(pq[i].len && pq[i].ip==spa && (b<0 || (int)(pq[i].seq-pq[b].seq)<0)) b=i;
+        if(b<0) break;
+        memcpy(pq[b].d,p+8,6); memcpy(pq[b].d+6,mac,6); nic->send(pq[b].d,pq[b].len); pq[b].len=0;
+    }
 }
 
 /* ---------- IPv4 ---------- */
@@ -243,8 +249,10 @@ static int ip_out(u8 proto,u32 dst,const u8 *pl,int plen){
     else {
         u32 nh=(mask && ((dst&mask)==(my_ip&mask)))?dst:(gw?gw:dst);
         if(!arp_find(nh,dm)){
-            arp_request(nh);
-            memcpy(pend,ob,(size_t)fl); pend_len=fl; pend_ip=nh; pend_t=kticks(); pend_try=1;
+            int ya=0, slot=-1; for(int i=0;i<NPEND;i++){ if(pq[i].len && pq[i].ip==nh) ya=1; if(slot<0 && !pq[i].len) slot=i; }
+            if(!ya) arp_request(nh);
+            if(slot<0){ slot=0; for(int i=1;i<NPEND;i++) if((int)(pq[i].seq-pq[slot].seq)<0) slot=i; }      /* llena: se descarta el mas viejo */
+            memcpy(pq[slot].d,ob,(size_t)fl); pq[slot].len=fl; pq[slot].ip=nh; pq[slot].t=kticks(); pq[slot].tr=1; pq[slot].seq=++pq_seq;
             return 1;
         }
     }
@@ -674,7 +682,7 @@ static void dns_job(void);
 int net_state(void){ return net_st; }
 static void net_start(void){
     my_ip=mask=gw=dns_ip=0; net_st=1; dh_state=1; dh_tries=0; dh_xid=kticks()*2654435761u+0x1234u;
-    arp_next=0; memset(arpt,0,sizeof arpt); pend_len=0;
+    arp_next=0; memset(arpt,0,sizeof arpt); for(int i=0;i<NPEND;i++) pq[i].len=0;
     dhcp_send(1);
 }
 int net_init(void){
@@ -729,8 +737,8 @@ void net_poll(void){
         if(++cnt>=64) break;
     }
     u32 now=kticks();
-    if(pend_len && (int)(now-pend_t)>=100){
-        if(++pend_try>3) pend_len=0; else { arp_request(pend_ip); pend_t=now; }
+    for(int i=0;i<NPEND;i++) if(pq[i].len && (int)(now-pq[i].t)>=100){
+        if(++pq[i].tr>3) pq[i].len=0; else { arp_request(pq[i].ip); pq[i].t=now; }
     }
     dhcp_tick(); dns_tick(); tcp_tick(); http_step(); ping_step(); dns_job(); wget_step();
     if(sock_tick_hook) sock_tick_hook();
