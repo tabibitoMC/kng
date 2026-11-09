@@ -27,9 +27,11 @@ jobs:
           python3 tools/mkrootfs.py --debian kng-extra.cpio 2>/dev/null
           mkdir -p www; echo "hola desde el anfitrion" > www/hola.txt
           ( cd www && python3 -m http.server 18090 > ../http.log 2>&1 & )
+          ( python3 tools/ci_upload.py 18091 > upload.log 2>&1 & )
           sleep 1
           QMON=/tmp/qmon.sock KELF=kernel64/kng-kernel64-text.elf python3 tools/ci_drive.py "${{ inputs.lista }}" diag.log -- qemu-system-x86_64 -monitor unix:/tmp/qmon.sock,server,nowait -kernel kernel64/kng-kernel64-text.elf -initrd debian.cpio,kng-extra.cpio -display none -serial stdio -m ${{ inputs.ram }} -netdev user,id=n0 -object filter-dump,id=f1,netdev=n0,file=net.pcap -device e1000,netdev=n0 || true
           echo "=== diag ==="; cat diag.log
+          for f in subidas/*.xwd; do [ -f "$f" ] && python3 tools/xwd2png.py "$f" "${f%.xwd}.png" || true; done
           sudo apt-get install -y tcpdump > /dev/null 2>&1 || true
           echo "=== DNS en la red ==="; sudo tcpdump -nn -tt -r net.pcap 'udp port 53' 2>&1 | head -80 || true
       - uses: actions/upload-artifact@v4
@@ -39,3 +41,4 @@ jobs:
           path: |
             *.log
             net.pcap
+            subidas/*.png

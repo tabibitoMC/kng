@@ -13,3 +13,4 @@
 60|ejecutar /usr/bin/xwininfo -root -tree
 30|ejecutar /bin/sh -c "tr -d '\000' < /var/lib/xvfb/Xvfb_screen0 | wc -c"
 20|procesos
+120|ejecutar /usr/bin/curl -sS -m 100 -T /var/lib/xvfb/Xvfb_screen0 http://10.0.2.2:18091/oficina.xwd

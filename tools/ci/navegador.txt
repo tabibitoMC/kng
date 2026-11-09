@@ -12,9 +12,11 @@
 300|ejecutar /usr/lib/chromium/chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/cr --headless --enable-logging=stderr --v=0 --dump-dom http://10.0.2.2:18090/hola.txt
 20|rastro 0
 20|procesos
+120|ejecutar /usr/bin/curl -sS -m 100 -T /var/lib/xvfb/Xvfb_screen0 http://10.0.2.2:18091/navegador.xwd
 300|ejecutar /usr/lib/chromium/chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/cr --headless --enable-logging=stderr --v=0 --dump-dom https://example.com
 20|ejecutar /usr/lib/chromium/chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/cr2 --enable-logging=stderr --v=0 http://example.com &
 @esperar 60
 60|ejecutar /usr/bin/xwininfo -root -tree
 30|ejecutar /bin/sh -c "tr -d '\000' < /var/lib/xvfb/Xvfb_screen0 | wc -c"
 20|procesos
+120|ejecutar /usr/bin/curl -sS -m 100 -T /var/lib/xvfb/Xvfb_screen0 http://10.0.2.2:18091/navegador.xwd
