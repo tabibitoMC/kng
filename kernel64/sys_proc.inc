@@ -11,7 +11,7 @@ static void pf_x(char *o,int max,int *n,u64 v){ char t[20]; int k=0; if(!v) t[k+
 #define PX(v)  pf_x(o,max,&n,(u64)(v))
 
 static Task *task_by_pid(int pid){ for(int i=0;i<MAXT;i++) if(tasks[i].state!=T_FREE&&tasks[i].leader&&tasks[i].pid==pid) return &tasks[i]; return 0; }
-static u64 proc_rss_kb(Proc *pr){ return (u64)(pr->slab_n>0?(pr->slab_n-1)*SLAB_PAGES+pr->slab_used:0)*4; }
+static u64 proc_rss_kb(Proc *pr){ u64 t=0; for(int i=0;i+1<pr->slab_n;i++) t+=(u64)slab_cap(i); if(pr->slab_n) t+=(u64)pr->slab_used; return t*4; }
 
 static int gen_proc_pid(Task *tk,const char *rest,char *o,int max){
     int n=0; o[0]=0; Proc *pr=tk->pr; if(!pr) return -1;
@@ -85,16 +85,4 @@ static u64 virt_open(const char *path,u64 flags){
     KObj *o=obj_new(11); if(!o){ kfree(buf); return RET_ERR(ENOMEM); }
     o->data=buf; o->size=n;
     FD *f=&CP->fd[fd]; memset(f,0,sizeof *f); f->type=11; f->obj=o; f->flags=(int)flags; f->cloexec=(flags&0x80000)?1:0; return (u64)fd;
-}
-static u64 sys_readlink(u64 path_va,u64 buf,u64 size){
-    char path[160]; if(ustr(CP,path,sizeof path,path_va)) return RET_ERR(EFAULT);
-    char full[200]; if(abs_path(path,full,sizeof full)) return RET_ERR(ENOENT);
-    char tgt[200]; tgt[0]=0;
-    if(!k_strcmp(full,"/proc/self/exe")) k_strcpy(tgt,CP->exe[0]?CP->exe:"/bin/kng-app",sizeof tgt);
-    else if(!k_strcmp(full,"/proc/self/cwd")) k_strcpy(tgt,CP->cwd,sizeof tgt);
-    else if(k_startswith(full,"/proc/self/fd/")){ int fd=0; const char *q=full+14; while(*q>='0'&&*q<='9') fd=fd*10+(*q++-'0');
-        if(fd>=MAXFD||!CP->fd[fd].type) return RET_ERR(ENOENT);
-        FD *f=&CP->fd[fd]; if(f->type==2) fs_path(f->node,tgt,sizeof tgt); else if(f->type==1) k_strcpy(tgt,"/dev/console",sizeof tgt); else if(f->type==5) k_strcpy(tgt,"socket:[1]",sizeof tgt); else if(f->type==3||f->type==4) k_strcpy(tgt,"pipe:[1]",sizeof tgt); else k_strcpy(tgt,"anon_inode:[kng]",sizeof tgt); }
-    else { FsNode *n=resolve_path(path); return RET_ERR(n?EINVAL:ENOENT); }
-    u64 l=(u64)k_strlen(tgt); if(l>size) l=size; return ucopy_to(CP,buf,tgt,l)?RET_ERR(EFAULT):l;
 }

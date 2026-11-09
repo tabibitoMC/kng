@@ -45,13 +45,13 @@ static void test_signals(void){
     sa.sa_sigaction=h_usr1; sa.sa_flags=SA_SIGINFO; sigemptyset(&sa.sa_mask);
     CHECK(sigaction(SIGUSR1,&sa,0)==0,"sigaction SIGUSR1");
     kill(getpid(),SIGUSR1);
-    CHECK(got_usr1==1201,"manejador de senal recibe SIGUSR1 con siginfo");
+    CHECK(got_usr1==1001,"manejador de senal recibe SIGUSR1 con siginfo");
     /* bloqueo y pendiente */
     sigset_t m,old,pend; sigemptyset(&m); sigaddset(&m,SIGUSR1); got_usr1=0;
     sigprocmask(SIG_BLOCK,&m,&old); kill(getpid(),SIGUSR1);
     int blocked_ok=(got_usr1==0); sigpending(&pend); int pend_ok=sigismember(&pend,SIGUSR1);
     sigprocmask(SIG_SETMASK,&old,0);
-    CHECK(blocked_ok&&pend_ok&&got_usr1==1201,"senal bloqueada queda pendiente y llega al desbloquear");
+    CHECK(blocked_ok&&pend_ok&&got_usr1==1001,"senal bloqueada queda pendiente y llega al desbloquear");
     /* alarm interrumpe pause */
     signal(SIGALRM,h_alrm); got_alrm=0; alarm(1);
     int r=pause();

@@ -292,7 +292,7 @@ void kmain64(uint32_t magic, struct mb_info *mi){
     if(magic!=0x2BADB002){ kprintf("Arranque no Multiboot (magic=0x%x). Detenido.\n",magic); for(;;) __asm__ volatile("hlt"); }
     kprintf("[ok] modo largo (64 bits), paginacion de 4 GB en identidad\n");
     idt_init(); pic_init(); pit_init(); irq_handlers[1]=kb_irq; mouse_init();
-    mem_init(mi); heap_init(256ull<<20);
+    mem_init(mi); heap_init(~0ull);
     __asm__ volatile("sti");
     kprintf("[ok] IDT, PIC, PIT(100Hz), teclado y raton PS/2\n");
     kprintf("[ok] RAM utilizable: %lu KB, heap %lu KB\n",ram_kb,heap_total/1024);

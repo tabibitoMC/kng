@@ -107,7 +107,7 @@ static u64 sys_bind(u64 fdn,u64 addr,u64 len){
     int r=get_sockaddr(addr,len,&fam,&ip,&port,up,&pl); if(r<0) return RET_ERR(-r);
     if(fam!=sock_family(s)) return RET_ERR(EAFNOSUPPORT);
     r=sock_bind(s,ip,port,up,pl); if(r<0) return RET_ERR(-r);
-    if(fam==1&&pl>0&&up[0]){ char path[110]; memcpy(path,up,(size_t)pl); path[pl]=0; char leaf[32]; FsNode *d=resolve_parent(path,leaf); if(d&&d->dir&&!fs_find(d,leaf)){ FsNode *n=fs_create(d,leaf,"",0); if(n){ n->sys=1; n->dev=8; } } }
+    if(fam==1&&pl>0&&up[0]){ char path[110]; memcpy(path,up,(size_t)pl); path[pl]=0; char leaf[FS_NAME]; FsNode *d=resolve_parent(path,leaf); if(d&&d->dir&&!fs_find(d,leaf)){ FsNode *n=fs_create(d,leaf,"",0); if(n){ n->sys=1; n->dev=8; } } }
     return 0;
 }
 static u64 sys_listen(u64 fdn,u64 backlog){ int s=fd_sock(fdn); if(s<0) return RET_ERR(fdn<MAXFD&&CP->fd[fdn].type?ENOTSOCK:EBADF); int r=sock_listen(s,(int)backlog); return r<0?RET_ERR(-r):0; }

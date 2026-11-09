@@ -18,6 +18,8 @@ try:
     subprocess.check_call(['gcc', '-O2', '-pthread', '-o', tmp + '/bin/multi-dyn', msrc])
     nsrc = os.path.join(raiz, 'kernel64', 'user', 'nettest.c')
     subprocess.check_call(['gcc', '-O2', '-o', tmp + '/bin/nettest', nsrc])
+    msrc2 = os.path.join(raiz, 'kernel64', 'user', 'memtest.c')
+    subprocess.check_call(['gcc', '-O2', '-w', '-o', tmp + '/bin/memtest', msrc2])
     ldd = subprocess.check_output(['ldd', tmp + '/bin/hola-dyn'], text=True)
     ld = libc = None
     for l in ldd.splitlines():

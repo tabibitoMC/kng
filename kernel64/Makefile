@@ -28,7 +28,7 @@ blob64.o: blob64.S user/hola.elf
 	$(CC) -m64 -c blob64.S -o $@
 proc64s.o: proc64.S
 	$(CC) -m64 -c $< -o $@
-proc64.o: proc64.c $(K)/kng.h $(K)/fs.h
+proc64.o: proc64.c sys_sig.inc sys_net.inc sys_proc.inc sys_mem.inc sys_fs.inc sock.h $(K)/kng.h $(K)/fs.h $(K)/net.h
 	$(CC) $(KFLAGS) -c $< -o $@
 sock.o: sock.c sock.h $(K)/net.h $(K)/kng.h
 	$(CC) $(KFLAGS) -c $< -o $@

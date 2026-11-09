@@ -35,7 +35,7 @@ extern char blob_hola_start[], blob_hola_end[];
 #define INTERP_BASE 0x7e0000000000ull    /* enlazador dinamico (ld.so) */
 #define MMAP_BASE  0x7f0000000000ull
 #define STACK_TOP  0x7ffffff00000ull
-#define STACK_SIZE (1024*1024)
+#define STACK_SIZE (8*1024*1024)
 #define USER_MAX   0x7ffffffff000ull
 enum { ENOENT=2, ESRCH=3, EINTR=4, ENOEXEC=8, EBADF=9, ECHILD=10, EAGAIN=11, ENOMEM=12, EFAULT=14, EEXIST=17, ENOTDIR=20, EISDIR=21,
        EINVAL=22, EMFILE=24, ENOTTY=25, ERANGE=34, EPIPE=32, ENOSYS=38, ETIMEDOUT=110 };
@@ -50,10 +50,11 @@ static inline void wrmsr(u32 m,u64 v){ __asm__ volatile("wrmsr"::"c"(m),"a"((u32
 static inline u64 rdmsr(u32 m){ u32 a,d; __asm__ volatile("rdmsr":"=a"(a),"=d"(d):"c"(m)); return ((u64)d<<32)|a; }
 static int proc_ready;
 static void dev_create(void);
+static void fs_shm_release(void *o);
 
 /* ---------- estructuras ---------- */
-#define SLAB_PAGES 64
-#define SLAB_MAX   256
+#define SLAB_MAX   2048                  /* bloques de paginas por proceso: los 4 primeros de 64 paginas, el resto de 256 (hasta ~2 GB) */
+static inline int slab_cap(int idx){ return idx<4?64:256; }
 #define MAXFD 64
 #define MAXT  64
 #define KSTK  32768
@@ -63,13 +64,16 @@ struct Pipe { u8 buf[4096]; int r,w,count,readers,writers; };
 typedef struct KObj {
     int refs, kind, flags; u64 cnt; u64 t_next, t_int;
     char *data; int size;
+    u8 **tab, **traw; int ntab; u8 *contig, *craw; u64 ssize;           /* memoria compartida (kind 12): paginas por bloques o un solo bloque alineado */
     int nw; struct { int fd; u32 ev; u64 data; } w[EP_MAX];
 } KObj;
 typedef struct { u8 type, cloexec; FsNode *node; u64 pos; int flags; struct Pipe *pipe; int aux; KObj *obj; u32 tmo_r, tmo_s; } FD;
 /* tipos: 0 libre, 1 consola, 2 archivo, 3 pipe (lectura), 4 pipe (escritura), 5 socket (aux = indice), 6 eventfd, 7 epoll, 8 timerfd,
- *        10 dispositivo (aux = numero), 11 archivo generado (obj->data) */
+ *        10 dispositivo (aux = numero), 11 archivo generado (obj->data), 12 memoria compartida (memfd) */
 struct SigAct { u64 h, flags, restorer, mask; };
+struct Vma { u64 s, e; u32 prot, kind; KObj *obj; FsNode *node; u64 off; };      /* region de memoria virtual de un proceso */
 typedef struct Proc {
+    struct Vma *vma; int nvma, cvma; u64 *freepg;
     u64 *pml4; void *slab_raw[SLAB_MAX]; u64 slab_base[SLAB_MAX]; int slab_n, slab_used;
     u64 brk, brk0, mmap_next; FD fd[MAXFD]; int nthreads, pid; struct SigAct sa[65]; char cwd[96]; char exe[96];
     u64 alarm_at, alarm_int; u32 umask; int pgid;
@@ -105,20 +109,23 @@ int proc_init(void){
     wrmsr(0xC0000084,0x4700);
     u64 cr3; __asm__ volatile("mov %%cr3,%0":"=r"(cr3)); kcr3=cr3;
     task0.state=T_READY; task0.leader=1; k_strcpy(task0.name,"kernel",sizeof task0.name);
-    sock_init(); dev_create();
+    sock_init(); dev_create(); fs_shm_hook=fs_shm_release;
     proc_ready=1; return 0;
 }
 
 /* ---------- paginas y tablas (por proceso) ---------- */
+static void vma_release(Proc *pr);
+static int vma_fault(Proc *pr,u64 va,int write);
 static u64 *pg_new(Proc *pr){
-    if(!pr->slab_n || pr->slab_used>=SLAB_PAGES){
+    if(pr->freepg){ u64 *p=pr->freepg; pr->freepg=(u64*)(uintptr_t)p[0]; memset(p,0,4096); return p; }
+    if(!pr->slab_n || pr->slab_used>=slab_cap(pr->slab_n-1)){
         if(pr->slab_n>=SLAB_MAX) return 0;
-        void *raw=kmalloc((SLAB_PAGES+1)*4096ull); if(!raw) return 0;
+        void *raw=kmalloc((u64)(slab_cap(pr->slab_n)+1)*4096ull); if(!raw) return 0;
         pr->slab_raw[pr->slab_n]=raw; pr->slab_base[pr->slab_n]=((u64)(uintptr_t)raw+4095)&~4095ull; pr->slab_n++; pr->slab_used=0; }
     u64 *p=(u64*)(uintptr_t)(pr->slab_base[pr->slab_n-1]+(u64)pr->slab_used*4096); pr->slab_used++;
     memset(p,0,4096); return p;
 }
-static void pg_free_all(Proc *pr){ for(int i=0;i<pr->slab_n;i++) kfree(pr->slab_raw[i]); pr->slab_n=0; pr->slab_used=0; pr->pml4=0; }
+static void pg_free_all(Proc *pr){ vma_release(pr); for(int i=0;i<pr->slab_n;i++) kfree(pr->slab_raw[i]); pr->slab_n=0; pr->slab_used=0; pr->pml4=0; }
 static int proc_space(Proc *pr){             /* PML4 nueva con los primeros 4 MB del kernel (solo supervisor) */
     pr->pml4=pg_new(pr); u64 *pdpt=pg_new(pr), *pd0=pg_new(pr);
     if(!pr->pml4||!pdpt||!pd0) return -1;
@@ -133,17 +140,22 @@ static int umap(Proc *pr,u64 va){
     return 0;
 }
 static u8 *uptr(Proc *pr,u64 va){
-    static const int sh[3]={39,30,21}; u64 *t=pr->pml4;
-    if(!t||va<USER_MIN||va>=USER_MAX) return 0;
-    for(int l=0;l<3;l++){ u64 e=t[(va>>sh[l])&511]; if(!(e&1)) return 0; t=(u64*)(uintptr_t)(e&~0xFFFull); }
-    u64 e=t[(va>>12)&511]; if(!(e&1)) return 0;
-    return (u8*)(uintptr_t)((e&~0xFFFull)|(va&0xFFF));
+    static const int sh[3]={39,30,21};
+    if(!pr->pml4||va<USER_MIN||va>=USER_MAX) return 0;
+    for(int tries=0;tries<2;tries++){
+        u64 *t=pr->pml4; int ok=1;
+        for(int l=0;l<3;l++){ u64 e=t[(va>>sh[l])&511]; if(!(e&1)){ ok=0; break; } t=(u64*)(uintptr_t)(e&~0xFFFull); }
+        if(ok){ u64 e=t[(va>>12)&511]; if(e&1) return (u8*)(uintptr_t)((e&~0xFFFull)|(va&0xFFF)); }
+        if(tries||vma_fault(pr,va,0)) return 0;          /* pagina aun sin crear: se crea ahora si cae en una region valida */
+    }
+    return 0;
 }
 static int ucopy_to(Proc *pr,u64 va,const void *src,u64 n){ const u8 *s=src; while(n){ u8 *d=uptr(pr,va); if(!d) return -1; u64 c=4096-(va&0xFFF); if(c>n) c=n; memcpy(d,s,c); va+=c; s+=c; n-=c; } return 0; }
 static int ucopy_from(Proc *pr,void *dst,u64 va,u64 n){ u8 *o=dst; while(n){ u8 *s=uptr(pr,va); if(!s) return -1; u64 c=4096-(va&0xFFF); if(c>n) c=n; memcpy(o,s,c); va+=c; o+=c; n-=c; } return 0; }
 static int umap_range(Proc *pr,u64 va,u64 len){ for(u64 p=va&~0xFFFull;p<va+len;p+=4096) if(umap(pr,p)) return -1; return 0; }
 static int ustr(Proc *pr,char *out,int max,u64 va){ for(int i=0;i<max-1;i++){ u8 *c=uptr(pr,va+(u64)i); if(!c) return -1; out[i]=(char)*c; if(!*c) return 0; } out[max-1]=0; return 0; }
 
+static int umap_set(Proc *pr,u64 va,u64 phys,u64 fl);
 static int as_clone(Proc *dst,Proc *src){      /* copia completa del espacio de usuario (fork) */
     for(int a=0;a<512;a++){ u64 e4=src->pml4[a]; if(!(e4&1)) continue; u64 *pdpt=(u64*)(uintptr_t)(e4&~0xFFFull);
       for(int b=0;b<512;b++){ u64 e3=pdpt[b]; if(!(e3&1)) continue; u64 *pdd=(u64*)(uintptr_t)(e3&~0xFFFull);
@@ -151,8 +163,13 @@ static int as_clone(Proc *dst,Proc *src){      /* copia completa del espacio de 
           for(int d=0;d<512;d++){ u64 e1=pt[d]; if(!(e1&1)) continue;
             u64 va=((u64)a<<39)|((u64)b<<30)|((u64)c<<21)|((u64)d<<12);
             if(va<USER_MIN) continue;
+            if(e1&0x200){ if(umap_set(dst,va,e1&~0xFFFull,e1&0xFFF)) return -1; continue; }      /* pagina compartida: se enlaza, no se copia */
             if(umap(dst,va)) return -1;
             memcpy(uptr(dst,va),(void*)(uintptr_t)(e1&~0xFFFull),4096); } } } }
+    if(src->nvma){                                              /* mismas regiones (con una referencia mas a sus objetos) */
+        dst->vma=kmalloc((size_t)src->cvma*sizeof(struct Vma)); if(!dst->vma) return -1;
+        memcpy(dst->vma,src->vma,(size_t)src->nvma*sizeof(struct Vma)); dst->nvma=src->nvma; dst->cvma=src->cvma;
+        for(int i=0;i<dst->nvma;i++) if(dst->vma[i].obj) dst->vma[i].obj->refs++; }
     return 0;
 }
 
@@ -169,14 +186,16 @@ static void task_prepare(Task *t,const struct regs *fr){      /* pila de kernel:
     u8 *top=t->kstk+KSTK; struct regs *f=(struct regs*)(top-sizeof(struct regs)); *f=*fr; t->frame=f;
     u64 *sp=(u64*)f; *--sp=(u64)(uintptr_t)task_start; for(int i=0;i<6;i++) *--sp=0; t->ksp=(u64)(uintptr_t)sp;
 }
-static void obj_unref(KObj *o){ if(o&&--o->refs<=0){ if(o->data) kfree(o->data); kfree(o); } }
+static void shm_free(KObj *o);
+static void obj_unref(KObj *o){ if(o&&--o->refs<=0){ if(o->kind==12) shm_free(o); if(o->data) kfree(o->data); kfree(o); } }
 static void fd_close(FD *f){
     if(f->type==3||f->type==4){ struct Pipe *p=f->pipe; if(f->type==3) p->readers--; else p->writers--; if(p->readers<=0&&p->writers<=0) kfree(p); }
     else if(f->type==5) sock_unref(f->aux);
-    else if(f->type==6||f->type==7||f->type==8||f->type==11) obj_unref(f->obj);
+    else if(f->type==2||f->type==10) fs_node_unref(f->node);
+    else if(f->type==6||f->type==7||f->type==8||f->type==11||f->type==12||(f->type==10&&f->obj)) obj_unref(f->obj);
     memset(f,0,sizeof *f);
 }
-static void fd_dup_into(FD *d,const FD *s){ *d=*s; d->cloexec=0; if(s->type==3) s->pipe->readers++; else if(s->type==4) s->pipe->writers++; else if(s->type==5) sock_ref(s->aux); else if(s->obj&&(s->type==6||s->type==7||s->type==8||s->type==11)) s->obj->refs++; }
+static void fd_dup_into(FD *d,const FD *s){ *d=*s; d->cloexec=0; if(s->type==3) s->pipe->readers++; else if(s->type==4) s->pipe->writers++; else if(s->type==5) sock_ref(s->aux); else if((s->type==2||s->type==10)&&s->node) fs_node_ref(s->node); else if(s->obj&&(s->type==6||s->type==7||s->type==8||s->type==11||s->type==12||s->type==10)) s->obj->refs++; }
 
 static u8 inl[256]; static int inl_n, inl_r, inl_ready;
 static void stdin_pump(void){
@@ -302,10 +321,11 @@ static int elf_map(Proc *pr,const u8 *img,u64 sz,u64 dyn_base,struct elfinfo *o,
 }
 
 #define MAXARG 16
+static int vma_add(Proc *pr,u64 s,u64 e,u32 prot,u32 kind,KObj *obj,FsNode *node,u64 off);
 static int build_stack(Proc *pr,u64 *sp_out,int argc,char **argv,int envc,char **envp,const char *execfn,u64 entry,u64 phdr,int phnum,u64 at_base){
     if(argc>MAXARG){ argc=MAXARG; }
     if(envc>MAXARG){ envc=MAXARG; }
-    if(umap_range(pr,STACK_TOP-STACK_SIZE,STACK_SIZE)) return -1;
+    if(vma_add(pr,STACK_TOP-STACK_SIZE,STACK_TOP,3,1,0,0,0)) return -1;            /* pila: 8 MB, las paginas se crean al usarlas */
     u64 sp=STACK_TOP-64, argv_va[MAXARG], env_va[MAXARG], l;
     l=(u64)k_strlen(execfn)+1; sp-=l; if(ucopy_to(pr,sp,execfn,l)) return -1; u64 execfn_va=sp;
     for(int i=0;i<argc;i++){ l=(u64)k_strlen(argv[i])+1; sp-=l; if(ucopy_to(pr,sp,argv[i],l)) return -1; argv_va[i]=sp; }
@@ -400,12 +420,11 @@ static int abs_path(const char *path,char *full,int max){
     int n=0; if(path[0]!='/'){ k_strcpy(full,CP->cwd,max); n=k_strlen(full); if(n&&full[n-1]!='/') full[n++]='/'; }
     int l=k_strlen(path); if(n+l>=max) return -1; memcpy(full+n,path,(size_t)l+1); return 0;
 }
-static FsNode *resolve_path(const char *path){ char full[200]; if(abs_path(path,full,sizeof full)) return 0; return fs_resolve(fs_root(),full); }
 static FsNode *resolve_parent(const char *path,char *leaf){      /* carpeta contenedora y nombre final */
     char full[200]; if(abs_path(path,full,sizeof full)) return 0;
     int e=k_strlen(full); while(e>1&&full[e-1]=='/') full[--e]=0;
     int s2=e; while(s2>0&&full[s2-1]!='/') s2--;
-    if(e-s2<=0||e-s2>=32) return 0;
+    if(e-s2<=0||e-s2>=FS_NAME) return 0;
     memcpy(leaf,full+s2,(size_t)(e-s2)); leaf[e-s2]=0;
     if(s2<=1) full[1]=0; else full[s2-1]=0;
     return fs_resolve(fs_root(),full);
@@ -427,20 +446,6 @@ static void refresh_resolv(void){
     b[n++]='\n'; b[n]=0;
     FsNode *f=fs_create(etc,"resolv.conf",b,n); if(f) f->sys=1;
 }
-static u64 sys_open(u64 path_va,u64 flags){
-    char path[160]; if(ustr(CP,path,sizeof path,path_va)) return RET_ERR(EFAULT);
-    if(!k_strcmp(path,"/etc/resolv.conf")) refresh_resolv();
-    FsNode *n=resolve_path(path);
-    if(!n){ u64 v=virt_open(path,flags); if(v!=RET_ERR(ENOENT)) return v; }
-    if(!n&&(flags&0x40)){ char leaf[32]; FsNode *d=resolve_parent(path,leaf); if(d&&d->dir) n=fs_create(d,leaf,"",0); }
-    if(!n) return RET_ERR(ENOENT);
-    if(n->dev==8) return RET_ERR(6);                                 /* archivo de socket AF_UNIX: se abre con connect(), no con open() */
-    int f=fd_alloc(CP,3); if(f<0) return RET_ERR(24);
-    FD *fp=&CP->fd[f]; memset(fp,0,sizeof *fp); fp->cloexec=(flags&0x80000)?1:0; fp->flags=(int)flags;
-    if(n->dev){ fp->type=10; fp->aux=n->dev; return (u64)f; }
-    if((flags&0x200)&&!n->dir) fs_write(n,"",0);
-    fp->type=2; fp->node=n; fp->pos=0; return (u64)f;
-}
 static u64 console_read(u64 buf,u64 n,int nb){
     if(!n) return 0;
     for(;;){
@@ -451,6 +456,10 @@ static u64 console_read(u64 buf,u64 n,int nb){
         block(T_READ);
     }
 }
+static u64 shm_rw(KObj *o,u64 off,u8 *buf,u64 n,int write);
+static int shm_resize(KObj *o,u64 size);
+static u64 fd_read(u64 fdn,u64 buf,u64 n);
+static u64 fd_write(u64 fdn,u64 buf,u64 n);
 static u64 fd_read(u64 fdn,u64 buf,u64 n){
     if(fdn>=MAXFD||!CP->fd[fdn].type) return RET_ERR(EBADF);
     FD *f=&CP->fd[fdn];
@@ -494,6 +503,9 @@ static u64 fd_read(u64 fdn,u64 buf,u64 n){
         } }
     case 10: return dev_read(f,buf,n);
     case 11: { KObj *o=f->obj; u64 left=f->pos<(u64)o->size?(u64)o->size-f->pos:0; if(n>left) n=left; if(n&&ucopy_to(CP,buf,o->data+f->pos,n)) return RET_ERR(EFAULT); f->pos+=n; return n; }
+    case 12: { KObj *o=f->obj; u8 tmp[1024]; u64 done=0; while(done<n&&f->pos<o->ssize){ u64 c=n-done; if(c>sizeof tmp) c=sizeof tmp; u64 got=shm_rw(o,f->pos,tmp,c,0); if(!got) break;
+                   if(ucopy_to(CP,buf+done,tmp,got)) return done?done:RET_ERR(EFAULT);
+                   done+=got; f->pos+=got; } return done; }
     }
     return RET_ERR(EBADF);
 }
@@ -508,11 +520,17 @@ static u64 fd_write(u64 fdn,u64 buf,u64 n){
     case 2: {
         FsNode *nd=f->node; if(nd->dir) return RET_ERR(EISDIR);
         if(f->flags&0x400) f->pos=(u64)nd->size;
-        u64 end=f->pos+n; u64 nsz=end>(u64)nd->size?end:(u64)nd->size; if(nsz>(64ull<<20)) return RET_ERR(ENOMEM);
-        char *nb=kmalloc(nsz?nsz:1); if(!nb) return RET_ERR(ENOMEM);
-        memset(nb,0,nsz); if(nd->size) memcpy(nb,nd->data,(size_t)nd->size);
-        if(n&&ucopy_from(CP,nb+f->pos,buf,n)){ kfree(nb); return RET_ERR(EFAULT); }
-        fs_write(nd,nb,(int)nsz); kfree(nb); f->pos=end; return n; }
+        if(f->pos+n>0x7fff0000ull) return RET_ERR(28);
+        while(done<n){ u64 c=n-done; if(c>sizeof tmp) c=sizeof tmp; if(ucopy_from(CP,tmp,buf+done,c)) return done?done:RET_ERR(EFAULT);
+            if(fs_write_at(nd,(int)f->pos,(char*)tmp,(int)c)) return done?done:RET_ERR(28);
+            f->pos+=c; done+=c; }
+        return n; }
+    case 12: {
+        KObj *o=f->obj; if(f->flags&0x400) f->pos=o->ssize;
+        if(f->pos+n>o->ssize&&shm_resize(o,f->pos+n)) return RET_ERR(ENOMEM);
+        while(done<n){ u64 c=n-done; if(c>sizeof tmp) c=sizeof tmp; if(ucopy_from(CP,tmp,buf+done,c)) return done?done:RET_ERR(EFAULT);
+            u64 w=shm_rw(o,f->pos,tmp,c,1); if(!w) break; f->pos+=w; done+=w; }
+        return done; }
     case 4: {
         struct Pipe *p=f->pipe;
         while(done<n){
@@ -529,23 +547,8 @@ static u64 fd_write(u64 fdn,u64 buf,u64 n){
     }
     return RET_ERR(EBADF);
 }
-static u64 sys_mmap(u64 addr,u64 len,u64 prot,u64 flags,u64 fdn,u64 off){
-    if(!len) return RET_ERR(EINVAL);
-    len=(len+4095)&~4095ull;
-    u64 va;
-    if((flags&0x10) && addr>=USER_MIN && addr+len<=USER_MAX && !(addr&0xFFF)) va=addr;
-    else { va=CP->mmap_next; if(va+len>=STACK_TOP-STACK_SIZE-(1ull<<20)) return RET_ERR(ENOMEM); CP->mmap_next+=len+4096; }
-    if(prot!=0){                                  /* PROT_NONE solo reserva direcciones (se mapea en mprotect) */
-        if(len>(256ull<<20)) return RET_ERR(ENOMEM);
-        if(umap_range(CP,va,len)) return RET_ERR(ENOMEM);
-        if(flags&0x10) for(u64 q=va;q<va+len;q+=4096){ u8 *pg=uptr(CP,q); if(pg) memset(pg,0,4096); }   /* MAP_FIXED encima de algo: empieza en cero */
-        if(!(flags&0x20) && (long)fdn>=0){        /* mapeo de archivo: copia privada */
-            if(fdn>=MAXFD||CP->fd[fdn].type!=2) return RET_ERR(EBADF);
-            FsNode *f=CP->fd[fdn].node; if(off<(u64)f->size){ u64 n=(u64)f->size-off; if(n>len) n=len; ucopy_to(CP,va,f->data+off,n); }
-        }
-    }
-    return va;
-}
+#include "sys_mem.inc"
+#include "sys_fs.inc"
 static u64 sys_brk(u64 want){
     if(want<CP->brk0||want>=CP->brk0+(256ull<<20)) return CP->brk;
     if(want>CP->brk){ if(umap_range(CP,CP->brk,want-CP->brk)) return CP->brk; }
@@ -634,27 +637,25 @@ static u64 sys_dispatch(struct regs *r){
     switch(nr){
     case 0:  return fd_read(a1,a2,a3);
     case 1:  return fd_write(a1,a2,a3);
-    case 2:  return sys_open(a1,a2);
-    case 257:return sys_open(a2,a3);
+    case 2:  return do_open(AT_FDCWD_L,a1,a2,a3);
+    case 257:return do_open((long)a1,a2,a3,a4);
     case 3:  if(a1<MAXFD&&CP->fd[a1].type){ fd_close(&CP->fd[a1]); return 0; } return RET_ERR(EBADF);
-    case 8:  { if(a1>=MAXFD||CP->fd[a1].type!=2) return RET_ERR(EBADF); FD *f=&CP->fd[a1]; u64 sz=(u64)f->node->size; long o=(long)a2; u64 np=a3==0?(u64)o:a3==1?f->pos+(u64)o:sz+(u64)o; f->pos=np; return np; }
-    case 4: case 5: case 6: case 262: {                       /* stat / fstat / lstat / newfstatat */
-        u64 sbuf=nr==262?a3:a2; u8 st[144]; memset(st,0,sizeof st); u32 mode=0x2190; u64 size=0, ino=1+a1; FsNode *sn=0;
-        if(nr==5){ if(a1>=MAXFD||!CP->fd[a1].type) return RET_ERR(EBADF); if(CP->fd[a1].type==2) sn=CP->fd[a1].node; else if(CP->fd[a1].type>=3) mode=010600; }
-        else { u64 pv=nr==262?a2:a1; char path[160]; if(ustr(CP,path,sizeof path,pv)) return RET_ERR(EFAULT);
-               if(nr==262 && !path[0] && (a4&0x1000)){ if(a1>=MAXFD||!CP->fd[a1].type) return RET_ERR(EBADF); if(CP->fd[a1].type==2) sn=CP->fd[a1].node; }
-               else { FsNode *n=resolve_path(path);
-                      if(!n){ char full[200],tmpb[4096]; if(abs_path(path,full,sizeof full)==0&&is_virtual_path(full)&&gen_proc(full,tmpb,sizeof tmpb)>=0){ mode=0100444; ino=0x7000+(u64)k_strlen(full); goto stat_done; } return RET_ERR(ENOENT); }
-                      sn=n; } }
-        if(nr==5&&CP->fd[a1].type==5) mode=0140777;
-        if(nr==5&&(CP->fd[a1].type==1||CP->fd[a1].type==10)) mode=020620;
-        if(sn){ mode=sn->dir?040755:0100755; size=(u64)sn->size; ino=(u64)(uintptr_t)sn>>4; if(sn->dev==8) mode=0140777; else if(sn->dev) mode=020666; }
-        stat_done:       /* st_dev/st_ino distintos por archivo: ld.so los usa para saber si una libreria ya esta cargada */
-        *(u64*)(st+0)=1; *(u64*)(st+8)=ino; *(u64*)(st+16)=1; *(u32*)(st+24)=mode; *(u64*)(st+48)=size; *(u64*)(st+56)=4096;
-        return ucopy_to(CP,sbuf,st,sizeof st)?RET_ERR(EFAULT):0; }
+    case 8:  return sys_lseek(a1,a2,a3);
+    case 4:  return sys_stat_at(AT_FDCWD_L,a1,a2,0,0,0);
+    case 6:  return sys_stat_at(AT_FDCWD_L,a1,a2,0x100,0,0);
+    case 5:  return sys_fstat(a1,a2);
+    case 262:return sys_stat_at((long)a1,a2,a3,a4,0,0);
+    case 332:return sys_stat_at((long)a1,a2,a5,a3,1,a4);
     case 9:  return sys_mmap(a1,a2,a3,a4,a5,a6);
-    case 10: if(a3&7){ if(umap_range(CP,a1,a2)) return RET_ERR(ENOMEM); } return 0;
-    case 11: case 28: return 0;                                 /* munmap/madvise: de momento no devuelven memoria */
+    case 10: return sys_mprotect(a1,a2,a3);
+    case 11: return sys_munmap(a1,a2);
+    case 28: return sys_madvise(a1,a2,a3);
+    case 25: return sys_mremap(a1,a2,a3,a4);
+    case 319: return sys_memfd_create(a1,a2);
+    case 29: return sys_shmget(a1,a2,a3);
+    case 30: return sys_shmat(a1,a2,a3);
+    case 31: return sys_shmctl(a1,a2,a3);
+    case 67: return sys_shmdt(a1);
     case 12: return sys_brk(a1);
     case 13: return sys_rt_sigaction(a1,a2,a3,a4);
     case 14: return sys_sigprocmask(a1,a2,a3,a4);
@@ -671,12 +672,14 @@ static u64 sys_dispatch(struct regs *r){
         if(a2==0x541B){ int v=0; if(CP->fd[a1].type==5) { u8 tb[1]; (void)tb; v=0; } else if(CP->fd[a1].type==3) v=CP->fd[a1].pipe->count; return ucopy_to(CP,a3,&v,4)?RET_ERR(EFAULT):0; }   /* FIONREAD */
         if((a2==0x5413)&&CP->fd[a1].type==1){ u16 ws[4]={25,80,0,0}; return ucopy_to(CP,a3,ws,8)?RET_ERR(EFAULT):0; }
         return RET_ERR(ENOTTY); }
-    case 17: { if(a1>=MAXFD||CP->fd[a1].type!=2) return RET_ERR(EBADF); FsNode *f=CP->fd[a1].node; u64 left=a4<(u64)f->size?(u64)f->size-a4:0; if(a3>left) a3=left; if(a3&&ucopy_to(CP,a2,f->data+a4,a3)) return RET_ERR(EFAULT); return a3; }
+    case 17: return sys_pio(a1,a2,a3,a4,0);
+    case 18: return sys_pio(a1,a2,a3,a4,1);
     case 20: { u64 tot=0; for(u64 i=0;i<a3&&i<64;i++){ u64 iov[2]; if(ucopy_from(CP,iov,a2+i*16,16)) return RET_ERR(EFAULT); long rv=(long)fd_write(a1,iov[0],iov[1]); if(rv<0) return tot?tot:(u64)rv; tot+=(u64)rv; } return tot; }
     case 19: { u64 tot=0; for(u64 i=0;i<a3&&i<64;i++){ u64 iov[2]; if(ucopy_from(CP,iov,a2+i*16,16)) return RET_ERR(EFAULT); long rv=(long)fd_read(a1,iov[0],iov[1]); if(rv<0) return tot?tot:(u64)rv; tot+=(u64)rv; if((u64)rv<iov[1]) break; } return tot; }
-    case 21: case 269: { char path[160]; if(ustr(CP,path,sizeof path,nr==21?a1:a2)) return RET_ERR(EFAULT); return resolve_path(path)?0:RET_ERR(ENOENT); }
-    case 89: return sys_readlink(a1,a2,a3);
-    case 267: return sys_readlink(a2,a3,a4);
+    case 21: return sys_access_at(AT_FDCWD_L,a1);
+    case 269: case 439: return sys_access_at((long)a1,a2);
+    case 89: return sys_readlinkat(AT_FDCWD_L,a1,a2,a3);
+    case 267: return sys_readlinkat((long)a1,a2,a3,a4);
     case 22: case 293: {                                      /* pipe / pipe2 */
         int f0=fd_alloc(CP,3); if(f0<0) return RET_ERR(EMFILE); CP->fd[f0].type=9; int f1=fd_alloc(CP,3); CP->fd[f0].type=0; if(f1<0) return RET_ERR(EMFILE);
         struct Pipe *p=kmalloc(sizeof *p); if(!p) return RET_ERR(ENOMEM); memset(p,0,sizeof *p); p->readers=1; p->writers=1;
@@ -728,8 +731,14 @@ static u64 sys_dispatch(struct regs *r){
     /* ---- varias que piden los programas ---- */
     case 95: { u32 o=CP->umask; CP->umask=(u32)a1&0777; return o; }
     case 98: case 100: { u8 z[144]; memset(z,0,sizeof z); if(a2&&nr==98) return ucopy_to(CP,a2,z,144)?RET_ERR(EFAULT):0; if(a1&&nr==100) ucopy_to(CP,a1,z,32); return kticks(); }
-    case 74: case 75: case 91: case 92: case 93: case 90: case 94: case 268: case 260: case 26: case 27: case 149: case 150: case 221: case 144: case 142: case 141: case 145: case 146: return 0;
-    case 77: case 76: { if(nr==77){ if(a1>=MAXFD||CP->fd[a1].type!=2) return RET_ERR(EBADF); FsNode *nd=CP->fd[a1].node; if(a2>(64ull<<20)) return RET_ERR(ENOMEM); char *nb=kmalloc(a2?a2:1); if(!nb) return RET_ERR(ENOMEM); memset(nb,0,a2); if(nd->size) memcpy(nb,nd->data,(size_t)(nd->size<(int)a2?nd->size:(int)a2)); fs_write(nd,nb,(int)a2); kfree(nb); return 0; } return 0; }
+    case 74: case 75: case 26: case 27: case 149: case 150: case 221: case 144: case 142: case 141: case 145: case 146: case 73: case 162: case 306: return 0;
+    case 90: case 92: case 94: case 132: case 235: return sys_exists_noop(AT_FDCWD_L,a1);
+    case 268: case 260: case 261: return sys_exists_noop((long)a1,a2);
+    case 280: if(!a2) return 0; return sys_exists_noop((long)a1,a2);
+    case 91: case 93: if(a1>=MAXFD||!CP->fd[a1].type) return RET_ERR(EBADF); return 0;
+    case 76: return sys_truncate_path(a1,a2);
+    case 77: return sys_ftruncate_fd(a1,a2);
+    case 285: if(a2) return 0; { u64 end=a3+a4; if(a1>=MAXFD||!CP->fd[a1].type) return RET_ERR(EBADF); if(CP->fd[a1].type==12){ if(end>CP->fd[a1].obj->ssize&&shm_resize(CP->fd[a1].obj,end)) return RET_ERR(ENOMEM); return 0; } if(CP->fd[a1].type==2){ FsNode *nd=CP->fd[a1].node; if(end>(u64)nd->size&&fs_resize(nd,(int)end)) return RET_ERR(28); return 0; } return RET_ERR(EINVAL); }
     case 137: case 138: { u8 sf[120]; memset(sf,0,sizeof sf); *(u64*)(sf+0)=0xEF53; *(u64*)(sf+8)=4096; *(u64*)(sf+16)=262144; *(u64*)(sf+24)=131072; *(u64*)(sf+32)=131072; *(u64*)(sf+40)=100000; *(u64*)(sf+48)=50000; *(u64*)(sf+72)=255; return ucopy_to(CP,a2,sf,sizeof sf)?RET_ERR(EFAULT):0; }
     case 157: { if(a1==15){ char nm[16]; if(ustr(CP,nm,sizeof nm,a2)) return RET_ERR(EFAULT); k_strcpy(cur->name,nm,sizeof cur->name); return 0; } if(a1==16){ return ucopy_to(CP,a2,cur->name,16)?RET_ERR(EFAULT):0; } return 0; }
     case 111: return (u64)cur->pid;
@@ -749,19 +758,20 @@ static u64 sys_dispatch(struct regs *r){
     case 234: return sys_kill(0,(int)a3,1,(int)a2);
     case 63: { u8 b[390]; memset(b,0,sizeof b); for(int i=0;i<6;i++) memcpy(b+i*65,UN[i],(size_t)k_strlen(UN[i])); return ucopy_to(CP,a1,b,sizeof b)?RET_ERR(EFAULT):0; }
     case 79: { int l=k_strlen(CP->cwd)+1; if((u64)l>a2) return RET_ERR(ERANGE); return ucopy_to(CP,a1,CP->cwd,(u64)l)?RET_ERR(EFAULT):(u64)l; }
-    case 80: { char path[160]; if(ustr(CP,path,sizeof path,a1)) return RET_ERR(EFAULT); FsNode *n=resolve_path(path); if(!n) return RET_ERR(ENOENT); if(!n->dir) return RET_ERR(ENOTDIR); fs_path(n,CP->cwd,sizeof CP->cwd); return 0; }
-    case 82: { char o[160],nw[160],leaf[32]; if(ustr(CP,o,sizeof o,a1)||ustr(CP,nw,sizeof nw,a2)) return RET_ERR(EFAULT);
-        FsNode *n=resolve_path(o); if(!n||!n->parent) return RET_ERR(ENOENT); FsNode *d=resolve_parent(nw,leaf); if(!d) return RET_ERR(ENOENT);
-        if(fs_find(d,leaf)) fs_remove(fs_find(d,leaf));
-        return (d==n->parent?fs_rename(n,leaf):fs_move(n,d,leaf))?RET_ERR(EINVAL):0; }
-    case 83: { char p[160],leaf[32]; if(ustr(CP,p,sizeof p,a1)) return RET_ERR(EFAULT); FsNode *d=resolve_parent(p,leaf); if(!d) return RET_ERR(ENOENT); if(fs_find(d,leaf)) return RET_ERR(EEXIST); return fs_mkdir(d,leaf)?0:RET_ERR(ENOMEM); }
-    case 84: case 87: { char p[160]; if(ustr(CP,p,sizeof p,a1)) return RET_ERR(EFAULT); FsNode *n=resolve_path(p); if(!n||!n->parent) return RET_ERR(ENOENT); return fs_remove(n)?RET_ERR(EINVAL):0; }
-    case 217: { if(a1>=MAXFD||CP->fd[a1].type!=2||!CP->fd[a1].node->dir) return RET_ERR(EBADF);
-        FD *f=&CP->fd[a1]; FsNode *l[96]; int cnt=fs_list(f->node,l,96); u64 off=0; u8 buf[4096]; if(a3>sizeof buf) a3=sizeof buf;
-        while((int)f->pos<cnt){ FsNode *c=l[f->pos]; int nl=k_strlen(c->name); u64 rl=(u64)((19+nl+1+7)&~7); if(off+rl>a3) break;
-            u8 *e=buf+off; memset(e,0,rl); *(u64*)e=(u64)(uintptr_t)c>>4; *(u64*)(e+8)=f->pos+1; *(u16*)(e+16)=(u16)rl; e[18]=c->dir?4:8; memcpy(e+19,c->name,(size_t)nl); off+=rl; f->pos++; }
-        if(off&&ucopy_to(CP,a2,buf,off)){ return RET_ERR(EFAULT); }
-        return off; }
+    case 80: return sys_chdir_path(a1);
+    case 81: return sys_fchdir(a1);
+    case 82: return sys_renameat(AT_FDCWD_L,a1,AT_FDCWD_L,a2);
+    case 264: case 316: return sys_renameat((long)a1,a2,(long)a3,a4);
+    case 86: return sys_linkat(AT_FDCWD_L,a1,AT_FDCWD_L,a2);
+    case 265: return sys_linkat((long)a1,a2,(long)a3,a4);
+    case 88: return sys_symlinkat(a1,AT_FDCWD_L,a2);
+    case 266: return sys_symlinkat(a1,(long)a2,a3);
+    case 83: return sys_mkdirat(AT_FDCWD_L,a1);
+    case 258: return sys_mkdirat((long)a1,a2);
+    case 263: return sys_unlinkat((long)a1,a2,a3);
+    case 84: return sys_unlinkat(AT_FDCWD_L,a1,0x200);
+    case 87: return sys_unlinkat(AT_FDCWD_L,a1,0);
+    case 217: return sys_getdents64(a1,a2,a3);
     case 96: { u64 t[2]; u32 k=kticks(); t[0]=k/100; t[1]=(u64)(k%100)*10000; return a1&&ucopy_to(CP,a1,t,16)?RET_ERR(EFAULT):0; }
     case 99: { u8 si[112]; memset(si,0,sizeof si); *(u64*)si=kticks()/100; *(u64*)(si+32)=256ull<<20; *(u64*)(si+40)=128ull<<20; *(u32*)(si+104)=1; return ucopy_to(CP,a1,si,sizeof si)?RET_ERR(EFAULT):0; }
     case 102: case 104: case 107: case 108: case 112: case 105: case 106: return 0;
@@ -793,10 +803,13 @@ void kernel_entry(struct regs *r){
         if(rv!=EXEC_DONE) r->rax=rv;
     } else if(r->int_no<32){
         u64 cr2=0; if(r->int_no==14) __asm__ volatile("mov %%cr2,%0":"=r"(cr2));
-        int sig=(r->int_no==14||r->int_no==13||r->int_no==12||r->int_no==11)?11:r->int_no==6?4:(r->int_no==0||r->int_no==16||r->int_no==19)?8:r->int_no==17?7:5;
-        if(sig_fault(r,sig,cr2)){
-            kprintf("\n[proceso %d] excepcion %lu en el programa: rip=0x%lx err=0x%lx cr2=0x%lx -> terminado\n",cur->pid,r->int_no,r->rip,r->err,cr2);
-            do_exit_group(-sig);
+        int pf_ok=(r->int_no==14&&!(r->err&1)&&vma_fault(CP,cr2,(r->err&2)!=0)==0);      /* primera vez que se toca la pagina: se crea y el programa sigue */
+        if(!pf_ok){
+            int sig=(r->int_no==14||r->int_no==13||r->int_no==12||r->int_no==11)?11:r->int_no==6?4:(r->int_no==0||r->int_no==16||r->int_no==19)?8:r->int_no==17?7:5;
+            if(sig_fault(r,sig,cr2)){
+                kprintf("\n[proceso %d] excepcion %lu en el programa: rip=0x%lx err=0x%lx cr2=0x%lx -> terminado\n",cur->pid,r->int_no,r->rip,r->err,cr2);
+                do_exit_group(-sig);
+            }
         }
     } else {
         isr_handler64(r);
@@ -810,23 +823,24 @@ void kernel_entry(struct regs *r){
 /* ---------- rootfs (archivo cpio "newc" entregado como modulo Multiboot: -initrd en QEMU, "module" en GRUB) ---------- */
 static u32 hex8(const u8 *p){ u32 v=0; for(int i=0;i<8;i++){ u8 c=p[i]; v=v*16+(u32)(c<='9'?c-'0':(c|32)-'a'+10); } return v; }
 static FsNode *mkpath(const char *path,int want_parent_only,const char **leaf){
-    FsNode *cur2=fs_root(); char part[32]; const char *p=path;
+    FsNode *cur2=fs_root(); char part[FS_NAME]; const char *p=path;
     for(;;){
         while(*p=='/') p++;
         int n=0; while(p[n]&&p[n]!='/') n++;
         if(!n) return cur2;
-        if(n>=32) return 0;
+        if(n>=FS_NAME) return 0;
         memcpy(part,p,(size_t)n); part[n]=0;
         int last=p[n]==0;
         if(last&&want_parent_only){ *leaf=p; return cur2; }
         FsNode *c=fs_find(cur2,part);
         if(!c){ c=fs_mkdir(cur2,part); if(!c) return 0; c->sys=1; }
-        if(!c->dir) return 0;
+        if(c->link) c=fs_resolve(cur2,part);
+        if(!c||!c->dir) return 0;
         cur2=c; p+=n;
     }
 }
 void rootfs_load(u32 mods_n,u32 mods_addr){
-    struct mod { u32 s,e,c,pad; } *m=(struct mod*)(uintptr_t)mods_addr; int files=0; u64 bytes=0;
+    struct mod { u32 s,e,c,pad; } *m=(struct mod*)(uintptr_t)mods_addr; int files=0, links=0; u64 bytes=0;
     for(u32 i=0;i<mods_n;i++){
         const u8 *p=(const u8*)(uintptr_t)m[i].s, *end=(const u8*)(uintptr_t)m[i].e;
         while(p+110<=end && p[0]=='0'&&p[1]=='7'&&p[2]=='0'&&p[3]=='7'&&p[4]=='0'&&p[5]=='1'){
@@ -836,11 +850,19 @@ void rootfs_load(u32 mods_n,u32 mods_addr){
             while(name[0]=='.'&&name[1]=='/'){ name+=2; }
             if(!k_strcmp(name,".")||!name[0]) continue;
             if((mode&0170000)==0040000){ mkpath(name,0,0); continue; }
-            if((mode&0170000)!=0100000) continue;                       /* enlaces simbolicos y especiales: omitidos (el rootfs se arma con copias reales) */
-            const char *leaf=0; FsNode *d=mkpath(name,1,&leaf); if(!d||!leaf||k_strlen(leaf)>=32) continue;
-            FsNode *f=fs_create(d,leaf,(const char*)data,(int)fsz); if(f){ f->sys=1; files++; bytes+=fsz; }
+            if((mode&0170000)==0120000){                                /* enlace simbolico: el contenido es la ruta destino */
+                const char *leaf=0; FsNode *d=mkpath(name,1,&leaf); if(!d||!leaf||k_strlen(leaf)>=FS_NAME||fsz>=300) continue;
+                char tg[300]; memcpy(tg,data,fsz); tg[fsz]=0;
+                FsNode *old=fs_find(d,leaf); if(old) fs_remove(old);
+                FsNode *f=fs_symlink(d,leaf,tg); if(f){ f->sys=1; links++; }
+                continue; }
+            if((mode&0170000)!=0100000) continue;                       /* dispositivos y otros especiales: omitidos */
+            const char *leaf=0; FsNode *d=mkpath(name,1,&leaf); if(!d||!leaf||k_strlen(leaf)>=FS_NAME) continue;
+            FsNode *f=fs_find(d,leaf); if(f&&f->dir) continue;
+            if(!f) f=fs_create(d,leaf,"",0);
+            if(f){ fs_adopt(f,(const char*)data,(int)fsz); f->sys=1; files++; bytes+=fsz; }          /* sin copiar: el archivo apunta a la memoria del modulo */
         }
     }
     dev_create(); etc_defaults(); refresh_resolv();
-    kprintf("[ok] rootfs: %d archivos (%lu KB) desde el modulo de arranque\n",files,bytes/1024);
+    kprintf("[ok] rootfs: %d archivos y %d enlaces (%lu KB) desde el modulo de arranque\n",files,links,bytes/1024);
 }

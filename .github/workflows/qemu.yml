@@ -37,6 +37,12 @@ jobs:
           echo "=== red64 ==="; cat red64.log
           echo "=== servidor ==="; cat servidor.log
           grep -q "nettest resultado.*TODO OK" red64.log && echo "PRUEBA red+senales+eventos: OK" || echo "PRUEBA red+senales+eventos: FALLO"
+      - name: Memoria y archivos en programas de usuario (64 bits)
+        run: |
+          python3 tools/mkrootfs.py rootfs.cpio
+          ( sleep 8; echo "ejecutar /bin/memtest"; sleep 60; echo "procesos"; sleep 2 ) | timeout 110 qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd rootfs.cpio -display none -serial stdio -m 512M > mem64.log 2>&1 || true
+          echo "=== mem64 ==="; cat mem64.log
+          grep -q "memtest resultado.*TODO OK" mem64.log && echo "PRUEBA memoria+archivos: OK" || echo "PRUEBA memoria+archivos: FALLO"
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: logs, path: "*.log" }
