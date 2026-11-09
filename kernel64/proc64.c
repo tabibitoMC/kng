@@ -724,6 +724,7 @@ static u64 sys_dispatch(struct regs *r){
         if(a2==2){ CP->fd[a1].cloexec=(u8)(a3&1); return 0; }
         if(a2==3){ return (u64)(CP->fd[a1].flags&~3)|2; }
         if(a2==4){ CP->fd[a1].flags=(CP->fd[a1].flags&~0x800)|(int)(a3&0x800); return 0; }
+        if(a2==5||a2==36){ short lt=2; if(a3&&ucopy_to(CP,a3,&lt,2)) return RET_ERR(EFAULT); return 0; }      /* F_GETLK: nadie tiene el cerrojo */
         return 0; }
     /* ---- red ---- */
     case 41: return sys_socket(a1,a2,a3);
