@@ -1,0 +1,10 @@
+# Oficina real (LibreOffice de Debian) sobre kng: instalar, convertir un documento a PDF sin ventana
+240|actualizar
+1500|instalar libreoffice-writer libreoffice-calc fonts-dejavu-core
+20|ejecutar /bin/sh -c "printf 'Hola desde Koenigreich OS\nLibreOffice real\n' > /tmp/a.txt"
+20|rastro 1
+600|ejecutar /usr/bin/soffice --headless --norestore -env:UserInstallation=file:///tmp/lo --convert-to pdf --outdir /tmp /tmp/a.txt
+20|rastro 0
+20|ejecutar /bin/ls -l /tmp/a.pdf
+20|ejecutar /bin/sh -c "head -c 8 /tmp/a.pdf"
+20|procesos

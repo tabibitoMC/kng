@@ -1,0 +1,19 @@
+# Navegador real (Chromium de Debian) sobre kng: version, modo sin ventana contra internet, y con ventana en el servidor X
+240|actualizar
+1500|instalar chromium
+20|ejecutar /bin/mkdir -p /var/lib/xvfb /tmp/.X11-unix /tmp/cr
+20|ejecutar /usr/bin/Xvfb :0 -screen 0 1024x768x24 -fbdir /var/lib/xvfb -ac -nolisten tcp &
+@esperar 8
+20|ejecutar /bin/kng-xinput &
+@esperar 2
+120|ejecutar /usr/bin/chromium --version
+20|rastro 1
+300|ejecutar /usr/bin/chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/cr --headless --dump-dom http://10.0.2.2:18090/hola.txt
+20|rastro 0
+20|procesos
+300|ejecutar /usr/bin/chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/cr --headless --dump-dom https://example.com
+20|ejecutar /usr/bin/chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/cr2 http://example.com &
+@esperar 60
+60|ejecutar /usr/bin/xwininfo -root -tree
+30|ejecutar /bin/sh -c "tr -d '\000' < /var/lib/xvfb/Xvfb_screen0 | wc -c"
+20|procesos
