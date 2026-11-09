@@ -1,4 +1,5 @@
 name: arranque-qemu
+# Pruebas rapidas en cada push. Las pruebas con Debian real estan en diag.yml (a mano): tools/ci/*.txt
 on: [push, workflow_dispatch]
 jobs:
   boot:
@@ -43,30 +44,6 @@ jobs:
           ( sleep 8; echo "ejecutar /bin/memtest"; sleep 60; echo "procesos"; sleep 2 ) | timeout 110 qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd rootfs.cpio -display none -serial stdio -m 512M > mem64.log 2>&1 || true
           echo "=== mem64 ==="; cat mem64.log
           grep -q "memtest resultado.*TODO OK" mem64.log && echo "PRUEBA memoria+archivos: OK" || echo "PRUEBA memoria+archivos: FALLO"
-      - name: Debian real (cache)
-        id: debcache
-        uses: actions/cache@v4
-        with:
-          path: build/debian.cpio.gz
-          key: debian-${{ hashFiles('tools/mkdebian.sh', 'tools/rootfs-es/**') }}
-      - name: Debian real sobre kng (sh, coreutils, curl con HTTPS, dpkg, apt, comandos en espanol)
-        timeout-minutes: 30
-        run: |
-          sudo apt-get install -y debootstrap debian-archive-keyring cpio
-          [ -f build/debian.cpio.gz ] || bash tools/mkdebian.sh
-          ls -la build/debian.cpio.gz
-          zcat build/debian.cpio.gz > debian.cpio
-          python3 tools/mkrootfs.py --debian kng-extra.cpio
-          mkdir -p www; echo "hola desde el anfitrion" > www/hola.txt
-          ( cd www && python3 -m http.server 18090 > ../http.log 2>&1 & )
-          sleep 1
-          python3 tools/ci_drive.py tools/ci/debian.txt deb64.log -- qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd debian.cpio,kng-extra.cpio -display none -serial stdio -m 3G -netdev user,id=n0 -device e1000,netdev=n0 || true
-          echo "=== deb64 ==="; cat deb64.log
-      - name: Pantalla grafica (Xvfb + clientes X + entrada) sobre Debian real
-        timeout-minutes: 35
-        run: |
-          python3 tools/ci_drive.py tools/ci/pantalla.txt pan64.log -- qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd debian.cpio,kng-extra.cpio -display none -serial stdio -m 4G -netdev user,id=n0 -device e1000,netdev=n0 || true
-          echo "=== pan64 ==="; cat pan64.log
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: logs, path: "*.log" }
