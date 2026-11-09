@@ -46,7 +46,7 @@ jobs:
           grep -q "memtest resultado.*TODO OK" mem64.log && echo "PRUEBA memoria+archivos: OK" || echo "PRUEBA memoria+archivos: FALLO"
       - name: Mucha memoria (6 GB de RAM, parte por encima de 4 GB)
         run: |
-          ( sleep 8; echo "mem"; sleep 1; echo "ejecutar /bin/memtest"; sleep 60; echo "mem"; echo "procesos"; sleep 2 ) | timeout 110 qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd rootfs.cpio -display none -serial stdio -m 6G > mem6g.log 2>&1 || true
+          ( sleep 8; echo "mem"; sleep 1; echo "probar-ram"; sleep 25; echo "ejecutar /bin/memtest"; sleep 60; echo "mem"; echo "procesos"; sleep 2 ) | timeout 130 qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd rootfs.cpio -display none -serial stdio -m 6G > mem6g.log 2>&1 || true
           echo "=== mem6g ==="; cat mem6g.log
           grep -q "memtest resultado.*TODO OK" mem6g.log && echo "PRUEBA 6 GB: OK" || echo "PRUEBA 6 GB: FALLO"
           python3 - <<'PY'
@@ -56,6 +56,9 @@ jobs:
           kb=int(m.group(1)) if m else 0
           print('heap KB:',kb)
           print('PRUEBA heap grande: OK' if kb>5000000 else 'PRUEBA heap grande: FALLO')
+          m=re.search(r'probar-ram: .*\((\d+) MB\).*-> (\w+)',t)
+          print('probar-ram:',m.groups() if m else None)
+          print('PRUEBA RAM por encima de 4 GB: OK' if m and m.group(2)=='OK' and int(m.group(1))>4200 else 'PRUEBA RAM por encima de 4 GB: FALLO')
           PY
       - uses: actions/upload-artifact@v4
         if: always()

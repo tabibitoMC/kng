@@ -320,6 +320,20 @@ static void x_start(void){
     else kprintf("pantalla: falta kng-xinput (teclado y raton no llegaran a los programas)\n");
     x_up=1;
 }
+/* probar-ram: reserva toda la memoria del heap en trozos de 256 MB, escribe y comprueba una marca cada 2 MB (asi se toca RAM por encima de 4 GB) y la libera */
+static void cmd_probar_ram(void){
+    void *blk[64]; int n=0; u64 chunk=256ull<<20, tot=0, hi=0, bad=0, marks=0;
+    while(n<64){ void *p=kmalloc(chunk); if(!p) break; blk[n++]=p;
+        for(u64 o=0;o<chunk;o+=(1u<<21)){ *(volatile u64*)((uint8_t*)p+o)=((u64)(uintptr_t)p+o)^0x5A5A5A5A5A5A5A5Aull; marks++; }
+        *(volatile u64*)((uint8_t*)p+chunk-8)=0xC0FFEE0000000000ull+(u64)n;
+        tot+=chunk; if((u64)(uintptr_t)p+chunk>hi) hi=(u64)(uintptr_t)p+chunk; }
+    for(int i=0;i<n;i++){ uint8_t *p=blk[i];
+        for(u64 o=0;o<chunk;o+=(1u<<21)) if(*(volatile u64*)(p+o)!=(((u64)(uintptr_t)p+o)^0x5A5A5A5A5A5A5A5Aull)) bad++;
+        if(*(volatile u64*)(p+chunk-8)!=0xC0FFEE0000000000ull+(u64)(i+1)) bad++; }
+    for(int i=0;i<n;i++) kfree(blk[i]);
+    u64 u,f,m; heap_stats(&u,&f,&m);
+    kprintf("probar-ram: %lu MB reservados en %d trozos, direccion mas alta 0x%lx (%lu MB), %lu marcas, %lu errores, heap usado tras liberar %lu B -> %s\n",tot>>20,n,hi,hi>>20,marks,bad,u,bad==0&&n>0?"OK":"FALLO");
+}
 static void cmd_pantalla(void){ if(!x_up) x_start(); if(x_up&&gui_mode) gui_open_xscreen(x_gw,x_gh); }
 /* abrir <programa> [argumentos]: arranca la pantalla X si hace falta y abre el programa dentro de ella */
 static void cmd_abrir(char *args){
@@ -335,6 +349,7 @@ static void run(char *l){
     if(streq(l,"help")) kprintf("help info mem heap uptime clear echo <txt> reboot halt | ejecutar <ruta> [&] programas procesos matar <pid> rastro [0-2] | red ping <host> dns <host> wget <url> | pantalla abrir <programa> actualizar instalar quitar buscar (ayuda-programas)\n");
     else if(streq(l,"info")) kprintf("kng-kernel %s (%s, Multiboot)\nParte de Konigreich OS. Modo largo, IDT, heap, interfaz grafica, red. Sin procesos todavia.\n",KNG_VERSION,KNG_ARCH);
     else if(streq(l,"mem")) kprintf("RAM usable: %lu KB | heap: %lu KB\n",ram_kb,heap_total/1024);
+    else if(streq(l,"probar-ram")) cmd_probar_ram();
     else if(streq(l,"heap")){ u64 u,f,m; heap_stats(&u,&f,&m); kprintf("heap: total %lu KB | usado %lu B | libre %lu B | bloque libre mayor %lu B\n",heap_total/1024,u,f,m); }
     else if(streq(l,"uptime")) kprintf("%u.%u s\n",ticks/100,(ticks%100)/10);
     else if(startswith(l,"ejecutar ")||startswith(l,"run ")){

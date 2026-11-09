@@ -347,8 +347,8 @@ static int w_select(Task *t){ int r=select_scan(t->pr,t->wa_n,t->wa_p1,t->wa_p2,
 static u64 do_select(u64 nfds,u64 rva,u64 wva,u64 eva,long tmo_ticks,u64 sigmask){
     if(nfds>1024) return RET_ERR(EINVAL);
     if(sigmask){ u64 sm[2]; if(!ucopy_from(CP,sm,sigmask,16)&&sm[0]){ u64 nm; if(ucopy_from(CP,&nm,sm[0],8)) return RET_ERR(EFAULT); cur->sigsaved=cur->sigmask; cur->has_saved=1; cur->sigmask=nm&~UNBLOCKABLE; } }
-    int c=select_scan(CP,(int)nfds,rva,wva,eva,1); if(c==-2) return RET_ERR(EBADF); if(c<0) return RET_ERR(EFAULT);
-    if(c>0||tmo_ticks==0) return (u64)c;
+    int c=select_scan(CP,(int)nfds,rva,wva,eva,0); if(c==-2) return RET_ERR(EBADF); if(c<0) return RET_ERR(EFAULT);      /* primero solo se mira: escribir los conjuntos (vacios) antes de esperar los borraria */
+    if(c>0||tmo_ticks==0){ if(select_scan(CP,(int)nfds,rva,wva,eva,1)<0) return RET_ERR(EFAULT); return (u64)c; }
     if(INTR()) return RET_ERR(EINTR);
     cur->wa_n=(int)nfds; cur->wa_p1=rva; cur->wa_p2=wva; cur->wa_p3=eva;
     int b=block_fn(w_select,tmo_ticks<0?0:(u32)tmo_ticks); if(b==1) return RET_ERR(EINTR);
