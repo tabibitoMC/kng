@@ -69,7 +69,7 @@ jobs:
           EOS
           sudo sed -i 's/^          //' debroot/root/prueba.sh
           ( cd debroot && sudo find . | sudo cpio -o -H newc --quiet > ../debian.cpio )
-          ls -la debian.cpio; du -sh debroot
+          ls -la debian.cpio; sudo du -sh debroot || true
           mkdir -p www; echo "hola desde el anfitrion" > www/hola.txt
           ( cd www && python3 -m http.server 18090 > ../http.log 2>&1 & )
           sleep 1
