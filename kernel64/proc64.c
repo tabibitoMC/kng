@@ -783,12 +783,12 @@ static u64 sys_dispatch(struct regs *r){
     case 74: case 75: case 26: case 27: case 149: case 150: case 221: case 144: case 142: case 141: case 145: case 146: case 73: case 162: case 306: return 0;
     case 90: case 92: return sys_exists_noop(AT_FDCWD_L,a1);
     case 94: return sys_exists_nf(AT_FDCWD_L,a1,0);
-    case 132: return sys_utime(AT_FDCWD_L,a1,a2,2);
-    case 235: return sys_utime(AT_FDCWD_L,a1,a2?a2-16:0,1);
+    case 132: return sys_utime(AT_FDCWD_L,a1,a2,2,1);
+    case 235: return sys_utime(AT_FDCWD_L,a1,a2?a2-16:0,1,1);
     case 268: return sys_exists_noop((long)(int)a1,a2);
     case 260: return sys_exists_nf((long)(int)a1,a2,!(a5&0x100));
-    case 261: return sys_utime((long)(int)a1,a2,a3?a3-16:0,1);
-    case 280: return sys_utime((long)(int)a1,a2,a3,0);
+    case 261: return sys_utime((long)(int)a1,a2,a3?a3-16:0,1,1);
+    case 280: return sys_utime((long)(int)a1,a2,a3,0,!(a4&0x100));
     case 91: case 93: if(a1>=MAXFD||!CP->fd[a1].type) return RET_ERR(EBADF); return 0;
     case 76: return sys_truncate_path(a1,a2);
     case 77: return sys_ftruncate_fd(a1,a2);

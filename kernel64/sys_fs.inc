@@ -247,9 +247,9 @@ static u64 sys_exists_nf(long dirfd,u64 path_va,int follow){        /* chmod/cho
 }
 
 /* fechas de archivos: mode 0 = utimensat (times = 2 timespec), 1 = utimes/futimesat (2 timeval), 2 = utime (actime, modtime) */
-static u64 sys_utime(long dirfd,u64 path_va,u64 times,int mode){
+static u64 sys_utime(long dirfd,u64 path_va,u64 times,int mode,int follow){
     FsNode *n=0; int err=ENOENT;
-    if(path_va){ char path[PATH_MAX_]; int e=upath(path_va,path); if(e) return RET_ERR(-e); n=lookup_at(dirfd,path,1,&err); }
+    if(path_va){ char path[PATH_MAX_]; int e=upath(path_va,path); if(e) return RET_ERR(-e); n=lookup_at(dirfd,path,follow,&err); }
     else if(dirfd>=0&&dirfd<MAXFD&&(CP->fd[dirfd].type==2||CP->fd[dirfd].type==10)){ n=CP->fd[dirfd].node; }
     if(!n) return RET_ERR(err);
     u64 now=wall_sec(), mt=now;
