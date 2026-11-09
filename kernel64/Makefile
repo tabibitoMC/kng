@@ -3,7 +3,9 @@ CC      = gcc
 K       = ../kernel
 KFLAGS  = -m64 -std=gnu11 -O2 -ffreestanding -fno-pie -no-pie -mcmodel=small -mno-red-zone -fno-stack-protector -fno-asynchronous-unwind-tables -fno-builtin -fno-tree-loop-distribute-patterns -mgeneral-regs-only -Wall -Wextra -nostdlib -I$(K) -DKNG_ARCH='"x86_64, 64 bits"'
 LDFLAGS = -m64 -T linker64.ld -nostdlib -static -no-pie -Wl,-z,noexecstack -Wl,--build-id=none -Wl,-z,max-page-size=4096
-OBJS    = kernel64.o gfx.o fs.o html.o gui.o net.o disk.o kbd.o
+OBJS    = kernel64.o proc64.o proc64s.o blob64.o gfx.o fs.o html.o gui.o net.o disk.o kbd.o
+
+UFLAGS = -m64 -O2 -ffreestanding -fPIE -pie -nostdlib -fno-stack-protector -Wl,-z,max-page-size=4096 -Wl,--build-id=none -Wl,-e,_start
 
 all: kng-kernel64.elf kng-kernel64-text.elf
 
@@ -18,6 +20,16 @@ boot64.o: boot64.S
 	$(CC) -m64 -c $< -o $@
 boot64-text.o: boot64.S
 	$(CC) -m64 -DNOVIDEO -c $< -o $@
+user/hola.elf: user/hola.c
+	$(CC) $(UFLAGS) -o $@ $<
+user/hola-glibc.elf: user/hola-glibc.c
+	$(CC) -O2 -static-pie -o $@ $<
+blob64.o: blob64.S user/hola.elf user/hola-glibc.elf
+	$(CC) -m64 -c blob64.S -o $@
+proc64s.o: proc64.S
+	$(CC) -m64 -c $< -o $@
+proc64.o: proc64.c $(K)/kng.h $(K)/fs.h
+	$(CC) $(KFLAGS) -c $< -o $@
 kernel64.o: kernel64.c $(K)/kng.h $(K)/gui.h $(K)/net.h
 	$(CC) $(KFLAGS) -c $< -o $@
 %.o: $(K)/%.c $(K)/kng.h $(K)/gfx.h $(K)/gui.h $(K)/fs.h $(K)/html.h $(K)/net.h $(K)/disk.h $(K)/kbd.h $(K)/net_pcnet_virtio.h
@@ -25,4 +37,4 @@ kernel64.o: kernel64.c $(K)/kng.h $(K)/gui.h $(K)/net.h
 run: kng-kernel64-text.elf
 	qemu-system-x86_64 -kernel kng-kernel64-text.elf -serial stdio -m 256M -netdev user,id=n0 -device e1000,netdev=n0
 clean:
-	rm -f *.o *.x64 kng-kernel64*.elf
+	rm -f *.o *.x64 kng-kernel64*.elf user/*.elf

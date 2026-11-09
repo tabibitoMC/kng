@@ -10,6 +10,7 @@
 #include "kbd.h"
 #include "gui.h"
 #include "net.h"
+#include "fs.h"
 
 typedef uint64_t u64;
 
@@ -95,9 +96,13 @@ static void pic_init(void){
 static const char *exc_names[]={"Division por cero","Debug","NMI","Breakpoint","Overflow","Bound","Opcode invalido","Sin FPU","Doble falta","",
     "TSS invalido","Segmento ausente","Falta de pila","Proteccion general","Falta de pagina"};
 static volatile uint32_t ticks;
+void proc_fault(u64 no,u64 rip,u64 err,u64 cr2);
+int  proc_exec(char *path,int argc,char **argv);
+void proc_list(void);
 void isr_handler64(struct regs *r){
     if(r->int_no<32){
         u64 cr2=0; if(r->int_no==14) __asm__ volatile("mov %%cr2,%0":"=r"(cr2));
+        if((r->cs&3)==3) proc_fault(r->int_no,r->rip,r->err,cr2);       /* fallo en ring 3: se mata el proceso, el kernel sigue */
         kprintf("\n[PANIC] excepcion %lu (%s) rip=0x%lx err=0x%lx",r->int_no,r->int_no<15?exc_names[r->int_no]:"reservada",r->rip,r->err);
         if(r->int_no==14) kprintf(" cr2=0x%lx",cr2);
         kprintf("\n");
@@ -220,12 +225,17 @@ static void heap_stats(u64 *used,u64 *freeb,u64 *largest){
 static void run(char *l){
     while(*l==' ') l++;
     if(!*l) return;
-    if(streq(l,"help")) kprintf("help info mem heap uptime clear echo <txt> reboot halt | red ping <host> dns <host> wget <url>\n");
+    if(streq(l,"help")) kprintf("help info mem heap uptime clear echo <txt> reboot halt | ejecutar <ruta> programas | red ping <host> dns <host> wget <url>\n");
     else if(streq(l,"info")) kprintf("kng-kernel %s (%s, Multiboot)\nParte de Konigreich OS. Modo largo, IDT, heap, interfaz grafica, red. Sin procesos todavia.\n",KNG_VERSION,KNG_ARCH);
     else if(streq(l,"mem")) kprintf("RAM usable: %lu KB | heap: %lu KB\n",ram_kb,heap_total/1024);
     else if(streq(l,"heap")){ u64 u,f,m; heap_stats(&u,&f,&m); kprintf("heap: total %lu KB | usado %lu B | libre %lu B | bloque libre mayor %lu B\n",heap_total/1024,u,f,m); }
     else if(streq(l,"uptime")) kprintf("%u.%u s\n",ticks/100,(ticks%100)/10);
-    else if(streq(l,"ps")||startswith(l,"run ")||streq(l,"progs")||streq(l,"sh")||streq(l,"selftest")) kprintf("no disponible en el kernel de 64 bits todavia (usa el de 32 bits para procesos)\n");
+    else if(startswith(l,"ejecutar ")||startswith(l,"run ")){
+        char *a[12]; int n=0; char *p=l; while(*p&&*p!=' ') p++;
+        while(*p&&n<12){ while(*p==' ') *p++=0; if(!*p) break; a[n++]=p; while(*p&&*p!=' ') p++; }
+        if(n){ int rc=proc_exec(a[0],n,a); if(rc>=0) kprintf("[proceso termino con codigo %d]\n",rc); } else kprintf("uso: ejecutar <ruta> [argumentos]\n"); }
+    else if(streq(l,"programas")||streq(l,"progs")) proc_list();
+    else if(streq(l,"ps")||streq(l,"sh")||streq(l,"selftest")) kprintf("no disponible en el kernel de 64 bits todavia\n");
     else if(streq(l,"clear")) clear();
     else if(startswith(l,"echo ")) kprintf("%s\n",l+5);
     else if(streq(l,"reboot")){ outb(0x64,0xFE); for(;;) __asm__ volatile("hlt"); }
@@ -234,6 +244,7 @@ static void run(char *l){
 }
 
 /* ---------- API para la interfaz grafica (kng.h) ---------- */
+void k_write_console(const char *s,int n){ for(int i=0;i<n;i++) putc(s[i]); }
 uint32_t kticks(void){ return ticks; }
 int kgetc(void){ return getc_nb(); }
 void kshell_exec(char *l){ if(net_cmd(l)) return; run(l); }
@@ -273,6 +284,7 @@ void kmain64(uint32_t magic, struct mb_info *mi){
     __asm__ volatile("sti");
     kprintf("[ok] IDT, PIC, PIT(100Hz), teclado y raton PS/2\n");
     kprintf("[ok] RAM utilizable: %lu KB, heap %lu KB\n",ram_kb,heap_total/1024);
+    if(!fs_root()) fs_init();
     if(net_init()==0){ char nb[90]; net_info(nb,sizeof nb); kprintf("[ok] %s\n",nb); } else kprintf("[i] sin tarjeta de red compatible (e1000 / RTL8139)\n");
     if(fb_ok){
         kprintf("[ok] framebuffer %ux%u 32 bpp en 0x%x. Iniciando escritorio...\n",fb_w,fb_h,fb_addr);

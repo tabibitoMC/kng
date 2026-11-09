@@ -1081,7 +1081,8 @@ void gui_key(int c){
 int gui_init(uint32_t *fb,int w,int h,int pitch_bytes){
     if(gfx_init(fb,w,h,pitch_bytes)) return -1;
     wall=kmalloc((size_t)w*h*4); if(!wall) return -1;
-    fs_init(); (void)kngfs_mount(); build_wall();
+    if(!fs_root()){ fs_init(); }
+    (void)kngfs_mount(); build_wall();
     { char kv[16]; if(cfg_get("teclado",kv,sizeof kv)){ int l=layout_from_name(kv); if(l>=0) kbd_set_layout(l); } }
     dobj_init(); mx=w/2; my=h/2; dirty=1; cursor_dirty=1; clk_next=0;
     return 0;
