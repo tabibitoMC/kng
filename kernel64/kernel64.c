@@ -99,6 +99,7 @@ static volatile uint32_t ticks;
 void proc_fault(u64 no,u64 rip,u64 err,u64 cr2);
 int  proc_exec(char *path,int argc,char **argv);
 void proc_list(void);
+void rootfs_load(uint32_t n,uint32_t addr);
 void isr_handler64(struct regs *r){
     if(r->int_no<32){
         u64 cr2=0; if(r->int_no==14) __asm__ volatile("mov %%cr2,%0":"=r"(cr2));
@@ -177,6 +178,10 @@ static void mem_init(struct mb_info *mi){
             p+=m->size+4;
         }
     } else { ram_kb=mi->mem_lower+mi->mem_upper; best_s=kend; best_e=0x100000ull+(u64)mi->mem_upper*1024; if(best_e>LIM) best_e=LIM; }
+    if(mi->flags&(1u<<3)){                           /* modulos de arranque (rootfs): el heap empieza despues de ellos */
+        struct { uint32_t s,e,c,pad; } *md=(void*)(uintptr_t)mi->mods_addr;
+        for(uint32_t i=0;i<mi->mods_n;i++) if(md[i].s<best_e && md[i].e>best_s) best_s=md[i].e;
+    }
     heap_start=(best_s+0xFFF)&~0xFFFull; heap_end=best_e;
 }
 struct hblk { u64 size, used; struct hblk *next, *prev; };      /* 32 bytes: mantiene la alineacion de 16 */
@@ -285,12 +290,14 @@ void kmain64(uint32_t magic, struct mb_info *mi){
     kprintf("[ok] IDT, PIC, PIT(100Hz), teclado y raton PS/2\n");
     kprintf("[ok] RAM utilizable: %lu KB, heap %lu KB\n",ram_kb,heap_total/1024);
     if(!fs_root()) fs_init();
+    if(!fb_ok && (mi->flags&8) && mi->mods_n) rootfs_load(mi->mods_n,mi->mods_addr);
     if(net_init()==0){ char nb[90]; net_info(nb,sizeof nb); kprintf("[ok] %s\n",nb); } else kprintf("[i] sin tarjeta de red compatible (e1000 / RTL8139)\n");
     if(fb_ok){
         kprintf("[ok] framebuffer %ux%u 32 bpp en 0x%x. Iniciando escritorio...\n",fb_w,fb_h,fb_addr);
         fb_wc(fb_addr,fb_pitch*fb_h);
         if(gui_init((uint32_t*)(uintptr_t)fb_addr,(int)fb_w,(int)fb_h,(int)fb_pitch)==0){
             gui_mode=1;
+            if((mi->flags&8) && mi->mods_n) rootfs_load(mi->mods_n,mi->mods_addr);
             for(;;){
                 int c; while((c=getc_nb())>=0) gui_key(c);
                 struct mev e; while(mouse_pop(&e)) gui_mouse_event(e.dx,e.dy,e.b);

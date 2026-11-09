@@ -17,12 +17,16 @@ jobs:
         run: |
           timeout 20 qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -display none -serial file:boot64.log -m 256M -netdev user,id=n0 -device e1000,netdev=n0 || true
           echo "=== boot64 ==="; cat boot64.log
-      - name: Programas ELF64 en ring 3 (64 bits)
+      - name: Programas Linux en ring 3 (64 bits)
         run: |
-          ( sleep 4; echo "programas"; sleep 1; echo "ejecutar /bin/hola"; sleep 3; echo "ejecutar /bin/hola-glibc uno dos"; sleep 5; echo "uptime"; sleep 2 ) | timeout 40 qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -display none -serial stdio -m 256M > proc64.log 2>&1 || true
+          python3 tools/mkrootfs.py rootfs.cpio
+          ( sleep 4; echo "programas"; sleep 1; echo "ejecutar /bin/hola"; sleep 3; echo "ejecutar /bin/hola-pie a b"; sleep 4; echo "ejecutar /bin/hola-static x"; sleep 4; echo "ejecutar /bin/hola-dyn y z"; sleep 6; echo "uptime"; sleep 2 ) | timeout 60 qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd rootfs.cpio -display none -serial stdio -m 512M > proc64.log 2>&1 || true
           echo "=== proc64 ==="; cat proc64.log
-          grep -q "brk ok" proc64.log && grep -q "termino con codigo 42" proc64.log && echo "PRUEBA hola: OK" || { echo "PRUEBA hola: FALLO"; }
-          grep -q "hola desde glibc" proc64.log && echo "PRUEBA glibc: OK" || echo "PRUEBA glibc: FALLO"
+          grep -q "termino con codigo 42" proc64.log && echo "PRUEBA hola (sin libc): OK" || echo "PRUEBA hola: FALLO"
+          for t in pie static dyn; do n=$(grep -c "malloc 1 MB ok" proc64.log); done; echo "glibc 'malloc ok' veces: $n (esperado 3)"
+          grep -q "argv\[1\]=a" proc64.log && echo "PRUEBA static-pie: OK" || echo "PRUEBA static-pie: FALLO"
+          grep -q "argv\[1\]=x" proc64.log && echo "PRUEBA static no-PIE (direccion baja 0x400000): OK" || echo "PRUEBA static no-PIE: FALLO"
+          grep -q "argv\[1\]=y" proc64.log && echo "PRUEBA dinamico (ld.so + libc.so.6): OK" || echo "PRUEBA dinamico: FALLO"
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: logs, path: "*.log" }

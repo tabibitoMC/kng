@@ -77,6 +77,7 @@ void fs_usage(int *files,int *dirs,int *bytes){ *files=*dirs=*bytes=0; usage_rec
 /* ---- serializacion (formato KNGFS): por cada nodo: tipo(1=archivo,2=carpeta,0=fin de carpeta) largo-nombre nombre [tamano(4) datos] ---- */
 static int ser_rec(FsNode *d,uint8_t *o,int max,int k){
     for(FsNode *c=d->child;c;c=c->next){
+        if(c->sys) continue;                       /* archivos del sistema Linux (rootfs): se recargan al arrancar, no se guardan en el disco */
         int nl=k_strlen(c->name);
         if(k+2+nl+(c->dir?0:4+c->size)+1>max) return -1;
         o[k++]=c->dir?2:1; o[k++]=(uint8_t)nl; memcpy(o+k,c->name,(size_t)nl); k+=nl;

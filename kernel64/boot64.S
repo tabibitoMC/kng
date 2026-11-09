@@ -178,10 +178,18 @@ isr_common64:
     push %r13
     push %r14
     push %r15
-    mov %rsp, %rdi
+    testb $3, 144(%rsp)              /* venia de ring 3? entonces cambia a la CR3 del kernel (la del usuario no ve el heap) */
+    jz 7f
+    mov kcr3(%rip), %rax
+    mov %rax, %cr3
+7:  mov %rsp, %rdi
     cld
     call isr_handler64
-    pop %r15
+    testb $3, 144(%rsp)              /* vuelve a ring 3: restaura la CR3 del proceso */
+    jz 8f
+    mov ucr3(%rip), %rax
+    mov %rax, %cr3
+8:  pop %r15
     pop %r14
     pop %r13
     pop %r12

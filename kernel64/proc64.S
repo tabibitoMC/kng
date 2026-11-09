@@ -1,8 +1,15 @@
 /* proc64.S — entrada/salida a modo usuario (ring 3) y la instruccion SYSCALL del kernel de 64 bits. */
+.section .bss
+.align 16
+.skip 65536
+.global kstack_top           /* pila del kernel para llamadas y excepciones desde ring 3 (dentro de la imagen) */
+kstack_top:
+
 .section .data
 .align 8
-.global kstk_top
-kstk_top:   .quad 0        /* pila del kernel para llamadas al sistema (la pone proc64.c) */
+.global kcr3, ucr3
+kcr3:       .quad 0        /* CR3 del kernel (identidad completa) */
+ucr3:       .quad 0        /* CR3 del proceso en curso */
 ursp:       .quad 0
 ksaved_rsp: .quad 0
 kcr3_save:  .quad 0
@@ -63,7 +70,7 @@ user_leave:
 .global syscall_entry
 syscall_entry:
     mov %rsp, ursp(%rip)
-    mov kstk_top(%rip), %rsp
+    lea kstack_top(%rip), %rsp
     push ursp(%rip)
     push %rcx
     push %r11
@@ -74,9 +81,13 @@ syscall_entry:
     push %r8
     push %r9
     push %rax
+    mov kcr3(%rip), %rax       /* rax ya quedo guardado en la pila: se puede usar */
+    mov %rax, %cr3
     mov %rsp, %rdi
     cld
     call sys_dispatch64
+    mov ucr3(%rip), %rcx       /* rcx tambien esta guardado; rax lleva el resultado */
+    mov %rcx, %cr3
     add $8, %rsp
     pop %r9
     pop %r8

@@ -24,7 +24,7 @@ user/hola.elf: user/hola.c
 	$(CC) $(UFLAGS) -o $@ $<
 user/hola-glibc.elf: user/hola-glibc.c
 	$(CC) -O2 -static-pie -o $@ $<
-blob64.o: blob64.S user/hola.elf user/hola-glibc.elf
+blob64.o: blob64.S user/hola.elf
 	$(CC) -m64 -c blob64.S -o $@
 proc64s.o: proc64.S
 	$(CC) -m64 -c $< -o $@

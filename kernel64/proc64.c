@@ -16,18 +16,21 @@ int  kgetc(void);
 uint32_t kticks(void);
 void k_write_console(const char *s,int n);
 
-extern u64 kstk_top;
+extern char kstack_top[];
+extern u64 kcr3, ucr3;
+extern uint64_t pd[2048];
 u64  user_enter(u64 entry,u64 usp,u64 cr3);
 void user_leave(u64 code) __attribute__((noreturn));
 void syscall_entry(void);
-extern char blob_hola_start[], blob_hola_end[], blob_glibc_start[], blob_glibc_end[];
+extern char blob_hola_start[], blob_hola_end[];
 
-#define USER_MIN   0x8000000000ull       /* 512 GB: inicio del espacio de usuario */
-#define USER_BASE  0x8000400000ull       /* donde se cargan los ELF PIE */
-#define MMAP_BASE  0x8100000000ull
-#define STACK_TOP  0x8200000000ull
+#define USER_MIN   0x400000ull           /* 4 MB: debajo vive la imagen del kernel (solo supervisor) */
+#define USER_BASE  0x555555554000ull     /* donde se cargan los ELF PIE */
+#define INTERP_BASE 0x7e0000000000ull    /* enlazador dinamico (ld.so) */
+#define MMAP_BASE  0x7f0000000000ull
+#define STACK_TOP  0x7ffffff00000ull
 #define STACK_SIZE (1024*1024)
-#define USER_MAX   0x8400000000ull
+#define USER_MAX   0x7ffffffff000ull
 #define EPERM_ 1
 #define ENOENT 2
 #define EBADF  9
@@ -51,8 +54,7 @@ int proc_init(void){
     if(proc_ready) return 0;
     gdt[1]=0x00AF9A000000FFFFull; gdt[2]=0x00CF92000000FFFFull;       /* 0x08 codigo K, 0x10 datos K (igual que boot64.S) */
     gdt[3]=0x00CFF2000000FFFFull; gdt[4]=0x00AFFA000000FFFFull;       /* 0x18 datos U, 0x20 codigo U 64 bits */
-    u8 *ks=kmalloc(65536+16); if(!ks) return -1;
-    kstk_top=((u64)(uintptr_t)ks+65536)&~15ull; tss.rsp0=kstk_top; tss.iomap=sizeof tss;
+    tss.rsp0=(u64)(uintptr_t)kstack_top; tss.iomap=sizeof tss;       /* pila de entrada al kernel: dentro de la imagen (visible con la CR3 del usuario) */
     u64 b=(u64)(uintptr_t)&tss;
     gdt[5]=0x67ull|((b&0xFFFFFFull)<<16)|(0x89ull<<40)|(((b>>24)&0xFFull)<<56); gdt[6]=b>>32;
     struct gdtr g={sizeof gdt-1,(u64)(uintptr_t)gdt}; __asm__ volatile("lgdt %0"::"m"(g));
@@ -64,7 +66,7 @@ int proc_init(void){
     wrmsr(0xC0000081,((u64)0x10<<48)|((u64)0x08<<32));               /* STAR: sysret CS=0x20|3 SS=0x18|3 */
     wrmsr(0xC0000082,(u64)(uintptr_t)syscall_entry);
     wrmsr(0xC0000084,0x4700);                                        /* SFMASK: IF, DF, TF, NT fuera durante la llamada */
-    u64 cr3; __asm__ volatile("mov %%cr3,%0":"=r"(cr3)); k_pml4=(u64*)(uintptr_t)(cr3&~0xFFFull);
+    u64 cr3; __asm__ volatile("mov %%cr3,%0":"=r"(cr3)); k_pml4=(u64*)(uintptr_t)(cr3&~0xFFFull); kcr3=cr3;
     proc_ready=1; return 0;
 }
 
@@ -108,42 +110,47 @@ static u64 rng_s=88172645463325252ull;
 /* ---------- ELF64 ---------- */
 typedef struct { u8 id[16]; u16 type,machine; u32 ver; u64 entry,phoff,shoff; u32 flags; u16 ehsize,phentsize,phnum,shentsize,shnum,shstrndx; } Ehdr;
 typedef struct { u32 type,flags; u64 off,vaddr,paddr,filesz,memsz,align; } Phdr;
+struct elfinfo { u64 entry, base, phdr, end; int phnum; char interp[96]; };
 
-static int elf_load(const u8 *img,u64 sz,u64 *entry,u64 *phdr_va,int *phnum,u64 *end){
+static int elf_map(const u8 *img,u64 sz,u64 dyn_base,struct elfinfo *o,int allow_interp){
     if(sz<sizeof(Ehdr)) return -1;
     const Ehdr *e=(const Ehdr*)img;
     if(e->id[0]!=0x7F||e->id[1]!='E'||e->id[2]!='L'||e->id[3]!='F'){ kprintf("ejecutar: no es un archivo ELF\n"); return -1; }
     if(e->id[4]!=2||e->id[5]!=1||e->machine!=62){ kprintf("ejecutar: se necesita ELF de 64 bits para x86-64\n"); return -1; }
     if(e->type!=2&&e->type!=3){ kprintf("ejecutar: tipo de ELF no soportado (%u)\n",e->type); return -1; }
     if(e->phentsize!=sizeof(Phdr)||e->phoff+(u64)e->phnum*sizeof(Phdr)>sz){ kprintf("ejecutar: cabeceras de programa invalidas\n"); return -1; }
-    u64 base=e->type==3?USER_BASE:0, top=0, lo_off0=0; int have_phdr=0; *phdr_va=0;
+    u64 base=e->type==3?dyn_base:0, top=0, lo0=0; int have_phdr=0;
+    memset(o,0,sizeof *o);
     for(int i=0;i<e->phnum;i++){
         const Phdr *p=(const Phdr*)(img+e->phoff+(u64)i*sizeof(Phdr));
-        if(p->type==3){ kprintf("ejecutar: el programa pide un enlazador dinamico (PT_INTERP): aun no soportado, usa un binario estatico\n"); return -1; }
-        if(p->type==6){ *phdr_va=base+p->vaddr; have_phdr=1; }
+        if(p->type==3){ if(!allow_interp||p->off+p->filesz>sz||p->filesz>=sizeof o->interp){ kprintf("ejecutar: PT_INTERP invalido\n"); return -1; } memcpy(o->interp,img+p->off,p->filesz); o->interp[p->filesz]=0; }
+        if(p->type==6){ o->phdr=base+p->vaddr; have_phdr=1; }
         if(p->type!=1) continue;
         u64 va=base+p->vaddr;
-        if(va<USER_MIN){ kprintf("ejecutar: el programa esta enlazado en una direccion baja (0x%lx). Usa un ejecutable PIE (-static-pie): aun no se puede cargar uno de direccion fija baja\n",va); return -1; }
+        if(va<USER_MIN){ kprintf("ejecutar: el programa esta enlazado por debajo de 4 MB (0x%lx): ese rango es del kernel\n",va); return -1; }
         if(p->off+p->filesz>sz||p->filesz>p->memsz||va+p->memsz>=MMAP_BASE){ kprintf("ejecutar: segmento invalido\n"); return -1; }
         if(umap_range(P.pml4,va,p->memsz?p->memsz:1)){ kprintf("ejecutar: sin memoria para cargar el programa\n"); return -1; }
         if(ucopy_to(P.pml4,va,img+p->off,p->filesz)) return -1;
         if(va+p->memsz>top) top=va+p->memsz;
-        if(!have_phdr && p->off==0) lo_off0=va;
+        if(!have_phdr && p->off==0) lo0=va;
     }
-    if(!have_phdr && lo_off0) *phdr_va=lo_off0+e->phoff;
-    *entry=base+e->entry; *phnum=e->phnum; *end=top; return 0;
+    if(!have_phdr && lo0) o->phdr=lo0+e->phoff;
+    o->entry=base+e->entry; o->base=base; o->phnum=e->phnum; o->end=top; return 0;
 }
 
-static int build_stack(u64 *sp_out,int argc,char **argv,u64 entry,u64 phdr,int phnum){
+static int build_stack(u64 *sp_out,int argc,char **argv,const char *execfn,u64 entry,u64 phdr,int phnum,u64 at_base){
     u64 *pm=P.pml4;
     if(umap_range(pm,STACK_TOP-STACK_SIZE,STACK_SIZE)) return -1;
-    static const char *envs[]={"PATH=/bin","HOME=/","TERM=linux"}; int envc=3;
-    u64 sp=STACK_TOP-64, argv_va[16], env_va[4];
-    for(int i=0;i<argc;i++){ u64 l=(u64)k_strlen(argv[i])+1; sp-=l; if(ucopy_to(pm,sp,argv[i],l)) return -1; argv_va[i]=sp; }
-    for(int i=0;i<envc;i++){ u64 l=(u64)k_strlen(envs[i])+1; sp-=l; if(ucopy_to(pm,sp,envs[i],l)) return -1; env_va[i]=sp; }
+    static const char *envs[]={"PATH=/bin:/usr/bin","HOME=/","TERM=linux","LANG=C"}; int envc=4;
+    u64 sp=STACK_TOP-64, argv_va[16], env_va[4], l;
+    l=(u64)k_strlen(execfn)+1; sp-=l; if(ucopy_to(pm,sp,execfn,l)) return -1; u64 execfn_va=sp;
+    for(int i=0;i<argc;i++){ l=(u64)k_strlen(argv[i])+1; sp-=l; if(ucopy_to(pm,sp,argv[i],l)) return -1; argv_va[i]=sp; }
+    for(int i=0;i<envc;i++){ l=(u64)k_strlen(envs[i])+1; sp-=l; if(ucopy_to(pm,sp,envs[i],l)) return -1; env_va[i]=sp; }
+    sp-=8; if(ucopy_to(pm,sp,"x86_64",7)) return -1; u64 plat_va=sp;
     u8 rnd[16]; for(int i=0;i<16;i++){ rng_s^=rng_s<<13; rng_s^=rng_s>>7; rng_s^=rng_s<<17; rnd[i]=(u8)rng_s; }
     sp-=16; u64 rnd_va=sp; if(ucopy_to(pm,sp,rnd,16)) return -1;
-    u64 aux[][2]={{3,phdr},{4,sizeof(Phdr)},{5,(u64)phnum},{6,4096},{9,entry},{11,0},{12,0},{13,0},{14,0},{17,100},{23,0},{25,rnd_va},{0,0}};
+    u32 ca,cb,cc,cd; __asm__ volatile("cpuid":"=a"(ca),"=b"(cb),"=c"(cc),"=d"(cd):"a"(1));
+    u64 aux[][2]={{3,phdr},{4,sizeof(Phdr)},{5,(u64)phnum},{6,4096},{7,at_base},{8,0},{9,entry},{11,0},{12,0},{13,0},{14,0},{15,plat_va},{16,cd},{17,100},{23,0},{25,rnd_va},{31,execfn_va},{0,0}};
     int na=(int)(sizeof aux/sizeof aux[0]);
     u64 words=1+(u64)argc+1+(u64)envc+1+(u64)na*2;
     sp=(sp-words*8)&~15ull; u64 q=sp; u64 v;
@@ -199,6 +206,7 @@ static u64 sys_mmap(u64 addr,u64 len,u64 prot,u64 flags,u64 fd,u64 off){
     if(prot!=0){                                  /* PROT_NONE solo reserva direcciones (se mapea en mprotect) */
         if(len>(256ull<<20)) return RET_ERR(ENOMEM);
         if(umap_range(P.pml4,va,len)) return RET_ERR(ENOMEM);
+        if(flags&0x10) for(u64 q=va;q<va+len;q+=4096){ u8 *pg=uptr(P.pml4,q); if(pg) memset(pg,0,4096); }   /* MAP_FIXED encima de algo: empieza en cero */
         if(!(flags&0x20) && (long)fd>=0){         /* mapeo de archivo: copia privada */
             if(fd>=MAXFD||!P.fd[fd]) return RET_ERR(EBADF);
             FsNode *f=P.fd[fd]; if(off<(u64)f->size){ u64 n=(u64)f->size-off; if(n>len) n=len; ucopy_to(P.pml4,va,f->data+off,n); }
@@ -225,7 +233,9 @@ static u64 sys_dispatch(struct sc *s){
         u64 sbuf=s->nr==262?a3:a2; u8 st[144]; memset(st,0,sizeof st); u32 mode=0x2190; u64 size=0;
         if(s->nr==5){ if(a1>=3){ if(a1>=MAXFD||!P.fd[a1]) return RET_ERR(EBADF); mode=P.fd[a1]->dir?040755:0100644; size=(u64)P.fd[a1]->size; } }
         else { u64 pv=s->nr==262?a2:a1; char path[160]; int i=0; for(;i<159;i++){ u8 *c=uptr(P.pml4,pv+(u64)i); if(!c) return RET_ERR(EFAULT); path[i]=(char)*c; if(!*c) break; } path[159]=0;
+               if(s->nr==262 && !path[0] && (a4&0x1000)){ if(a1>=MAXFD||(a1>=3&&!P.fd[a1])) return RET_ERR(EBADF); if(a1>=3){ mode=P.fd[a1]->dir?040755:0100644; size=(u64)P.fd[a1]->size; } goto statfill; }
                FsNode *n=fs_resolve(fs_root(),path); if(!n) return RET_ERR(ENOENT); mode=n->dir?040755:0100644; size=(u64)n->size; }
+        statfill:
         *(u32*)(st+24)=mode; *(u64*)(st+48)=size; *(u64*)(st+56)=4096;
         return ucopy_to(P.pml4,sbuf,st,sizeof st)?RET_ERR(EFAULT):0; }
     case 9:  return sys_mmap(a1,a2,a3,a4,a5,a6);
@@ -266,7 +276,7 @@ void proc_fault(u64 no,u64 rip,u64 err,u64 cr2){
 
 /* ---------- API ---------- */
 struct builtin { const char *name; char *s, *e; };
-static struct builtin builtins[]={{"hola",blob_hola_start,blob_hola_end},{"hola-glibc",blob_glibc_start,blob_glibc_end}};
+static struct builtin builtins[]={{"hola",blob_hola_start,blob_hola_end}};
 void proc_list(void){ kprintf("Programas incluidos en el kernel (ejecutar /bin/<nombre>):\n"); for(unsigned i=0;i<sizeof builtins/sizeof *builtins;i++) kprintf("  /bin/%s  (%lu bytes)\n",builtins[i].name,(u64)(builtins[i].e-builtins[i].s)); }
 
 int proc_exec(char *path,int argc,char **argv){
@@ -276,13 +286,61 @@ int proc_exec(char *path,int argc,char **argv){
     if(k_startswith(path,"/bin/")) for(unsigned i=0;i<sizeof builtins/sizeof *builtins;i++) if(!k_strcmp(path+5,builtins[i].name)){ img=(u8*)builtins[i].s; sz=(u64)(builtins[i].e-builtins[i].s); }
     if(!img){ if(!fs_root()) fs_init(); FsNode *f=fs_resolve(fs_root(),path); if(!f||f->dir||!f->data){ kprintf("ejecutar: no existe %s\n",path); return -1; } img=(u8*)f->data; sz=(u64)f->size; }
     memset(&P,0,sizeof P); inl_n=inl_r=inl_ready=0;
-    P.pml4=pg_new(); if(!P.pml4){ kprintf("ejecutar: sin memoria\n"); return -1; }
-    P.pml4[0]=k_pml4[0];
-    u64 entry,phdr,end,sp; int phnum;
-    if(elf_load(img,sz,&entry,&phdr,&phnum,&end)||build_stack(&sp,argc,argv,entry,phdr,phnum)){ pg_free_all(); return -1; }
+    P.pml4=pg_new(); u64 *pdpt=pg_new(), *pd0=pg_new();
+    if(!P.pml4||!pdpt||!pd0){ kprintf("ejecutar: sin memoria\n"); pg_free_all(); return -1; }
+    P.pml4[0]=(u64)(uintptr_t)pdpt|7; pdpt[0]=(u64)(uintptr_t)pd0|7;
+    pd0[0]=pd[0]; pd0[1]=pd[1];                    /* los primeros 4 MB (imagen del kernel, solo supervisor) estan en toda CR3 */
+    struct elfinfo m,in; u64 entry,sp;
+    if(elf_map(img,sz,USER_BASE,&m,1)){ pg_free_all(); return -1; }
+    entry=m.entry; u64 at_base=0, end=m.end;
+    if(m.interp[0]){
+        FsNode *f=fs_resolve(fs_root(),m.interp);
+        if(!f||f->dir||!f->data){ kprintf("ejecutar: falta el enlazador dinamico %s (programa dinamico: hace falta el sistema de archivos de Linux, rootfs)\n",m.interp); pg_free_all(); return -1; }
+        if(elf_map((u8*)f->data,(u64)f->size,INTERP_BASE,&in,0)){ pg_free_all(); return -1; }
+        entry=in.entry; at_base=in.base;
+    }
+    if(build_stack(&sp,argc,argv,path,m.entry,m.phdr,m.phnum,at_base)){ pg_free_all(); return -1; }
     P.brk0=P.brk=(end+4095+65536)&~4095ull; P.mmap_next=MMAP_BASE; P.run=1;
+    ucr3=(u64)(uintptr_t)P.pml4;
     u64 code=user_enter(entry,sp,(u64)(uintptr_t)P.pml4);
     wrmsr(0xC0000100,0); __asm__ volatile("sti");
     pg_free_all(); P.run=0;
     return (int)code;
+}
+
+/* ---------- rootfs (archivo cpio "newc" entregado como modulo Multiboot: -initrd en QEMU, "module" en GRUB) ---------- */
+static u32 hex8(const u8 *p){ u32 v=0; for(int i=0;i<8;i++){ u8 c=p[i]; v=v*16+(u32)(c<='9'?c-'0':(c|32)-'a'+10); } return v; }
+static FsNode *mkpath(const char *path,int want_parent_only,const char **leaf){
+    FsNode *cur=fs_root(); char part[32]; const char *p=path;
+    for(;;){
+        while(*p=='/') p++;
+        int n=0; while(p[n]&&p[n]!='/') n++;
+        if(!n) return cur;
+        if(n>=32) return 0;
+        memcpy(part,p,(size_t)n); part[n]=0;
+        int last=p[n]==0;
+        if(last&&want_parent_only){ *leaf=p; return cur; }
+        FsNode *c=fs_find(cur,part);
+        if(!c){ c=fs_mkdir(cur,part); if(!c) return 0; c->sys=1; }
+        if(!c->dir) return 0;
+        cur=c; p+=n;
+    }
+}
+void rootfs_load(u32 mods_n,u32 mods_addr){
+    struct mod { u32 s,e,c,pad; } *m=(struct mod*)(uintptr_t)mods_addr; int files=0; u64 bytes=0;
+    for(u32 i=0;i<mods_n;i++){
+        const u8 *p=(const u8*)(uintptr_t)m[i].s, *end=(const u8*)(uintptr_t)m[i].e;
+        while(p+110<=end && p[0]=='0'&&p[1]=='7'&&p[2]=='0'&&p[3]=='7'&&p[4]=='0'&&p[5]=='1'){
+            u32 mode=hex8(p+14), fsz=hex8(p+54), nsz=hex8(p+94);
+            const char *name=(const char*)p+110; const u8 *data=(const u8*)(((uintptr_t)p+110+nsz+3)&~3ull); p=(const u8*)(((uintptr_t)data+fsz+3)&~3ull);
+            if(!k_strcmp(name,"TRAILER!!!")) break;
+            while(name[0]=='.'&&name[1]=='/'){ name+=2; }
+            if(!k_strcmp(name,".")||!name[0]) continue;
+            if((mode&0170000)==0040000){ mkpath(name,0,0); continue; }
+            if((mode&0170000)!=0100000) continue;                       /* enlaces simbolicos y especiales: omitidos (el rootfs se arma con cp -L) */
+            const char *leaf=0; FsNode *d=mkpath(name,1,&leaf); if(!d||!leaf||k_strlen(leaf)>=32) continue;
+            FsNode *f=fs_create(d,leaf,(const char*)data,(int)fsz); if(f){ f->sys=1; files++; bytes+=fsz; }
+        }
+    }
+    kprintf("[ok] rootfs: %d archivos (%lu KB) desde el modulo de arranque\n",files,bytes/1024);
 }

@@ -2,7 +2,7 @@
 #define FS_H
 #include "kng.h"
 typedef struct FsNode {
-    char name[32]; int dir; struct FsNode *parent, *child, *next; char *data; int size;
+    char name[32]; int dir; struct FsNode *parent, *child, *next; char *data; int size; int sys;
 } FsNode;
 void    fs_init(void);
 FsNode *fs_root(void);
