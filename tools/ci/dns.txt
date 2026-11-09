@@ -1,2 +1,4 @@
 # Por que falla la resolucion de nombres (getaddrinfo con A + AAAA) y no en curl
+20|rastro 2
 60|ejecutar /usr/bin/getent ahosts deb.debian.org
+20|rastro 0
