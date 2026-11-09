@@ -4,12 +4,14 @@
 static FsNode *root;
 static uint32_t gen;
 void (*fs_shm_hook)(void *shm);
+uint32_t (*fs_now)(void);
+static void touch(FsNode *n){ if(fs_now) n->mtime=fs_now(); }
 uint32_t fs_gen(void){ return gen; }
 FsNode *fs_root(void){ return root; }
 
 static FsNode *newnode(FsNode *parent,const char *name,int dir){
     FsNode *n=kmalloc(sizeof *n); if(!n) return 0;
-    memset(n,0,sizeof *n); k_strcpy(n->name,name,sizeof n->name); n->dir=dir; n->parent=parent;
+    memset(n,0,sizeof *n); k_strcpy(n->name,name,sizeof n->name); n->dir=dir; n->parent=parent; touch(n);
     if(parent){ FsNode **pp=&parent->child; while(*pp) pp=&(*pp)->next; *pp=n; }
     return n;
 }
@@ -36,7 +38,7 @@ int fs_write(FsNode *n,const char *data,int len){
     if(!n||n->dir||len<0) return -1;
     char *d=kmalloc((size_t)len+1); if(!d) return -1;
     memcpy(d,data,(size_t)len); d[len]=0;
-    drop_data(n); n->data=d; n->size=len; n->cap=len+1; gen++; return 0;
+    drop_data(n); n->data=d; n->size=len; n->cap=len+1; touch(n); gen++; return 0;
 }
 void fs_adopt(FsNode *n,const char *data,int len){ drop_data(n); n->data=(char*)data; n->size=len; n->cap=len; n->ro=1; gen++; }
 static int ensure_cap(FsNode *n,int need){        /* 'need' bytes de contenido (+1 para el cero final); copia al escribir si no es nuestro */
@@ -55,14 +57,14 @@ int fs_write_at(FsNode *n,int off,const char *src,int len){
     if(off>n->size) memset(n->data+n->size,0,(size_t)(off-n->size));
     if(len) memcpy(n->data+off,src,(size_t)len);
     if(end>n->size){ n->size=end; if(!n->shm||end<n->cap) n->data[end]=0; }
-    gen++; return 0;
+    touch(n); gen++; return 0;
 }
 int fs_resize(FsNode *n,int size){
     if(!n||n->dir||size<0) return -1;
     if(size==n->size) return 0;
-    if(size<n->size){ if(n->shm||n->ro){ if(n->ro&&!n->shm){ if(ensure_cap(n,n->size)) return -1; } } if(size<n->size) memset(n->data+size,0,(size_t)(n->size-size)); n->size=size; if(!n->shm||size<n->cap) n->data[size]=0; gen++; return 0; }
+    if(size<n->size){ if(n->shm||n->ro){ if(n->ro&&!n->shm){ if(ensure_cap(n,n->size)) return -1; } } if(size<n->size) memset(n->data+size,0,(size_t)(n->size-size)); n->size=size; if(!n->shm||size<n->cap) n->data[size]=0; touch(n); gen++; return 0; }
     if(ensure_cap(n,size)) return -1;
-    memset(n->data+n->size,0,(size_t)(size-n->size)); n->size=size; if(!n->shm||size<n->cap) n->data[size]=0; gen++; return 0;
+    memset(n->data+n->size,0,(size_t)(size-n->size)); n->size=size; if(!n->shm||size<n->cap) n->data[size]=0; touch(n); gen++; return 0;
 }
 FsNode *fs_symlink(FsNode *dir,const char *name,const char *target){
     if(!dir||!dir->dir||!valid_name(name)||fs_find(dir,name)) return 0;

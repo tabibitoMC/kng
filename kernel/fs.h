@@ -8,8 +8,10 @@ typedef struct FsNode {
     int ro;           /* 1: 'data' no es nuestro (memoria del rootfs): se copia antes de escribir */
     void *shm;        /* si no es 0: 'data' pertenece a un objeto de memoria compartida (mmap compartido) */
     char *link;       /* si no es 0: enlace simbolico a esta ruta */
+    uint32_t mtime;   /* segundos desde 1970 de la ultima modificacion (0 = desconocida) */
     int opens, dead;  /* abierto por programas de usuario; borrado pero aun abierto (se libera al cerrar el ultimo) */
 } FsNode;
+extern uint32_t (*fs_now)(void);                                        /* reloj de pared (lo pone el kernel de 64 bits) */
 extern void (*fs_shm_hook)(void *shm);                                  /* libera la referencia al objeto compartido */
 int     fs_write_at(FsNode *n, int off, const char *src, int len);     /* escribe en una posicion, creciendo con reserva; 0 ok */
 int     fs_resize(FsNode *n, int size);                                 /* cambia el tamano (rellena con ceros); 0 ok */

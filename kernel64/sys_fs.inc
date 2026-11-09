@@ -74,9 +74,9 @@ static u64 do_open(long dirfd,u64 path_va,u64 flags,u64 mode){
 }
 
 /* ---------- stat ---------- */
-struct KStat { u32 mode; u64 size, ino, rdev; u32 nlink; };
+struct KStat { u32 mode; u64 size, ino, rdev; u32 nlink; u64 mtime; };
 static void node_kstat(FsNode *n,struct KStat *k){
-    k->mode=n->link?0120777:n->dir?040755:0100755; k->size=(u64)(n->link?k_strlen(n->link):n->size); k->ino=(u64)(uintptr_t)n>>4; k->rdev=0; k->nlink=n->dir?2:1;
+    k->mode=n->link?0120777:n->dir?040755:0100755; k->size=(u64)(n->link?k_strlen(n->link):n->size); k->ino=(u64)(uintptr_t)n>>4; k->rdev=0; k->nlink=n->dir?2:1; k->mtime=n->mtime;
     if(n->dev==8) k->mode=0140777; else if(n->dev){ k->mode=020666; k->rdev=(u64)n->dev; }
 }
 static int fd_kstat(long fd,struct KStat *k){
@@ -102,7 +102,7 @@ static int path_kstat(long dirfd,u64 path_va,int follow,struct KStat *k){
     return -err;
 }
 static void put_stat(u8 *st,const struct KStat *k){    /* struct stat de x86-64 (144 bytes) */
-    u64 t=1700000000ull+kticks()/100;
+    u64 t=k->mtime?k->mtime:1700000000ull;
     memset(st,0,144);
     *(u64*)(st+0)=1; *(u64*)(st+8)=k->ino; *(u64*)(st+16)=k->nlink?k->nlink:1; *(u32*)(st+24)=k->mode; *(u64*)(st+40)=k->rdev;
     *(u64*)(st+48)=k->size; *(u64*)(st+56)=4096; *(u64*)(st+64)=(k->size+511)/512; *(u64*)(st+72)=t; *(u64*)(st+88)=t; *(u64*)(st+104)=t;
@@ -115,7 +115,7 @@ static u64 sys_stat_at(long dirfd,u64 path_va,u64 buf,u64 flags,int statx_mode,u
     else r=path_kstat(dirfd,path_va,!(flags&0x100),&k);
     if(r) return RET_ERR(-r);
     if(!statx_mode){ u8 st[144]; put_stat(st,&k); return ucopy_to(CP,buf,st,sizeof st)?RET_ERR(EFAULT):0; }
-    u8 sx[256]; memset(sx,0,sizeof sx); u64 t=1700000000ull+kticks()/100;
+    u8 sx[256]; memset(sx,0,sizeof sx); u64 t=k.mtime?k.mtime:1700000000ull;
     *(u32*)(sx+0)=0x7ff; *(u32*)(sx+4)=4096; *(u32*)(sx+16)=k.nlink?k.nlink:1; *(u16*)(sx+28)=(u16)k.mode; *(u64*)(sx+32)=k.ino; *(u64*)(sx+40)=k.size; *(u64*)(sx+48)=(k.size+511)/512;
     *(u64*)(sx+64)=t; *(u64*)(sx+80)=t; *(u64*)(sx+96)=t; *(u64*)(sx+112)=t; *(u32*)(sx+128)=(u32)(k.rdev>>8); *(u32*)(sx+132)=(u32)(k.rdev&255); *(u32*)(sx+136)=0; *(u32*)(sx+140)=1;
     return ucopy_to(CP,buf,sx,sizeof sx)?RET_ERR(EFAULT):0;
@@ -242,4 +242,21 @@ static u64 sys_access_at(long dirfd,u64 path_va){
 static u64 sys_exists_noop(long dirfd,u64 path_va){        /* chmod/chown/utimes...: kng no guarda permisos ni fechas; solo se comprueba que exista */
     char path[PATH_MAX_]; int e=upath(path_va,path); if(e) return RET_ERR(-e);
     int err=ENOENT; return lookup_at(dirfd,path,1,&err)?0:RET_ERR(err);
+}
+
+/* fechas de archivos: mode 0 = utimensat (times = 2 timespec), 1 = utimes/futimesat (2 timeval), 2 = utime (actime, modtime) */
+static u64 sys_utime(long dirfd,u64 path_va,u64 times,int mode){
+    FsNode *n=0; int err=ENOENT;
+    if(path_va){ char path[PATH_MAX_]; int e=upath(path_va,path); if(e) return RET_ERR(-e); n=lookup_at(dirfd,path,1,&err); }
+    else if(dirfd>=0&&dirfd<MAXFD&&(CP->fd[dirfd].type==2||CP->fd[dirfd].type==10)){ n=CP->fd[dirfd].node; }
+    if(!n) return RET_ERR(err);
+    u64 now=wall_sec(), mt=now;
+    if(times){
+        if(mode==0){ u64 t[4]; if(ucopy_from(CP,t,times,32)) return RET_ERR(EFAULT);
+            if(t[3]==((1u<<30)-2)) return 0;                       /* UTIME_OMIT */
+            mt=(t[3]==((1u<<30)-1))?now:t[2]; }
+        else if(mode==1){ u64 t[4]; if(ucopy_from(CP,t,times+16,16)) return RET_ERR(EFAULT); mt=t[0]; }
+        else { u64 t[2]; if(ucopy_from(CP,t,times,16)) return RET_ERR(EFAULT); mt=t[1]; }
+    }
+    n->mtime=(uint32_t)mt; return 0;
 }

@@ -11,6 +11,8 @@
 #include <stddef.h>
 #include "kng.h"
 #include "fs.h"
+static uint32_t fs_now_fn(void);
+static uint64_t wall_sec(void);
 #include "sock.h"
 #include "net.h"
 
@@ -110,7 +112,7 @@ int proc_init(void){
     wrmsr(0xC0000084,0x4700);
     u64 cr3; __asm__ volatile("mov %%cr3,%0":"=r"(cr3)); kcr3=cr3;
     task0.state=T_READY; task0.leader=1; k_strcpy(task0.name,"kernel",sizeof task0.name);
-    sock_init(); dev_create(); fs_shm_hook=fs_shm_release;
+    sock_init(); dev_create(); fs_shm_hook=fs_shm_release; fs_now=fs_now_fn;
     proc_ready=1; return 0;
 }
 
@@ -778,9 +780,12 @@ static u64 sys_dispatch(struct regs *r){
     case 95: { u32 o=CP->umask; CP->umask=(u32)a1&0777; return o; }
     case 98: case 100: { u8 z[144]; memset(z,0,sizeof z); if(a2&&nr==98) return ucopy_to(CP,a2,z,144)?RET_ERR(EFAULT):0; if(a1&&nr==100) ucopy_to(CP,a1,z,32); return kticks(); }
     case 74: case 75: case 26: case 27: case 149: case 150: case 221: case 144: case 142: case 141: case 145: case 146: case 73: case 162: case 306: return 0;
-    case 90: case 92: case 94: case 132: case 235: return sys_exists_noop(AT_FDCWD_L,a1);
-    case 268: case 260: case 261: return sys_exists_noop((long)(int)a1,a2);
-    case 280: if(!a2) return 0; return sys_exists_noop((long)(int)a1,a2);
+    case 90: case 92: case 94: return sys_exists_noop(AT_FDCWD_L,a1);
+    case 132: return sys_utime(AT_FDCWD_L,a1,a2,2);
+    case 235: return sys_utime(AT_FDCWD_L,a1,a2?a2-16:0,1);
+    case 268: case 260: return sys_exists_noop((long)(int)a1,a2);
+    case 261: return sys_utime((long)(int)a1,a2,a3?a3-16:0,1);
+    case 280: return sys_utime((long)(int)a1,a2,a3,0);
     case 91: case 93: if(a1>=MAXFD||!CP->fd[a1].type) return RET_ERR(EBADF); return 0;
     case 76: return sys_truncate_path(a1,a2);
     case 77: return sys_ftruncate_fd(a1,a2);

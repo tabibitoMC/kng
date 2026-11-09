@@ -3,7 +3,7 @@
 /* ---------- reloj de pared: se lee del reloj de la placa (RTC) una vez y despues avanza con el temporizador ---------- */
 extern u64 krtc_epoch(void);
 static u64 wall_base; static int wall_ok;
-static u64 wall_sec(void){ u64 up=kticks()/100; if(!wall_ok){ wall_ok=1; wall_base=krtc_epoch(); if(wall_base>up) wall_base-=up; } return wall_base+up; }
+static uint64_t wall_sec(void){ u64 up=kticks()/100; if(!wall_ok){ wall_ok=1; wall_base=krtc_epoch(); if(wall_base>up) wall_base-=up; } return wall_base+up; }
 static void wall_set(u64 sec){ wall_ok=1; wall_base=sec-kticks()/100; }
 static u64 sys_clock_gettime(u64 clk,u64 va){
     u32 k=kticks(); u64 t[2]; t[1]=(u64)(k%100)*10000000ull;
@@ -61,3 +61,5 @@ static u64 sys_capget(u64 hdr,u64 data){
     if(!data) return 0;
     u32 d[6]={~0u,~0u,0,~0u,~0u,0}; return ucopy_to(CP,data,d,h[0]==0x19980330?12:24)?RET_ERR(EFAULT):0;
 }
+
+static uint32_t fs_now_fn(void){ return (uint32_t)wall_sec(); }
