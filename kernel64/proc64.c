@@ -868,11 +868,11 @@ static u64 sys_dispatch(struct regs *r){
 /* rastro: diagnostico. 1 = muestra las llamadas que fallan (con la ruta si la tiene), 2 = muestra todas. Se activa con el comando "rastro". */
 int krastro;
 static int sc_path_arg(u64 nr){ switch(nr){ case 2: case 4: case 6: case 21: case 59: case 89: case 80: case 82: case 83: case 84: case 87: case 88: case 90: return 1; case 257: case 262: case 267: case 332: case 439: case 258: case 263: case 264: case 259: return 2; } return 0; }
-static void rastro_log(u64 nr,u64 a1,u64 a2,u64 rv,int pre){
+static void rastro_log(u64 nr,u64 a1,u64 a2,u64 rv,int pre,u64 a3,u64 a4){
     char ps[80]; ps[0]=0; int pa=sc_path_arg(nr); if(pa){ if(ustr(CP,ps,sizeof ps,pa==1?a1:a2)) k_strcpy(ps,"?",sizeof ps); }
     if(pre) kprintf("[rs %d] %lu %s ...\n",cur->pid,nr,ps);
     else if((long)rv<0&&(long)rv>-4096) kprintf("[rs %d] %lu %s -> -%ld (a1=%lx a2=%lx)\n",cur->pid,nr,ps,-(long)rv,a1,a2);
-    else kprintf("[rs %d] %lu %s -> %ld\n",cur->pid,nr,ps,(long)rv);
+    else kprintf("[rs %d] %lu %s -> %ld (a1=%lx a2=%lx a3=%lx a4=%lx)\n",cur->pid,nr,ps,(long)rv,a1,a2,a3,a4);
 }
 void kernel_entry(struct regs *r){
     cur->frame=r;
@@ -880,9 +880,9 @@ void kernel_entry(struct regs *r){
     if(r->int_no==0x80){
         cur->sysnr=(int)r->rax; from_sys=1;
         u64 nr0=r->rax,b1=r->rdi,b2=r->rsi;
-        if(krastro&&(nr0==59||krastro>1)) rastro_log(nr0,b1,b2,0,1);
+        if(krastro&&(nr0==59||krastro>1)) rastro_log(nr0,b1,b2,0,1,0,0);
         u64 rv=sys_dispatch(r);
-        if(krastro&&rv!=EXEC_DONE&&(krastro>1||((long)rv<0&&(long)rv>-4096&&nr0!=61&&nr0!=7&&nr0!=232&&nr0!=202))) rastro_log(nr0,b1,b2,rv,0);
+        if(krastro&&rv!=EXEC_DONE&&(krastro>1||((long)rv<0&&(long)rv>-4096&&nr0!=61&&nr0!=7&&nr0!=232&&nr0!=202))) rastro_log(nr0,b1,b2,rv,0,r->rdx,r->r10);
         if(rv!=EXEC_DONE) r->rax=rv;
     } else if(r->int_no<32){
         u64 cr2=0; if(r->int_no==14) __asm__ volatile("mov %%cr2,%0":"=r"(cr2));
