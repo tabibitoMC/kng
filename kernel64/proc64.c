@@ -682,8 +682,30 @@ static u64 sys_futex(u64 uaddr,u64 op,u64 val,u64 timeout_va){
     return RET_ERR(ENOSYS);
 }
 #include "sys_extra.inc"
+/* Argumentos de tipo 'int' (descriptores, banderas): Linux solo mira los 32 bits bajos y hay programas (Chromium, en mmap) que dejan basura en los altos.
+ * Devuelve una mascara: el bit i dice que el argumento i+1 es un int que se debe extender con signo desde 32 bits. */
+static unsigned sys_intmask(u64 nr){
+    switch(nr){
+    case 0: case 1: case 3: case 5: case 8: case 16: case 17: case 18: case 19: case 20: case 72: case 73: case 74: case 75: case 77: case 78: case 81: case 91: case 217:
+    case 32: case 42: case 43: case 49: case 51: case 52: case 267: case 268: return 1;
+    case 9: return 16;
+    case 33: case 40: case 48: case 50: case 285: case 62: case 200: return 3;
+    case 41: case 53: case 54: case 55: case 292: case 233: case 234: return 7;
+    case 44: case 45: case 288: case 280: return 1|8;
+    case 46: case 47: case 263: case 258: case 269: case 264: return 1|4;
+    case 232: case 281: return 1|4|8;
+    case 257: return 1|4|8;
+    case 262: return 1|8;
+    case 265: case 316: return 1|4|16;
+    case 332: return 1|4|8;
+    case 266: case 293: case 319: return 2;
+    case 291: return 1;
+    }
+    return 0;
+}
 static u64 sys_dispatch(struct regs *r){
     u64 nr=r->rax,a1=r->rdi,a2=r->rsi,a3=r->rdx,a4=r->r10,a5=r->r8,a6=r->r9;
+    { unsigned im=sys_intmask(nr); if(im){ if(im&1) a1=(u64)(long)(int)a1; if(im&2) a2=(u64)(long)(int)a2; if(im&4) a3=(u64)(long)(int)a3; if(im&8) a4=(u64)(long)(int)a4; if(im&16) a5=(u64)(long)(int)a5; if(im&32) a6=(u64)(long)(int)a6; } }
     switch(nr){
     case 0:  return fd_read(a1,a2,a3);
     case 1:  return fd_write(a1,a2,a3);

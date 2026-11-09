@@ -164,6 +164,14 @@ static void test_files(void){
       CHECK(r!=MAP_FAILED&&!strcmp(r,"memoria compartida"),"memfd reabierto en solo lectura y mapeado ve los mismos datos");
       if(a>=0) close(a); if(m>=0) close(m); if(ro>=0) close(ro); }
 
+    /* argumentos int con basura en los 32 bits altos (Chromium llama mmap asi): Linux los ignora */
+    { int m=(int)syscall(319,"kng-hi",0); if(m>=0&&ftruncate(m,4096)<0) m=-1;
+      long fdbad=m>=0?(((long)7<<32)|(unsigned)m):-1;
+      char *w=m>=0?(char*)syscall(SYS_mmap,0,4096,PROT_READ|PROT_WRITE,MAP_SHARED,fdbad,0):(char*)MAP_FAILED;
+      CHECK(w!=MAP_FAILED&&(long)w!=-9,"mmap con basura en los bits altos del descriptor");
+      if(w!=MAP_FAILED&&(long)w!=-9) strcpy(w,"hi");
+      long wr=m>=0?syscall(SYS_write,fdbad,"x",1):-1; CHECK(wr==1,"write con basura en los bits altos del descriptor"); if(m>=0) close(m); }
+
     /* sendfile y copy_file_range (las usan apt, curl y los navegadores para copiar archivos) */
     { static char big[10000], chk[10000]; for(int i=0;i<10000;i++) big[i]=(char)('a'+i%26);
       int a=open("/tmp/mt/sf-a",O_RDWR|O_CREAT|O_TRUNC,0644); write(a,big,10000);
