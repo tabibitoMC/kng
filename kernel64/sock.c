@@ -394,6 +394,12 @@ int sock_recv(int s,void *dv,int n,int peek,u32 *ip,u16 *port){
     if(port) *port=rd16(h+2);
     return t;
 }
+int sock_avail(int s){
+    if(!OK(s)) return 0;
+    KSock *k=&S[s];
+    if(k->type==SK_DGRAM){ if(k->rx_n<8) return 0; u8 h[8]; ring_get(k->rx,RXSZ,k->rx_r,h,8); return rd16(h); }
+    return k->rx_n;
+}
 int sock_events(int s){
     if(!OK(s)) return SK_POLLERR|SK_POLLHUP;
     KSock *k=&S[s]; int ev=0;

@@ -24,6 +24,7 @@ int  sock_accept(int s,uint32_t *ip,uint16_t *port);                      /* ind
 int  sock_send(int s,const void *d,int n,uint32_t ip,uint16_t port,const char *upath,int plen,int have_dst);
 int  sock_recv(int s,void *d,int n,int peek,uint32_t *ip,uint16_t *port);
 int  sock_events(int s);
+int  sock_avail(int s);                               /* bytes que se pueden leer ya (FIONREAD): en datagramas, el tamano del primero */
 int  sock_shutdown(int s,int how);
 void sock_ref(int s);
 void sock_unref(int s);

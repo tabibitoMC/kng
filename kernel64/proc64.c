@@ -715,7 +715,7 @@ static u64 sys_dispatch(struct regs *r){
         FD *tf=&CP->fd[a1]; int is_tty=tf->type==1||(tf->type==10&&tf->aux==DEV_TTY);
         if(a2==0x5421){ int v=0; if(a3&&ucopy_from(CP,&v,a3,4)) return RET_ERR(EFAULT); if(v) tf->flags|=0x800; else tf->flags&=~0x800; return 0; }      /* FIONBIO */
         if(is_tty) return tty_ioctl(a2,a3);
-        if(a2==0x541B){ int v=0; if(tf->type==3) v=tf->pipe->count; return ucopy_to(CP,a3,&v,4)?RET_ERR(EFAULT):0; }   /* FIONREAD */
+        if(a2==0x541B){ int v=0; if(tf->type==3) v=tf->pipe->count; else if(tf->type==5) v=sock_avail(tf->aux); return ucopy_to(CP,a3,&v,4)?RET_ERR(EFAULT):0; }   /* FIONREAD */
         return RET_ERR(ENOTTY); }
     case 17: return sys_pio(a1,a2,a3,a4,0);
     case 18: return sys_pio(a1,a2,a3,a4,1);
