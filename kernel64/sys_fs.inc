@@ -49,10 +49,46 @@ static void mark_sys(FsNode *n){
 }
 static FsNode *make_file(FsNode *d,const char *leaf){ FsNode *n=fs_create(d,leaf,"",0); if(n) mark_sys(n); return n; }
 
+/* /proc/self/fd: reabrir lo que el proceso tiene abierto (Chromium reabre asi su memoria compartida en solo lectura) y listar la carpeta */
+static int procfd_path(const char *full){      /* -2 no es una ruta de descriptores; -1 es la carpeta; >=0 es el numero de descriptor */
+    const char *p;
+    if(k_startswith(full,"/proc/self/fd")) p=full+13;
+    else if(k_startswith(full,"/proc/thread-self/fd")) p=full+20;
+    else { if(!k_startswith(full,"/proc/")) return -2; const char *q=full+6; int pid=0,dg=0; while(*q>='0'&&*q<='9'){ pid=pid*10+(*q++-'0'); dg++; } if(!dg||pid!=CP->pid||!k_startswith(q,"/fd")) return -2; p=q+3; }
+    if(*p==0||(p[0]=='/'&&p[1]==0)) return -1;
+    if(*p!='/') return -2;
+    p++; int n=0,dg=0; while(*p>='0'&&*p<='9'){ n=n*10+(*p++-'0'); dg++; if(n>100000) return -2; }
+    if(!dg||*p) return -2;
+    return n;
+}
+static FsNode *procfd_refresh(void){
+    FsNode *pr=fs_find(fs_root(),"proc"); if(!pr) return 0;
+    FsNode *s=fs_find(pr,"self"); if(!s){ s=fs_mkdir(pr,"self"); if(s) s->sys=1; } if(!s) return 0;
+    FsNode *d=fs_find(s,"fd"); if(!d){ d=fs_mkdir(s,"fd"); if(d) d->sys=1; } if(!d) return 0;
+    while(d->child) fs_remove(d->child);
+    for(int i=0;i<MAXFD;i++) if(CP->fd[i].type){
+        char nm[8],tg[300]; int k=0; char t[8]; int v=i; do{ t[k++]=(char)('0'+v%10); v/=10; }while(v); for(int j=0;j<k;j++) nm[j]=t[k-1-j]; nm[k]=0;
+        FD *f=&CP->fd[i]; tg[0]=0;
+        if(f->type==2||f->type==10) fs_path(f->node,tg,sizeof tg); else if(f->type==1) k_strcpy(tg,"/dev/console",sizeof tg); else if(f->type==5) k_strcpy(tg,"socket:[1]",sizeof tg);
+        else if(f->type==3||f->type==4) k_strcpy(tg,"pipe:[1]",sizeof tg); else if(f->type==12) k_strcpy(tg,"/memfd:kng (deleted)",sizeof tg); else k_strcpy(tg,"anon_inode:[kng]",sizeof tg);
+        FsNode *l=fs_symlink(d,nm,tg); if(l) l->sys=1;
+    }
+    return d;
+}
 static u64 do_open(long dirfd,u64 path_va,u64 flags,u64 mode){
     (void)mode;
     char path[PATH_MAX_]; int e=upath(path_va,path); if(e) return RET_ERR(-e);
     if(!path[0]) return RET_ERR(ENOENT);
+    { char fp[PATH_MAX_+100]; if(path_full(dirfd,path,fp,sizeof fp)==0){ int pf=procfd_path(fp);
+        if(pf>=0){                                                                      /* open("/proc/self/fd/N"): otra descripcion del mismo objeto */
+            if(pf>=MAXFD||!CP->fd[pf].type) return RET_ERR(ENOENT);
+            int nf=fd_alloc(CP,0); if(nf<0) return RET_ERR(EMFILE);
+            fd_dup_into(&CP->fd[nf],&CP->fd[pf]); FD *q=&CP->fd[nf]; q->cloexec=(flags&O_CLOEXEC_)?1:0;
+            if(q->type==2||q->type==11||q->type==12) q->pos=0;
+            q->flags=(q->flags&~3)|(int)(flags&3); return (u64)nf; }
+        if(pf==-1){ FsNode *dn=procfd_refresh(); if(!dn) return RET_ERR(ENOENT);
+            int nf=fd_alloc(CP,0); if(nf<0) return RET_ERR(EMFILE);
+            FD *q=&CP->fd[nf]; memset(q,0,sizeof *q); q->type=2; q->node=dn; q->pos=0; q->flags=(int)flags; q->cloexec=(flags&O_CLOEXEC_)?1:0; fs_node_ref(dn); return (u64)nf; } } }
     if(!k_strcmp(path,"/etc/resolv.conf")) refresh_resolv();
     int err=ENOENT; FsNode *n=lookup_at(dirfd,path,!(flags&O_NOFOLLOW_),&err);
     if(!n&&err==ENOENT){ u64 v=virt_open(path,flags); if(v!=RET_ERR(ENOENT)) return v; }

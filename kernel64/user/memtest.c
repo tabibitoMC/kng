@@ -152,6 +152,18 @@ static void test_files(void){
     { char ci[8192]={0}; int f=open("/proc/cpuinfo",O_RDONLY); ssize_t r=f>=0?read(f,ci,sizeof ci-1):-1; if(f>=0) close(f);
       CHECK(r>0&&strstr(ci,"flags")&&strstr(ci," sse2")&&strstr(ci," lm"),"/proc/cpuinfo lista las banderas del procesador"); }
 
+    /* /proc/self/fd/N (Chromium reabre asi su memoria compartida en solo lectura) */
+    { int a=open("/tmp/mt/ap2.txt",O_RDONLY); char pth[64]; snprintf(pth,sizeof pth,"/proc/self/fd/%d",a);
+      int b=open(pth,O_RDONLY); char pb[16]={0}; if(b>=0){ if(read(b,pb,4)<0) pb[0]=0; close(b); } CHECK(a>=0&&b>=0&&!strncmp(pb,"uno\n",4),"open(/proc/self/fd/N) reabre el mismo archivo");
+      int found=0; DIR *dd=opendir("/proc/self/fd"); struct dirent *de2; char want[16]; snprintf(want,sizeof want,"%d",a);
+      while(dd&&(de2=readdir(dd))) if(!strcmp(de2->d_name,want)) found=1; if(dd) closedir(dd); CHECK(found,"/proc/self/fd lista los descriptores abiertos");
+      int m=(int)syscall(319,"kng-test",0); if(m>=0){ if(ftruncate(m,4096)<0) m=-1; }
+      char *w=m>=0?mmap(0,4096,PROT_READ|PROT_WRITE,MAP_SHARED,m,0):MAP_FAILED; if(w!=MAP_FAILED) strcpy(w,"memoria compartida");
+      snprintf(pth,sizeof pth,"/proc/self/fd/%d",m); int ro=m>=0?open(pth,O_RDONLY):-1;
+      char *r=ro>=0?mmap(0,4096,PROT_READ,MAP_SHARED,ro,0):MAP_FAILED;
+      CHECK(r!=MAP_FAILED&&!strcmp(r,"memoria compartida"),"memfd reabierto en solo lectura y mapeado ve los mismos datos");
+      if(a>=0) close(a); if(m>=0) close(m); if(ro>=0) close(ro); }
+
     /* sendfile y copy_file_range (las usan apt, curl y los navegadores para copiar archivos) */
     { static char big[10000], chk[10000]; for(int i=0;i<10000;i++) big[i]=(char)('a'+i%26);
       int a=open("/tmp/mt/sf-a",O_RDWR|O_CREAT|O_TRUNC,0644); write(a,big,10000);
