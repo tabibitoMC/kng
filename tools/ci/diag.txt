@@ -1,0 +1,7 @@
+# Diagnostico de fork/exec desde dash (sin pipes)
+20|ejecutar /bin/sh -c "echo uno"
+20|rastro 2
+30|ejecutar /bin/sh -c "/bin/echo dos; echo tres"
+20|rastro 0
+15|procesos
+20|ejecutar /bin/uname

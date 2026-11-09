@@ -1,0 +1,35 @@
+name: diagnostico
+# Prueba rapida a mano: arranca kng con Debian y ejecuta una lista de comandos (tools/ci/*.txt). GitHub > Actions > diagnostico > Run workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      lista: { description: "archivo de comandos", default: "tools/ci/diag.txt" }
+      ram: { description: "RAM de la VM", default: "3G" }
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Herramientas
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 gcc gcc-multilib binutils python3 debootstrap debian-archive-keyring cpio gzip
+      - name: Compilar kernel de 64 bits
+        run: make -C kernel64
+      - name: Debian real (cache)
+        uses: actions/cache@v4
+        with:
+          path: build/debian.cpio.gz
+          key: debian-${{ hashFiles('tools/mkdebian.sh', 'tools/rootfs-es/**') }}
+      - name: Ejecutar lista
+        run: |
+          [ -f build/debian.cpio.gz ] || bash tools/mkdebian.sh
+          zcat build/debian.cpio.gz > debian.cpio
+          python3 tools/mkrootfs.py --debian kng-extra.cpio 2>/dev/null
+          mkdir -p www; echo "hola desde el anfitrion" > www/hola.txt
+          ( cd www && python3 -m http.server 18090 > ../http.log 2>&1 & )
+          sleep 1
+          python3 tools/ci_drive.py "${{ inputs.lista }}" diag.log -- qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd debian.cpio,kng-extra.cpio -display none -serial stdio -m ${{ inputs.ram }} -netdev user,id=n0 -device e1000,netdev=n0 || true
+          echo "=== diag ==="; cat diag.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: diag, path: "*.log" }
