@@ -396,7 +396,7 @@ void kmain64(uint32_t magic, struct mb_info *mi){
                 int c; while((c=getc_nb())>=0) gui_key(c);
                 struct mev e; while(mouse_pop(&e)) gui_mouse_event(e.dx,e.dy,e.b);
                 net_poll(); proc_pump(); gui_frame();
-                __asm__ volatile("hlt");
+                __asm__ volatile("sti;hlt");
             }
         }
         kprintf("[!] no se pudo iniciar la interfaz grafica (memoria). Modo texto.\n");
@@ -405,7 +405,7 @@ void kmain64(uint32_t magic, struct mb_info *mi){
     char line[128]; int n=0; kprintf("kng> ");
     for(;;){
         int c=getc_nb();
-        if(c<0){ net_poll(); proc_pump(); __asm__ volatile("hlt"); continue; }
+        if(c<0){ net_poll(); proc_pump(); __asm__ volatile("sti;hlt"); continue; }
         if(c=='\n'){ putc('\n'); line[n]=0; kshell_exec(line); n=0; kprintf("kng> "); }
         else if(c=='\b'){ if(n>0){ n--; putc('\b'); } }
         else if(c>=32 && n<127){ line[n++]=(char)c; putc((char)c); }

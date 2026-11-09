@@ -8,9 +8,8 @@
 20|rastro 0
 60|ejecutar /usr/bin/curl -sS -m 40 -I https://deb.debian.org/debian/dists/bookworm/Release
 30|ejecutar /usr/bin/apt-get --version
-20|rastro 1
-240|actualizar
-20|rastro 0
-240|instalar hello
+360|actualizar
+20|procesos
+600|instalar hello
 30|ejecutar /usr/bin/hello
 30|paquetes
