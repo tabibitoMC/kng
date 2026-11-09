@@ -14,6 +14,8 @@ make -C kernel      # kernel de 32 bits
 make -C kernel64    # kernel de 64 bits
 rm -rf build/iso && mkdir -p build/iso/boot/grub out
 cp kernel/kng-kernel.elf kernel/kng-kernel-text.elf kernel64/kng-kernel64.elf kernel64/kng-kernel64-text.elf build/iso/boot/
+# rootfs (programas Linux + enlazador dinamico + libc del PC) como modulo de arranque; solo lo usa el kernel de 64 bits
+if python3 tools/mkrootfs.py build/iso/boot/rootfs.cpio; then ROOTFS=1; else ROOTFS=0; echo "[aviso] sin rootfs (falta libc estatica: sudo apt install libc6-dev). El ISO igual arranca, sin programas Linux."; fi
 python3 tools/check-mb.py build/iso/boot/*.elf
 cat > build/iso/boot/grub/grub.cfg <<'CFG'
 set timeout=6
@@ -27,6 +29,7 @@ menuentry "Königreich OS - 32 bits (grafico)" {
 menuentry "Königreich OS - 64 bits (grafico)" {
     set gfxpayload=1024x768x32
     multiboot /boot/kng-kernel64.elf
+    module /boot/rootfs.cpio
     boot
 }
 menuentry "Königreich OS - 32 bits (modo texto)" {
@@ -37,6 +40,7 @@ menuentry "Königreich OS - 32 bits (modo texto)" {
 menuentry "Königreich OS - 64 bits (modo texto)" {
     set gfxpayload=text
     multiboot /boot/kng-kernel64-text.elf
+    module /boot/rootfs.cpio
     boot
 }
 CFG
