@@ -20,6 +20,11 @@ void  khalt(void);
 int   krtc(int *h, int *m);            /* hora del RTC (CMOS); 0 si ok */
 uint32_t kram_kb(void);
 extern void (*kcon_hook)(char);        /* si no es NULL, la salida de consola va a esta funcion */
+/* programas "pegados" a la ventana de terminal (kernel de 64 bits): corren en segundo plano de verdad y reciben las teclas de la ventana */
+extern int  kattach_pid;               /* pid del programa que acaba de lanzar el ultimo comando (0 = ninguno); lo pone el shell y lo lee la ventana */
+extern char kshell_cwd[96];            /* carpeta actual de la ventana que lanza el comando (la heredan los programas) */
+extern void (*kproc_done)(int pid,int code);   /* se llama al terminar un programa pegado a la terminal */
+void  kproc_key(int c);                /* tecla de la ventana de terminal hacia el programa (codigos Latin-1, flechas 0x11-0x16, Ctrl+x = 0x400|x) */
 
 static inline int k_strlen(const char *s){ int n=0; while(s[n]) n++; return n; }
 static inline int k_strcmp(const char *a,const char *b){ while(*a&&*a==*b){a++;b++;} return (unsigned char)*a-(unsigned char)*b; }

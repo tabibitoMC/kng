@@ -22,7 +22,8 @@ enum { A_ABOUT, A_BROWSER, A_FILES, A_TERM, A_SETTINGS, A_VIEWER, A_NOTES, A_CAL
 
 typedef struct {
     int used, type, x, y, w, h; char title[40];
-    char grid[TH][TW]; int tr, tc; char in[TW]; int inlen; FsNode *cwd;          /* terminal */
+    char grid[TH][TW]; int tr, tc; char in[256]; int inlen; FsNode *cwd;          /* terminal */
+    int busy, bpid, esc, escp, escv[6], escq, savr, savc;                         /* terminal: programa pegado, secuencias ANSI */
     FsNode *dir, *sel, *last; int scroll; uint32_t lastclick;                    /* archivos / visor */
     FsNode *file;                                                                /* visor */
     char url[192], hist[8][192], ebuf[192]; int nhist, bscroll, editing, elen; HPage page;   /* navegador */
@@ -128,6 +129,7 @@ static void focus(int wi){
 }
 static void doc_free(Win *w);
 static void win_close(int wi){
+    if(wins[wi].type==A_TERM&&wins[wi].busy){ char kc[32]="matar "; cat_int(kc,sizeof kc,wins[wi].bpid); kshell_exec(kc); wins[wi].busy=0; }
     int k=0; while(k<nord && order[k]!=wi) k++;
     for(;k<nord-1;k++) order[k]=order[k+1];
     doc_free(&wins[wi]);
@@ -142,18 +144,64 @@ static void term_nl(Win *w){
     w->tc=0; w->tr++;
     if(w->tr>=TH){ for(int r=1;r<TH;r++) for(int c=0;c<TW;c++) w->grid[r-1][c]=w->grid[r][c]; memset(w->grid[TH-1],' ',TW); w->tr=TH-1; }
 }
+static void mmove(void *d,const void *s,size_t n){ char *dd=d; const char *ss=s; if(dd<ss) while(n--) *dd++=*ss++; else { dd+=n; ss+=n; while(n--) *--dd=*--ss; } }
+static void term_clear_rows(Win *w,int r0,int r1){ for(int r=r0;r<=r1&&r<TH;r++) memset(w->grid[r],' ',TW); }
+static void term_csi(Win *w,unsigned char f){          /* secuencias de escape ANSI (cursor, borrar). Los colores se ignoran */
+    int n=w->escv[0], m=w->escv[1]; int n1=n?n:1;
+    switch(f){
+    case 'A': w->tr-=n1; if(w->tr<0) w->tr=0; break;
+    case 'B': w->tr+=n1; if(w->tr>=TH) w->tr=TH-1; break;
+    case 'C': w->tc+=n1; if(w->tc>=TW) w->tc=TW-1; break;
+    case 'D': w->tc-=n1; if(w->tc<0) w->tc=0; break;
+    case 'E': w->tr+=n1; if(w->tr>=TH) w->tr=TH-1; w->tc=0; break;
+    case 'F': w->tr-=n1; if(w->tr<0) w->tr=0; w->tc=0; break;
+    case 'G': w->tc=n1-1; if(w->tc>=TW) w->tc=TW-1; break;
+    case 'd': w->tr=n1-1; if(w->tr>=TH) w->tr=TH-1; break;
+    case 'H': case 'f': w->tr=(n?n:1)-1; w->tc=(m?m:1)-1; if(w->tr>=TH) w->tr=TH-1; if(w->tc>=TW) w->tc=TW-1; break;
+    case 'J': if(n==0){ memset(&w->grid[w->tr][w->tc],' ',(size_t)(TW-w->tc)); term_clear_rows(w,w->tr+1,TH-1); }
+              else if(n==1){ term_clear_rows(w,0,w->tr-1); memset(w->grid[w->tr],' ',(size_t)w->tc+1); }
+              else { term_clear_rows(w,0,TH-1); } break;
+    case 'K': if(n==0) memset(&w->grid[w->tr][w->tc],' ',(size_t)(TW-w->tc)); else if(n==1) memset(w->grid[w->tr],' ',(size_t)w->tc+1); else memset(w->grid[w->tr],' ',TW); break;
+    case 'X': { int c=n1; if(w->tc+c>TW) c=TW-w->tc; memset(&w->grid[w->tr][w->tc],' ',(size_t)c); break; }
+    case 'P': { int c=n1; if(w->tc+c>TW) c=TW-w->tc; mmove(&w->grid[w->tr][w->tc],&w->grid[w->tr][w->tc+c],(size_t)(TW-w->tc-c)); memset(&w->grid[w->tr][TW-c],' ',(size_t)c); break; }
+    case '@': { int c=n1; if(w->tc+c>TW) c=TW-w->tc; mmove(&w->grid[w->tr][w->tc+c],&w->grid[w->tr][w->tc],(size_t)(TW-w->tc-c)); memset(&w->grid[w->tr][w->tc],' ',(size_t)c); break; }
+    case 'L': for(int k=0;k<n1;k++){ for(int r=TH-1;r>w->tr;r--) memcpy(w->grid[r],w->grid[r-1],TW); memset(w->grid[w->tr],' ',TW); } break;
+    case 'M': for(int k=0;k<n1;k++){ for(int r=w->tr;r<TH-1;r++) memcpy(w->grid[r],w->grid[r+1],TW); memset(w->grid[TH-1],' ',TW); } break;
+    case 's': w->savr=w->tr; w->savc=w->tc; break;
+    case 'u': w->tr=w->savr; w->tc=w->savc; break;
+    default: break;                                    /* m (colores), h, l, r, n...: se ignoran */
+    }
+}
 static void term_put(Win *w,char c){
     static unsigned char pend; unsigned char u=(unsigned char)c;
+    if(w->esc==1){ if(u=='['){ w->esc=2; w->escp=0; memset(w->escv,0,sizeof w->escv); w->escq=0; } else if(u=='('||u==')'||u=='#'){ w->esc=3; } else { w->esc=0; if(u=='c'){ term_clear_rows(w,0,TH-1); w->tr=w->tc=0; } else if(u=='M'){ if(w->tr>0) w->tr--; } } dwin(w); return; }
+    if(w->esc==3){ w->esc=0; return; }                  /* ESC ( B  y similares: un caracter mas que se descarta */
+    if(w->esc==2){
+        if(u>='0'&&u<='9'){ if(w->escp<6) w->escv[w->escp]=w->escv[w->escp]*10+(u-'0'); return; }
+        if(u==';'){ if(w->escp<5) w->escp++; return; }
+        if(u=='?'||u=='>'||u=='!'||u=='='||u==' ') { return; }
+        w->esc=0; term_csi(w,u); dwin(w); return; }
+    if(u==27){ w->esc=1; return; }
     if(pend){ unsigned char l=(unsigned char)(((pend&3)<<6)|(u&0x3F)); pend=0; u=l; }
     else if(u==0xC2||u==0xC3){ pend=u; return; }
     if(u=='\n'){ term_nl(w); }
     else if(u=='\r'){ w->tc=0; }
     else if(u=='\b'){ if(w->tc>0){ w->tc--; w->grid[w->tr][w->tc]=' '; } }
+    else if(u=='\t'){ int nt=(w->tc/8+1)*8; while(w->tc<nt&&w->tc<TW) w->grid[w->tr][w->tc++]=' '; }
+    else if(u==7||u==0){ }
     else { if(w->tc>=TW) term_nl(w); w->grid[w->tr][w->tc++]=(char)u; }
     dwin(w);
 }
 static void tp(Win *w,const char *s){ while(*s) term_put(w,*s++); }
 static void term_prompt(Win *w){ char p[110]; fs_path(w->cwd,p,sizeof p); cat(p,sizeof p,"> "); tp(w,p); }
+static void term_done(int pid,int code){                 /* un programa pegado a una terminal termino: mensaje y prompt otra vez */
+    for(int i=0;i<MAXW;i++){ Win *w=&wins[i]; if(!w->used||w->type!=A_TERM||!w->busy||w->bpid!=pid) continue;
+        w->busy=0; char b[64]="";
+        if(w->tc>0) tp(w,"\n");
+        if(code>=0){ cat(b,sizeof b,"[termino con codigo "); cat_int(b,sizeof b,code); cat(b,sizeof b,"]\n"); }
+        else { cat(b,sizeof b,"[terminado por la senal "); cat_int(b,sizeof b,-code); cat(b,sizeof b,"]\n"); }
+        tp(w,b); term_prompt(w); dirty=1; return; }
+}
 
 static void nav(Win *w,const char *url,int push);
 static void snake_reset(Win *w);
@@ -1034,9 +1082,17 @@ void gui_key(int c){
     Win *w=&wins[top];
     switch(w->type){
     case A_TERM:
-        if(c=='\n'){ term_put(w,'\n'); w->in[w->inlen]=0; char line[TW]; memcpy(line,w->in,TW); w->inlen=0; term_cmd(w,line); term_prompt(w); }
+        if(w->busy){                                           /* hay un programa pegado a esta terminal: las teclas son suyas */
+            if(c>=0x400||c<0x80) kproc_key(c);
+            else { char e[2]; int en=u8_enc(c,e); for(int i=0;i<en;i++) kproc_key((unsigned char)e[i]); }
+            break; }
+        if(c>=0x400) break;
+        if(c=='\n'){ term_put(w,'\n'); w->in[w->inlen]=0; char line[256]; memcpy(line,w->in,256); w->inlen=0;
+            fs_path(w->cwd,kshell_cwd,sizeof kshell_cwd); kattach_pid=0;
+            term_cmd(w,line);
+            if(kattach_pid){ w->busy=1; w->bpid=kattach_pid; kattach_pid=0; } else term_prompt(w); }
         else if(c=='\b'){ if(w->inlen>0){ w->inlen-=u8_last(w->in,w->inlen); term_put(w,'\b'); } }
-        else { char e[2]; int en=u8_enc(c,e); if(en && w->inlen+en<TW-20){ for(int i=0;i<en;i++){ w->in[w->inlen++]=e[i]; term_put(w,e[i]); } } }
+        else { char e[2]; int en=u8_enc(c,e); if(en && w->inlen+en<250){ for(int i=0;i<en;i++){ w->in[w->inlen++]=e[i]; term_put(w,e[i]); } } }
         break;
     case A_FILES: {
         FsNode *l[96]; int n=fs_list(w->dir,l,96), idx=-1;
@@ -1085,6 +1141,7 @@ int gui_init(uint32_t *fb,int w,int h,int pitch_bytes){
     (void)kngfs_mount(); build_wall();
     { char kv[16]; if(cfg_get("teclado",kv,sizeof kv)){ int l=layout_from_name(kv); if(l>=0) kbd_set_layout(l); } }
     dobj_init(); mx=w/2; my=h/2; dirty=1; cursor_dirty=1; clk_next=0;
+    kproc_done=term_done;
     return 0;
 }
 

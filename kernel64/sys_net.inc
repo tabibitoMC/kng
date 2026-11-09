@@ -389,14 +389,14 @@ static int fd_events_p(Proc *pr,int fdn){
     if(fdn<0||fdn>=MAXFD||!pr->fd[fdn].type) return PNVAL;
     FD *f=&pr->fd[fdn];
     switch(f->type){
-    case 1: if(fdn==0){ stdin_pump(); return (inl_ready&&inl_r<inl_n)?PIN:0; } return POUT;
+    case 1: stdin_pump(); return POUT|(tty_input_ready()?PIN:0);
     case 3: { struct Pipe *p=f->pipe; int e=0; if(p->count>0) e|=PIN; if(p->writers<=0) e|=PHUP; return e; }
     case 4: { struct Pipe *p=f->pipe; int e=0; if(p->count<4096) e|=POUT; if(p->readers<=0) e|=PERR; return e; }
     case 5: return sock_events(f->aux);
     case 6: return (f->obj->cnt>0?PIN:0)|(f->obj->cnt<0xFFFFFFFFFFFFFFFEull?POUT:0);
     case 7: return epoll_scan(pr,f->obj,0,64,0)>0?PIN:0;
     case 8: tfd_update(f->obj); return f->obj->cnt?PIN:0;
-    case 10: if(f->aux==DEV_TTY){ stdin_pump(); return POUT|((inl_ready&&inl_r<inl_n)?PIN:0); } return dev_events(f->aux);
+    case 10: if(f->aux==DEV_TTY){ stdin_pump(); return POUT|(tty_input_ready()?PIN:0); } return dev_events(f->aux);
     default: return PIN|POUT;
     }
 }

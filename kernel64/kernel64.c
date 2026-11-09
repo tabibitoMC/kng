@@ -124,9 +124,9 @@ static void pit_init(void){ uint32_t div=1193182/100; outb(0x43,0x36); outb(0x40
 
 /* ---------- Teclado PS/2 (set 1; distribuciones en kbd.c) ---------- */
 #define KB_N 128
-static volatile unsigned char kb_buf[KB_N]; static volatile int kb_h, kb_t;
-static void kb_push(unsigned char c){ int n=(kb_h+1)%KB_N; if(n!=kb_t){ kb_buf[kb_h]=c; kb_h=n; } }
-static void kb_irq(void){ int c=kbd_feed(inb(0x60)); if(c) kb_push((unsigned char)c); }   /* traduccion en kbd.c (US/Latam/ES) */
+static volatile unsigned short kb_buf[KB_N]; static volatile int kb_h, kb_t;
+static void kb_push(unsigned short c){ int n=(kb_h+1)%KB_N; if(n!=kb_t){ kb_buf[kb_h]=c; kb_h=n; } }
+static void kb_irq(void){ int c=kbd_feed(inb(0x60)); if(c) kb_push((unsigned short)c); }   /* traduccion en kbd.c (US/Latam/ES) */
 
 /* ---------- Raton PS/2 (IRQ12) ---------- */
 struct mev { int dx, dy, b; };
@@ -229,6 +229,42 @@ static void heap_stats(u64 *used,u64 *freeb,u64 *largest){
 }
 
 /* ---------- Shell del kernel ---------- */
+static int tokenize(char *l,char **a,int max){        /* separa por espacios; 'comillas' y "comillas" agrupan; las comillas se quitan */
+    int n=0; char *p=l;
+    while(*p&&n<max){
+        while(*p==' ') p++;
+        if(!*p) break;
+        a[n++]=p; char *o=p; char q=0;
+        while(*p&&(q||*p!=' ')){
+            if(q){ if(*p==q){ q=0; p++; } else *o++=*p++; }
+            else if(*p=='\''||*p=='"'){ q=*p++; }
+            else *o++=*p++; }
+        if(*p) p++;
+        *o=0; }
+    return n;
+}
+/* busca un programa por nombre en las carpetas habituales (PATH) */
+static int find_program(const char *name,char *out,int max){
+    static const char *dirs[]={"/bin","/usr/bin","/usr/local/bin","/sbin","/usr/sbin","/opt/bin"};
+    if(!fs_root()) return 0;
+    if(name[0]=='/'||(name[0]=='.'&&name[1]=='/')){ FsNode *f=fs_resolve(fs_root(),name); if(f&&!f->dir&&f->data){ k_strcpy(out,name,max); return 1; } return 0; }
+    for(unsigned i=0;i<sizeof dirs/sizeof *dirs;i++){
+        char p[160]; k_strcpy(p,dirs[i],sizeof p); int l=k_strlen(p); p[l++]='/'; k_strcpy(p+l,name,(int)sizeof p-l);
+        FsNode *f=fs_resolve(fs_root(),p); if(f&&!f->dir&&(f->data||f->size)){ k_strcpy(out,p,max); return 1; } }
+    return 0;
+}
+static int launch(char *path,int n,char **a,int bg){       /* en modo grafico el programa queda pegado a la ventana sin congelar el escritorio */
+    int mode=bg?1:(gui_mode?2:0);
+    int rc=proc_exec(path,n,a,mode);
+    if(mode==0&&rc>=0) kprintf("[proceso termino con codigo %d]\n",rc); else if(mode==0&&rc<-1) kprintf("[proceso terminado por la senal %d]\n",-rc);
+    return rc;
+}
+static int try_program(char *l){
+    char *a[48]; int n=tokenize(l,a,48); if(!n) return 0;
+    int bg=0; if(n>1&&streq(a[n-1],"&")){ bg=1; n--; }
+    char path[160]; if(!find_program(a[0],path,sizeof path)) return 0;
+    launch(path,n,a,bg); return 1;
+}
 static void run(char *l){
     while(*l==' ') l++;
     if(!*l) return;
@@ -238,10 +274,10 @@ static void run(char *l){
     else if(streq(l,"heap")){ u64 u,f,m; heap_stats(&u,&f,&m); kprintf("heap: total %lu KB | usado %lu B | libre %lu B | bloque libre mayor %lu B\n",heap_total/1024,u,f,m); }
     else if(streq(l,"uptime")) kprintf("%u.%u s\n",ticks/100,(ticks%100)/10);
     else if(startswith(l,"ejecutar ")||startswith(l,"run ")){
-        char *a[12]; int n=0, bg=0; char *p=l; while(*p&&*p!=' ') p++;
-        while(*p&&n<12){ while(*p==' ') *p++=0; if(!*p) break; a[n++]=p; while(*p&&*p!=' ') p++; }
+        char *a[48]; int bg=0; char *p=l; while(*p&&*p!=' ') p++;
+        int n=tokenize(p,a,48);
         if(n>1&&streq(a[n-1],"&")){ bg=1; n--; }
-        if(n){ int rc=proc_exec(a[0],n,a,bg); if(!bg&&rc>=0) kprintf("[proceso termino con codigo %d]\n",rc); else if(!bg&&rc<-1) kprintf("[proceso terminado por la senal %d]\n",-rc); } else kprintf("uso: ejecutar <ruta> [argumentos] [&]\n"); }
+        if(n){ char path[160]; if(!find_program(a[0],path,sizeof path)) k_strcpy(path,a[0],sizeof path); launch(path,n,a,bg); } else kprintf("uso: ejecutar <ruta> [argumentos] [&]\n"); }
     else if(streq(l,"procesos")||streq(l,"ps")) proc_ps();
     else if(startswith(l,"matar ")){ int pid=0; for(const char *q=l+6;*q>='0'&&*q<='9';q++) pid=pid*10+(*q-'0'); kprintf(proc_kill(pid,9)?"senal enviada\n":"no existe ese proceso\n"); }
     else if(streq(l,"programas")||streq(l,"progs")) proc_list();
@@ -250,7 +286,7 @@ static void run(char *l){
     else if(startswith(l,"echo ")) kprintf("%s\n",l+5);
     else if(streq(l,"reboot")){ outb(0x64,0xFE); for(;;) __asm__ volatile("hlt"); }
     else if(streq(l,"halt")){ kprintf("Sistema detenido.\n"); for(;;) __asm__ volatile("cli;hlt"); }
-    else kprintf("comando desconocido: %s (prueba 'help')\n",l);
+    else { char cp[200]; k_strcpy(cp,l,sizeof cp); if(!try_program(cp)) kprintf("comando desconocido: %s (prueba 'help')\n",l); }
 }
 
 /* ---------- API para la interfaz grafica (kng.h) ---------- */
@@ -258,6 +294,8 @@ void k_write_console(const char *s,int n){ for(int i=0;i<n;i++) putc(s[i]); }
 uint32_t kticks(void){ return ticks; }
 int kgetc(void){ return getc_nb(); }
 void kshell_exec(char *l){ if(net_cmd(l)) return; run(l); }
+void proc_stdin_char(int c);
+void kproc_key(int c){ proc_stdin_char(c); }
 void kheap_info(uint64_t *used,uint64_t *freeb){ uint64_t m; heap_stats(used,freeb,&m); }
 uint32_t kram_kb(void){ return ram_kb>0xFFFFFFFFull?0xFFFFFFFFu:(uint32_t)ram_kb; }
 extern uint64_t pd[2048];

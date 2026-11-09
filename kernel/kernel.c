@@ -185,7 +185,7 @@ static void pit_init(void){
 #define KB_N 128
 static volatile unsigned char kb_buf[KB_N]; static volatile int kb_h, kb_t;
 static void kb_push(unsigned char c){ int n=(kb_h+1)%KB_N; if(n!=kb_t){ kb_buf[kb_h]=c; kb_h=n; } }
-static void kb_irq(void){ int c=kbd_feed(inb(0x60)); if(c) kb_push((unsigned char)c); }   /* traduccion en kbd.c (US/Latam/ES) */
+static void kb_irq(void){ int c=kbd_feed(inb(0x60)); if(c&&c<0x400) kb_push((unsigned char)c); }   /* traduccion en kbd.c (US/Latam/ES) */
 
 /* ---------- Raton PS/2 (IRQ12) ---------- */
 struct mev { int dx, dy, b; };
@@ -873,6 +873,7 @@ static void run(char *l){
 uint32_t kticks(void){ return ticks; }
 int kgetc(void){ return getc_nb(); }
 void kshell_exec(char *l){ if(net_cmd(l)) return; run(l); }
+int kattach_pid; char kshell_cwd[96]; void (*kproc_done)(int pid,int code); void kproc_key(int c){ (void)c; }
 uint32_t kram_kb(void){ return ram_usable_kb; }
 static inline void outw(uint16_t p,uint16_t v){ __asm__ volatile("outw %0,%1"::"a"(v),"Nd"(p)); }
 void kreboot(void){ outb(0x64,0xFE); for(;;) __asm__ volatile("hlt"); }

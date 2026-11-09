@@ -87,6 +87,7 @@ typedef struct Task {
     u8 fx[512] __attribute__((aligned(16)));
 } Task;
 static Task tasks[MAXT]; static Task task0; static Task *cur=&task0; static int next_tid=1;
+#define CP (cur->pr)
 #define INTR() (cur->killed || (cur->sigpend&~cur->sigmask))
 static void sig_queue_proc(Proc *pr,int sig);
 static void (*idle_hook)(void);
@@ -197,15 +198,7 @@ static void fd_close(FD *f){
 }
 static void fd_dup_into(FD *d,const FD *s){ *d=*s; d->cloexec=0; if(s->type==3) s->pipe->readers++; else if(s->type==4) s->pipe->writers++; else if(s->type==5) sock_ref(s->aux); else if((s->type==2||s->type==10)&&s->node) fs_node_ref(s->node); else if(s->obj&&(s->type==6||s->type==7||s->type==8||s->type==11||s->type==12||s->type==10)) s->obj->refs++; }
 
-static u8 inl[256]; static int inl_n, inl_r, inl_ready;
-static void stdin_pump(void){
-    int c;
-    while((c=kgetc())>=0){
-        if(c=='\b'){ if(inl_n>0){ inl_n--; k_write_console("\b",1); } }
-        else if(c=='\n'){ if(inl_n<255) inl[inl_n++]='\n'; k_write_console("\n",1); inl_ready=1; }
-        else if(c>=32&&inl_n<254){ inl[inl_n++]=(u8)c; char ch=(char)c; k_write_console(&ch,1); }
-    }
-}
+#include "sys_tty.inc"
 static int pipe_ready(Task *t){
     FD *f=&t->pr->fd[t->pipe_fd]; if(f->type!=3&&f->type!=4) return 1; struct Pipe *p=f->pipe;
     return f->type==3 ? (p->count>0||p->writers<=0) : (p->count<4096||p->readers<=0);
@@ -219,6 +212,7 @@ static void poll_wakeups(void){
         if(t->state==T_READY) continue;
         if(t->state==T_ZOMBIE){
             if(t!=cur&&!t->leader) t->state=T_FREE;                       /* hilo terminado: su hueco se reutiliza */
+            else if(t!=cur&&t->leader&&t->bg==2){ int pid=t->pid, code=t->exit_code; t->state=T_FREE; if(kproc_done) kproc_done(pid,code); }      /* programa pegado a la terminal: la ventana vuelve a mostrar el prompt */
             else if(t!=cur&&t->leader&&t->bg){ kprintf("[proceso %d termino con codigo %d]\n",t->pid,t->exit_code); t->state=T_FREE; }
             else if(t!=cur&&t->leader&&!t->fg&&t->ppid==0) t->state=T_FREE;      /* huerfano ya terminado */
             continue; }
@@ -232,7 +226,7 @@ static void poll_wakeups(void){
             for(int j=0;j<MAXT;j++){ Task *c=&tasks[j]; if(c->state==T_ZOMBIE&&c->leader&&c->ppid==t->pid&&(t->wait_pid<=0||c->pid==t->wait_pid)){ t->state=T_READY; break; } }
         }
     }
-    if(any_read){ stdin_pump(); if(inl_ready) for(int i=0;i<MAXT;i++) if(tasks[i].state==T_READ) tasks[i].state=T_READY; }
+    if(any_read){ stdin_pump(); if(tty_input_ready()) for(int i=0;i<MAXT;i++) if(tasks[i].state==T_READ) tasks[i].state=T_READY; }
 }
 static Task *pick_next(void){                    /* turnos: tasks[0..MAXT-1] y luego el kernel (task0) */
     int me=cur==&task0?MAXT:(int)(cur-tasks);
@@ -320,7 +314,7 @@ static int elf_map(Proc *pr,const u8 *img,u64 sz,u64 dyn_base,struct elfinfo *o,
     o->entry=base+e->entry; o->base=base; o->phnum=e->phnum; o->end=top; return 0;
 }
 
-#define MAXARG 16
+#define MAXARG 64
 static int vma_add(Proc *pr,u64 s,u64 e,u32 prot,u32 kind,KObj *obj,FsNode *node,u64 off);
 static int build_stack(Proc *pr,u64 *sp_out,int argc,char **argv,int envc,char **envp,const char *execfn,u64 entry,u64 phdr,int phnum,u64 at_base){
     if(argc>MAXARG){ argc=MAXARG; }
@@ -350,7 +344,8 @@ struct builtin { const char *name; char *s, *e; };
 static struct builtin builtins[]={{"hola",blob_hola_start,blob_hola_end}};
 void proc_list(void){ kprintf("Programas incluidos en el kernel (ejecutar /bin/<nombre>):\n"); for(unsigned i=0;i<sizeof builtins/sizeof *builtins;i++) kprintf("  /bin/%s  (%lu bytes)\n",builtins[i].name,(u64)(builtins[i].e-builtins[i].s)); }
 
-static const char *DEFENV[]={"PATH=/bin:/usr/bin","HOME=/","TERM=linux","LANG=C"};
+static const char *DEFENV[]={"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","HOME=/root","TERM=linux","LANG=C.UTF-8","USER=root","LOGNAME=root","SHELL=/bin/sh","TMPDIR=/tmp","XDG_RUNTIME_DIR=/run"};
+#define DEFENV_N 9
 static int find_image(const char *path,const u8 **img,u64 *sz){
     if(k_startswith(path,"/bin/")) for(unsigned i=0;i<sizeof builtins/sizeof *builtins;i++) if(!k_strcmp(path+5,builtins[i].name)){ *img=(u8*)builtins[i].s; *sz=(u64)(builtins[i].e-builtins[i].s); return 0; }
     if(!fs_root()) fs_init();
@@ -358,9 +353,21 @@ static int find_image(const char *path,const u8 **img,u64 *sz){
     *img=(u8*)f->data; *sz=(u64)f->size; return 0;
 }
 /* arma un espacio de direcciones nuevo con el programa cargado; 0 ok */
-static int load_image(Proc *pr,const char *path,int argc,char **argv,int envc,char **envp,u64 *entry,u64 *sp){
+static int load_image2(Proc *pr,const char *path,int argc,char **argv,int envc,char **envp,u64 *entry,u64 *sp,int depth){
     const u8 *img; u64 sz;
-    if(find_image(path,&img,&sz)){ kprintf("ejecutar: no existe %s\n",path); return -ENOENT; }
+    if(find_image(path,&img,&sz)){ if(!depth) kprintf("ejecutar: no existe %s\n",path); return -ENOENT; }
+    if(sz>2&&img[0]=='#'&&img[1]=='!'){                              /* script: se ejecuta con el interprete indicado en la primera linea */
+        if(depth>=4) return -ENOEXEC;
+        static char interp[4][200], iarg[4][200]; static char *nav[4][MAXARG+2];
+        char *ip=interp[depth], *ia=iarg[depth]; char **na=nav[depth]; ip[0]=ia[0]=0;
+        u64 i=2; while(i<sz&&(img[i]==' '||img[i]=='\t')) i++;
+        int k=0; while(i<sz&&img[i]!='\n'&&img[i]!=' '&&img[i]!='\t'&&img[i]!='\r'&&k<199) ip[k++]=(char)img[i++]; ip[k]=0;
+        while(i<sz&&(img[i]==' '||img[i]=='\t')) i++;
+        k=0; while(i<sz&&img[i]!='\n'&&img[i]!='\r'&&k<199) ia[k++]=(char)img[i++]; while(k>0&&(ia[k-1]==' '||ia[k-1]=='\t')) k--; ia[k]=0;
+        if(!ip[0]) return -ENOEXEC;
+        int n=0; na[n++]=ip; if(ia[0]) na[n++]=ia; na[n++]=(char*)path; for(int a=1;a<argc&&n<MAXARG;a++) na[n++]=argv[a];
+        return load_image2(pr,ip,n,na,envc,envp,entry,sp,depth+1);
+    }
     if(proc_space(pr)){ kprintf("ejecutar: sin memoria\n"); return -ENOMEM; }
     struct elfinfo m,in;
     if(elf_map(pr,img,sz,USER_BASE,&m,1)) return -ENOEXEC;
@@ -372,14 +379,16 @@ static int load_image(Proc *pr,const char *path,int argc,char **argv,int envc,ch
         *entry=in.entry; at_base=in.base;
     }
     k_strcpy(pr->exe,path,sizeof pr->exe);
-    if(!envp){ envp=(char**)DEFENV; envc=4; }
+    if(!envp){ envp=(char**)DEFENV; envc=DEFENV_N; }
     if(build_stack(pr,sp,argc,argv,envc,envp,path,m.entry,m.phdr,m.phnum,at_base)) return -ENOMEM;
     pr->brk0=pr->brk=(m.end+4095+65536)&~4095ull; pr->mmap_next=MMAP_BASE;
     return 0;
 }
+static int load_image(Proc *pr,const char *path,int argc,char **argv,int envc,char **envp,u64 *entry,u64 *sp){ return load_image2(pr,path,argc,argv,envc,envp,entry,sp,0); }
 static Proc *proc_new(void){ Proc *p=kmalloc(sizeof *p); if(p){ memset(p,0,sizeof *p); k_strcpy(p->cwd,"/",sizeof p->cwd); } return p; }
 
 /* API para el shell del kernel: crea el proceso y (si no es en segundo plano) espera a que termine */
+int kattach_pid; char kshell_cwd[96]; void (*kproc_done)(int pid,int code);
 int proc_exec(char *path,int argc,char **argv,int bg){
     if(proc_init()){ kprintf("ejecutar: no hay memoria\n"); return -1; }
     Proc *pr=proc_new(); if(!pr){ kprintf("ejecutar: sin memoria\n"); return -1; }
@@ -388,10 +397,12 @@ int proc_exec(char *path,int argc,char **argv,int bg){
     for(int i=0;i<3;i++) pr->fd[i].type=1;
     Task *t=task_alloc(); if(!t){ kprintf("ejecutar: demasiadas tareas\n"); pg_free_all(pr); kfree(pr); return -1; }
     t->pr=pr; t->pid=t->tid; pr->pid=t->pid; pr->nthreads=1; t->ppid=0; t->leader=1; t->bg=bg; t->fg=!bg;
+    if(kshell_cwd[0]) k_strcpy(pr->cwd,kshell_cwd,sizeof pr->cwd);
     k_strcpy(t->name,path+(k_startswith(path,"/bin/")?5:0),sizeof t->name);
     struct regs fr; memset(&fr,0,sizeof fr); fr.rip=entry; fr.cs=0x23; fr.ss=0x1B; fr.rflags=0x202; fr.rsp=sp;
-    inl_n=inl_r=inl_ready=0;
+    tty_reset_input();
     task_prepare(t,&fr); t->state=T_READY;
+    if(bg==2){ kattach_pid=t->pid; return t->pid; }                      /* pegado a la terminal grafica: la ventana sigue viva y el prompt vuelve al terminar */
     if(bg){ kprintf("[proceso %d en segundo plano]\n",t->pid); return t->pid; }
     for(;;){
         poll_wakeups();
@@ -414,7 +425,6 @@ int proc_kill(int pid,int sig){
 }
 
 /* ---------- llamadas al sistema (numeros y estructuras = ABI de Linux x86-64) ---------- */
-#define CP (cur->pr)
 static int fd_alloc(Proc *pr,int from){ for(int f=from;f<MAXFD;f++) if(!pr->fd[f].type) return f; return -1; }
 static int abs_path(const char *path,char *full,int max){
     int n=0; if(path[0]!='/'){ k_strcpy(full,CP->cwd,max); n=k_strlen(full); if(n&&full[n-1]!='/') full[n++]='/'; }
@@ -448,9 +458,21 @@ static void refresh_resolv(void){
 }
 static u64 console_read(u64 buf,u64 n,int nb){
     if(!n) return 0;
+    u32 t0=kticks(); int waited=0;
     for(;;){
         stdin_pump();
-        if(inl_ready&&inl_r<inl_n){ u64 k=(u64)(inl_n-inl_r); if(k>n) k=n; if(ucopy_to(CP,buf,inl+inl_r,k)) return RET_ERR(EFAULT); inl_r+=(int)k; if(inl_r>=inl_n){ inl_ready=0; inl_n=inl_r=0; } return k; }
+        if(tty.lflag&TL_ICANON){
+            if(inl_ready&&inl_eof){ inl_eof=0; inl_ready=0; inl_n=inl_r=0; return 0; }                      /* Ctrl+D en linea vacia: fin de archivo */
+            if(inl_ready&&inl_r<inl_n){ u64 k=(u64)(inl_n-inl_r); if(k>n) k=n; if(ucopy_to(CP,buf,inl+inl_r,k)) return RET_ERR(EFAULT); inl_r+=(int)k; if(inl_r>=inl_n){ inl_ready=0; inl_n=inl_r=0; } return k; }
+        } else if(raw_avail()>0){
+            u8 tmp[64]; u64 k=0; while(k<n&&k<sizeof tmp&&raw_avail()>0){ tmp[k++]=rawq[raw_t]; raw_t=(raw_t+1)%(int)sizeof rawq; }
+            if(ucopy_to(CP,buf,tmp,k)) return RET_ERR(EFAULT);
+            return k;
+        } else if(tty.cc[6]==0){                                                                              /* VMIN=0: no espera, o espera VTIME decimas */
+            if(!tty.cc[5]) return 0;
+            if(waited&&(int)(kticks()-t0)>=tty.cc[5]*10) return 0;
+            waited=1; cur->wake_at=(u64)(kticks()+1); if(INTR()) return RET_ERR(EINTR); block(T_SLEEP); continue;
+        }
         if(nb) return RET_ERR(EAGAIN);
         if(INTR()) return RET_ERR(EINTR);
         block(T_READ);
@@ -464,7 +486,7 @@ static u64 fd_read(u64 fdn,u64 buf,u64 n){
     if(fdn>=MAXFD||!CP->fd[fdn].type) return RET_ERR(EBADF);
     FD *f=&CP->fd[fdn];
     switch(f->type){
-    case 1: if(fdn!=0) return RET_ERR(EBADF); return console_read(buf,n,(f->flags&0x800)!=0);
+    case 1: return console_read(buf,n,(f->flags&0x800)!=0);
     case 2: {
         FsNode *nd=f->node; if(nd->dir) return RET_ERR(EISDIR);
         u64 left=f->pos<(u64)nd->size?(u64)nd->size-f->pos:0; if(n>left) n=left;
@@ -514,7 +536,6 @@ static u64 fd_write(u64 fdn,u64 buf,u64 n){
     FD *f=&CP->fd[fdn]; u8 tmp[1024]; u64 done=0;
     switch(f->type){
     case 1:
-        if(fdn==0) return RET_ERR(EBADF);
         while(done<n){ u64 c=n-done; if(c>sizeof tmp) c=sizeof tmp; if(ucopy_from(CP,tmp,buf+done,c)) return done?done:RET_ERR(EFAULT); k_write_console((char*)tmp,(int)c); done+=c; }
         return n;
     case 2: {
@@ -578,10 +599,10 @@ static u64 sys_clone(struct regs *r,u64 flags,u64 stack,u64 ptid,u64 ctid,u64 tl
     t->state=T_READY; return (u64)t->tid;
 }
 static u64 sys_execve(struct regs *r,u64 path_va,u64 argv_va,u64 envp_va){
-    static char path[160], kargv[MAXARG][160], kenv[MAXARG][160]; static char *pa[MAXARG], *pe[MAXARG]; int argc=0, envc=0;
+    static char path[420], kargv[MAXARG][512], kenv[MAXARG][512]; static char *pa[MAXARG], *pe[MAXARG]; int argc=0, envc=0;
     if(ustr(CP,path,sizeof path,path_va)) return RET_ERR(EFAULT);
-    for(; argv_va && argc<MAXARG; argc++){ u64 p=0; if(ucopy_from(CP,&p,argv_va+(u64)argc*8,8)) return RET_ERR(EFAULT); if(!p) break; if(ustr(CP,kargv[argc],160,p)) return RET_ERR(EFAULT); pa[argc]=kargv[argc]; }
-    for(; envp_va && envc<MAXARG; envc++){ u64 p=0; if(ucopy_from(CP,&p,envp_va+(u64)envc*8,8)) return RET_ERR(EFAULT); if(!p) break; if(ustr(CP,kenv[envc],160,p)) return RET_ERR(EFAULT); pe[envc]=kenv[envc]; }
+    for(; argv_va && argc<MAXARG; argc++){ u64 p=0; if(ucopy_from(CP,&p,argv_va+(u64)argc*8,8)) return RET_ERR(EFAULT); if(!p) break; if(ustr(CP,kargv[argc],512,p)) return RET_ERR(EFAULT); pa[argc]=kargv[argc]; }
+    for(; envp_va && envc<MAXARG; envc++){ u64 p=0; if(ucopy_from(CP,&p,envp_va+(u64)envc*8,8)) return RET_ERR(EFAULT); if(!p) break; if(ustr(CP,kenv[envc],512,p)) return RET_ERR(EFAULT); pe[envc]=kenv[envc]; }
     if(!argc){ pa[0]=path; argc=1; }
     Proc *np=proc_new(); if(!np) return RET_ERR(ENOMEM); u64 entry,sp;
     int rc=load_image(np,path,argc,pa,envc,envc?pe:0,&entry,&sp);
@@ -668,9 +689,10 @@ static u64 sys_dispatch(struct regs *r){
     case 37: return sys_alarm(a1);
     case 38: return sys_alarm_set(a1,a2,a3);
     case 16: { if(a1>=MAXFD||!CP->fd[a1].type) return RET_ERR(EBADF);
-        if(a2==0x5421){ int v=0; if(a3&&ucopy_from(CP,&v,a3,4)) return RET_ERR(EFAULT); if(v) CP->fd[a1].flags|=0x800; else CP->fd[a1].flags&=~0x800; return 0; }      /* FIONBIO */
-        if(a2==0x541B){ int v=0; if(CP->fd[a1].type==5) { u8 tb[1]; (void)tb; v=0; } else if(CP->fd[a1].type==3) v=CP->fd[a1].pipe->count; return ucopy_to(CP,a3,&v,4)?RET_ERR(EFAULT):0; }   /* FIONREAD */
-        if((a2==0x5413)&&CP->fd[a1].type==1){ u16 ws[4]={25,80,0,0}; return ucopy_to(CP,a3,ws,8)?RET_ERR(EFAULT):0; }
+        FD *tf=&CP->fd[a1]; int is_tty=tf->type==1||(tf->type==10&&tf->aux==DEV_TTY);
+        if(a2==0x5421){ int v=0; if(a3&&ucopy_from(CP,&v,a3,4)) return RET_ERR(EFAULT); if(v) tf->flags|=0x800; else tf->flags&=~0x800; return 0; }      /* FIONBIO */
+        if(is_tty) return tty_ioctl(a2,a3);
+        if(a2==0x541B){ int v=0; if(tf->type==3) v=tf->pipe->count; return ucopy_to(CP,a3,&v,4)?RET_ERR(EFAULT):0; }   /* FIONREAD */
         return RET_ERR(ENOTTY); }
     case 17: return sys_pio(a1,a2,a3,a4,0);
     case 18: return sys_pio(a1,a2,a3,a4,1);

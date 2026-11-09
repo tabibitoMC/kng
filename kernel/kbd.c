@@ -24,7 +24,7 @@ static const Key ES[]={
  {0x1A,'`','^','['},{0x1B,'+','*',']'},{0x27,0xF1,0xD1,0},{0x28,DEAD_ACUTE,DEAD_DIAER,'{'},{0x2B,0xE7,0xC7,'}'},
  {0x33,',',';',0},{0x34,'.',':',0},{0x35,'-','_',0},{0x56,'<','>',0},{0,0,0,0}};
 
-static int layout, shift, caps, altgr, e0, dead;
+static int layout, shift, caps, altgr, e0, dead, ctrl;
 void kbd_set_layout(int l){ layout=(l>=0&&l<=2)?l:0; dead=0; }
 int  kbd_layout(void){ return layout; }
 const char *kbd_layout_name(int l){ return l==KBD_LATAM?"Latinoamerica":l==KBD_ES?"Espana":"US"; }
@@ -53,15 +53,18 @@ int kbd_feed(uint8_t b){
     if(e0){
         e0=0;
         if(sc==0x38){ altgr=!rel; return 0; }                         /* AltGr */
+        if(sc==0x1D){ ctrl=!rel; return 0; }                          /* Ctrl derecho */
         if(rel) return 0;
         switch(sc){ case 0x48: return 0x11; case 0x50: return 0x12; case 0x4B: return 0x13;
                     case 0x4D: return 0x14; case 0x49: return 0x15; case 0x51: return 0x16; case 0x53: return 0x7F; }
         return 0;
     }
     if(sc==0x2A||sc==0x36){ shift=!rel; return 0; }
+    if(sc==0x1D){ ctrl=!rel; return 0; }                              /* Ctrl izquierdo */
     if(rel) return 0;
     if(sc==0x3A){ caps=!caps; return 0; }
     int c=lookup(sc); if(!c) return 0;
+    if(ctrl&&((c>='a'&&c<='z')||(c>='A'&&c<='Z'))) return 0x400|(c&31);    /* Ctrl+letra: codigo aparte para no chocar con las flechas */
     if(c==DEAD_ACUTE||c==DEAD_DIAER){ if(dead){ int d=dead; dead=0; return d==DEAD_ACUTE?0xB4:0xA8; } dead=c; return 0; }
     if(dead){ int d=dead; dead=0; return compose(d,c); }
     return c;
