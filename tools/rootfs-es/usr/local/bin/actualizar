@@ -1,5 +1,6 @@
 #!/bin/sh
 # actualizar: descarga la lista de programas disponibles (equivale a "apt update")
+poner-hora
 echo "Actualizando la lista de programas..."
 if apt-get update "$@"; then
   echo "Listo. Ahora puedes usar:  instalar <nombre>   |   mejorar   |   buscar <palabra>"

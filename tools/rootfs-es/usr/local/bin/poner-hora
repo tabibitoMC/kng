@@ -1,0 +1,6 @@
+#!/bin/sh
+# poner-hora: ajusta el reloj con la hora real de internet (el reloj de la VM suele venir con la hora local como si fuera UTC,
+# y apt rechaza los repositorios "del futuro"). Usa la cabecera Date de un servidor HTTP.
+f=$(curl -sI -m 15 http://deb.debian.org/debian/ 2>/dev/null | grep -i '^date:' | head -1 | cut -d' ' -f2- | tr -d '\r')
+[ -z "$f" ] && f=$(curl -sI -m 15 http://example.com/ 2>/dev/null | grep -i '^date:' | head -1 | cut -d' ' -f2- | tr -d '\r')
+if [ -n "$f" ] && date -u -s "$f" >/dev/null 2>&1; then echo "Hora ajustada: $f"; else echo "(no pude ajustar la hora; si apt dice que un repositorio es del futuro, revisa la red)"; fi

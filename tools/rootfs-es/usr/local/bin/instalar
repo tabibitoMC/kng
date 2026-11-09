@@ -6,6 +6,7 @@
 EXTRA=""
 APT="apt-get -y install"
 LISTAS=/var/lib/apt/lists
+poner-hora
 [ -d "$LISTAS" ] && [ -n "$(ls "$LISTAS" 2>/dev/null | grep -v '^lock$\|^partial$')" ] || { echo "Primero hay que bajar la lista de programas..."; apt-get update || exit 1; }
 
 agrega_repo() {   # nombre url-llave archivo-llave linea-del-repo

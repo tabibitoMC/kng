@@ -1,0 +1,5 @@
+20|ejecutar /bin/date
+20|ejecutar /bin/date -u -s "2026-11-09 01:00:00"
+20|ejecutar /bin/date
+60|ejecutar /usr/local/bin/poner-hora
+20|ejecutar /bin/date
