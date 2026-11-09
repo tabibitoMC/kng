@@ -3,6 +3,7 @@
  * y archivos: crear, escribir 3 MB, pread/pwrite, truncar, enlaces simbolicos, renombrar, borrar con el archivo abierto, carpetas grandes, stat/statx. */
 #define _GNU_SOURCE
 #include <stdio.h>
+#include <sys/socket.h>
 #include <sys/sendfile.h>
 #include <stdlib.h>
 #include <string.h>
@@ -171,6 +172,11 @@ static void test_files(void){
       CHECK(w!=MAP_FAILED&&(long)w!=-9,"mmap con basura en los bits altos del descriptor");
       if(w!=MAP_FAILED&&(long)w!=-9) strcpy(w,"hi");
       long wr=m>=0?syscall(SYS_write,fdbad,"x",1):-1; CHECK(wr==1,"write con basura en los bits altos del descriptor"); if(m>=0) close(m); }
+
+    /* socketpair SOCK_SEQPACKET (Chromium/crashpad) */
+    { int sp[2]; int r=socketpair(AF_UNIX,SOCK_SEQPACKET|SOCK_CLOEXEC,0,sp); char b4[8]={0};
+      if(r==0){ if(write(sp[0],"seq",3)!=3) r=-1; else if(read(sp[1],b4,7)!=3) r=-1; close(sp[0]); close(sp[1]); }
+      CHECK(r==0&&!strcmp(b4,"seq"),"socketpair SOCK_SEQPACKET transporta datos"); }
 
     /* sendfile y copy_file_range (las usan apt, curl y los navegadores para copiar archivos) */
     { static char big[10000], chk[10000]; for(int i=0;i<10000;i++) big[i]=(char)('a'+i%26);

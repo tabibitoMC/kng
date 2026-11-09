@@ -84,6 +84,7 @@ static u64 sys_socket(u64 dom,u64 type,u64 proto){
     (void)proto;
     int base=(int)(type&0xF); if(dom==10||dom==16||dom==17||dom==38) return RET_ERR(EAFNOSUPPORT);
     if(dom!=1&&dom!=2) return RET_ERR(EAFNOSUPPORT);
+    if(base==5&&dom==1) base=1;                                            /* SOCK_SEQPACKET local: se trata como flujo (Chromium lo usa para hablar con sus procesos) */
     if(base!=1&&base!=2) return RET_ERR(base==3?EPERM:22);
     int fd=fd_alloc(CP,0); if(fd<0) return RET_ERR(EMFILE);
     int s=sock_create((int)dom,base); if(s<0) return RET_ERR(-s);
@@ -92,7 +93,7 @@ static u64 sys_socket(u64 dom,u64 type,u64 proto){
 }
 static u64 sys_socketpair(u64 dom,u64 type,u64 proto,u64 sv){
     (void)proto; if(dom!=1) return RET_ERR(EAFNOSUPPORT);
-    int base=(int)(type&0xF); if(base!=1&&base!=2) return RET_ERR(22);
+    int base=(int)(type&0xF); if(base==5) base=1; if(base!=1&&base!=2) return RET_ERR(22);
     int f0=fd_alloc(CP,0); if(f0<0) return RET_ERR(EMFILE); CP->fd[f0].type=9; int f1=fd_alloc(CP,0); CP->fd[f0].type=0; if(f1<0) return RET_ERR(EMFILE);
     int a,b; int r=sock_pair(base,&a,&b); if(r<0) return RET_ERR(-r);
     int fl=(type&0x800)?0x800:0, ce=(type&0x80000)?1:0;
