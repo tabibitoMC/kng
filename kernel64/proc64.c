@@ -423,7 +423,8 @@ void proc_ps(void){
         if(t->state==T_WAIT) kprintf("  espera hijo %d",t->wait_pid);
         else if(t->state==T_PIPE) kprintf("  pipe fd %d",t->pipe_fd);
         else if(t->state==T_FUTEX) kprintf("  futex %lx",t->fut_key&0xFFFFFFFFull);
-        else if(t->state==T_FN) kprintf("  poll/select n=%d",t->wa_n);
+        else if(t->state==T_FN){ u64 v[3]={0,0,0}; if(t->wa_p1) ucopy_from(t->pr,&v[0],t->wa_p1,8); if(t->wa_p2) ucopy_from(t->pr,&v[1],t->wa_p2,8); if(t->wa_p3) ucopy_from(t->pr,&v[2],t->wa_p3,8);
+            kprintf("  poll/select n=%d p1=%lx p2=%lx p3=%lx r=%lx w=%lx e=%lx listo=%d",t->wa_n,t->wa_p1,t->wa_p2,t->wa_p3,v[0],v[1],v[2],t->wait_fn?t->wait_fn(t):-1); }
         else if(t->state==T_SLEEP) kprintf("  %d ticks",(int)((u32)t->wake_at-kticks()));
         kprintf("\n");
         if(t->leader&&t->pr&&t->state!=T_ZOMBIE){                      /* descriptores abiertos (los 24 primeros) */
