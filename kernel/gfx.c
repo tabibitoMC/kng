@@ -37,6 +37,13 @@ void px_blend(int x,int y,uint32_t c,int a){
     if(x<cx0||x>=cx1||y<cy0||y>=cy1||a<=0) return;
     uint32_t *p=&bb[y*gw+x]; *p = a>=255 ? c : mix(*p,c,a);
 }
+void blit32(int x,int y,const uint32_t *src,int stride,int w,int h){
+    int sx=0, sy=0;
+    if(x<cx0){ sx=cx0-x; } if(y<cy0){ sy=cy0-y; }
+    int x1=k_min(x+w,cx1), y1=k_min(y+h,cy1); int dx=k_max(x,cx0), dy=k_max(y,cy0);
+    if(x1<=dx||y1<=dy) return;
+    for(int j=dy;j<y1;j++) memcpy(&bb[j*gw+dx],&src[(sy+(j-dy))*stride+sx],(size_t)(x1-dx)*4);
+}
 void fill(int x,int y,int w,int h,uint32_t c,int a){
     int x1=k_min(x+w,cx1), y1=k_min(y+h,cy1); x=k_max(x,cx0); y=k_max(y,cy0);
     if(a<=0) return;

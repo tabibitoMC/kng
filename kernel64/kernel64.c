@@ -126,7 +126,10 @@ static void pit_init(void){ uint32_t div=1193182/100; outb(0x43,0x36); outb(0x40
 #define KB_N 128
 static volatile unsigned short kb_buf[KB_N]; static volatile int kb_h, kb_t;
 static void kb_push(unsigned short c){ int n=(kb_h+1)%KB_N; if(n!=kb_t){ kb_buf[kb_h]=c; kb_h=n; } }
-static void kb_irq(void){ int c=kbd_feed(inb(0x60)); if(c) kb_push((unsigned short)c); }   /* traduccion en kbd.c (US/Latam/ES) */
+static volatile unsigned char rk_buf[256]; static volatile int rk_h, rk_t;       /* bytes crudos del teclado, para la pantalla X */
+static void rk_push(unsigned char b){ int n=(rk_h+1)&255; if(n!=rk_t){ rk_buf[rk_h]=b; rk_h=n; } }
+static int rk_pop(void){ if(rk_t==rk_h) return -1; int b=rk_buf[rk_t]; rk_t=(rk_t+1)&255; return b; }
+static void kb_irq(void){ unsigned char raw=inb(0x60); rk_push(raw); int c=kbd_feed(raw); if(c) kb_push((unsigned short)c); }   /* traduccion en kbd.c (US/Latam/ES) */
 
 /* ---------- Raton PS/2 (IRQ12) ---------- */
 struct mev { int dx, dy, b; };
@@ -265,6 +268,22 @@ static int try_program(char *l){
     char path[160]; if(!find_program(a[0],path,sizeof path)) return 0;
     launch(path,n,a,bg); return 1;
 }
+/* pantalla: servidor X real (Xvfb) + puente de teclado/raton, mostrado en una ventana del escritorio */
+static void cmd_pantalla(void){
+    char xvfb[160], xin[160];
+    if(!find_program("Xvfb",xvfb,sizeof xvfb)){ kprintf("pantalla: falta el servidor X. Instalalo con:  instalar xvfb\n"); return; }
+    FsNode *v=fs_find(fs_root(),"var"); FsNode *lib=v?fs_find(v,"lib"):0; if(v&&!lib){ lib=fs_mkdir(v,"lib"); if(lib) lib->sys=1; }
+    FsNode *xd=lib?fs_find(lib,"xvfb"):0; if(lib&&!xd){ xd=fs_mkdir(lib,"xvfb"); if(xd) xd->sys=1; }
+    int gw=1280, gh=800; if(gui_mode&&gui_screen_size(&gw,&gh)==0){ gw-=80; gh-=170; if(gw>1600) gw=1600; if(gh>1000) gh=1000; }
+    gw&=~7; gh&=~7; if(gw<640) gw=640; if(gh<480) gh=480;
+    char geo[40]; { int n=0; int v1=gw; char t[12]; int k=0; while(v1){ t[k++]=(char)('0'+v1%10); v1/=10; } while(k) geo[n++]=t[--k]; geo[n++]='x'; v1=gh; k=0; while(v1){ t[k++]=(char)('0'+v1%10); v1/=10; } while(k) geo[n++]=t[--k]; const char *e="x24"; while(*e) geo[n++]=*e++; geo[n]=0; }
+    char *a[16]; int n=0; a[n++]="Xvfb"; a[n++]=":0"; a[n++]="-screen"; a[n++]="0"; a[n++]=geo; a[n++]="-fbdir"; a[n++]="/var/lib/xvfb"; a[n++]="-ac"; a[n++]="-nolisten"; a[n++]="tcp";
+    kprintf("pantalla: iniciando el servidor X (%s)...\n",geo);
+    proc_exec(xvfb,n,a,1);
+    if(find_program("kng-xinput",xin,sizeof xin)){ char *b[2]={"kng-xinput",0}; proc_exec(xin,1,b,1); }
+    else kprintf("pantalla: falta kng-xinput (teclado y raton no llegaran a los programas)\n");
+    if(gui_mode) gui_open_xscreen(gw,gh);
+}
 static void run(char *l){
     while(*l==' ') l++;
     if(!*l) return;
@@ -278,6 +297,7 @@ static void run(char *l){
         int n=tokenize(p,a,48);
         if(n>1&&streq(a[n-1],"&")){ bg=1; n--; }
         if(n){ char path[160]; if(!find_program(a[0],path,sizeof path)) k_strcpy(path,a[0],sizeof path); launch(path,n,a,bg); } else kprintf("uso: ejecutar <ruta> [argumentos] [&]\n"); }
+    else if(streq(l,"pantalla")) cmd_pantalla();
     else if(streq(l,"procesos")||streq(l,"ps")) proc_ps();
     else if(startswith(l,"matar ")){ int pid=0; for(const char *q=l+6;*q>='0'&&*q<='9';q++) pid=pid*10+(*q-'0'); kprintf(proc_kill(pid,9)?"senal enviada\n":"no existe ese proceso\n"); }
     else if(streq(l,"programas")||streq(l,"progs")) proc_list();
@@ -345,6 +365,7 @@ void kmain64(uint32_t magic, struct mb_info *mi){
             gui_mode=1;
             if((mi->flags&8) && mi->mods_n) rootfs_load(mi->mods_n,mi->mods_addr);
             for(;;){
+                { int rb; while((rb=rk_pop())>=0) gui_rawkey(rb); }
                 int c; while((c=getc_nb())>=0) gui_key(c);
                 struct mev e; while(mouse_pop(&e)) gui_mouse_event(e.dx,e.dy,e.b);
                 net_poll(); proc_pump(); gui_frame();

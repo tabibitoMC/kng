@@ -8,7 +8,7 @@
 #include "net.h"
 #include "disk.h"
 
-enum { A_ABOUT, A_BROWSER, A_FILES, A_TERM, A_SETTINGS, A_VIEWER, A_NOTES, A_CALC, A_SNAKE, A_MONITOR };
+enum { A_ABOUT, A_BROWSER, A_FILES, A_TERM, A_SETTINGS, A_VIEWER, A_NOTES, A_CALC, A_SNAKE, A_MONITOR, A_XSCR };
 #define SGW 20
 #define SGH 16
 #define SCELL 20
@@ -24,6 +24,7 @@ typedef struct {
     int used, type, x, y, w, h; char title[40];
     char grid[TH][TW]; int tr, tc; char in[256]; int inlen; FsNode *cwd;          /* terminal */
     int busy, bpid, esc, escp, escv[6], escq, savr, savc;                         /* terminal: programa pegado, secuencias ANSI */
+    int xw, xh; uint32_t xnext; int xlx, xly;                                     /* pantalla X (servidor Xvfb) */
     FsNode *dir, *sel, *last; int scroll; uint32_t lastclick;                    /* archivos / visor */
     FsNode *file;                                                                /* visor */
     char url[192], hist[8][192], ebuf[192]; int nhist, bscroll, editing, elen; HPage page;   /* navegador */
@@ -207,6 +208,9 @@ static void nav(Win *w,const char *url,int push);
 static void snake_reset(Win *w);
 static Win *open_app(int type);
 static void open_file(FsNode *n);
+static int xs_w=1024, xs_h=640;
+void gui_open_xscreen(int w,int h){ xs_w=w; xs_h=h; open_app(A_XSCR); dirty=1; }
+int  gui_screen_size(int *w,int *h){ if(!gw) return -1; *w=gw; *h=gh; return 0; }
 
 static Win *open_app(int type){
     for(int i=0;i<nord;i++){ Win *e=&wins[order[i]]; if(e->type==type && type!=A_VIEWER){ focus(order[i]); return e; } }
@@ -225,6 +229,7 @@ static Win *open_app(int type){
     case A_NOTES:    w->w=520; w->h=400; set_title(w,"Notas"); break;
     case A_CALC:     w->w=272; w->h=TB+1+316; set_title(w,"Calculadora"); break;
     case A_MONITOR:  w->w=420; w->h=TB+1+300; set_title(w,"Monitor del sistema"); break;
+    case A_XSCR:     w->xw=xs_w; w->xh=xs_h; w->w=w->xw+2; w->h=w->xh+TB+1; set_title(w,"Pantalla X (programas de Linux)"); w->xlx=w->xly=-1; break;
     case A_SNAKE:    w->w=SGW*SCELL+2; w->h=TB+1+34+SGH*SCELL; set_title(w,"Snake"); snake_reset(w); break;
     }
     w->x=60+off+(gw>800?60:0); w->y=BARH+24+off;
@@ -693,6 +698,20 @@ static void draw_window(int wi,int focused){
         for(int r=0;r<TH;r++){ char u[TW*2+1]; l1_to_utf8((unsigned char*)w->grid[r],TW,u); text(cx,cy+r*16,u,0xd6dbe8); }
         if(focused && ((kticks()/50)&1)) fill(cx+w->tc*8,cy+w->tr*16+13,8,3,ACCENT,255);
         break; }
+    case A_XSCR:{
+        FsNode *xf=fs_resolve(fs_root(),"/var/lib/xvfb/Xvfb_screen0");
+        fill(cx,cy,cw,ch,0x000000,255);
+        const unsigned char *d=xf&&!xf->dir?(const unsigned char*)xf->data:0;
+        if(d&&xf->size>=100){
+            #define BE32(o) ((uint32_t)d[o]<<24|(uint32_t)d[(o)+1]<<16|(uint32_t)d[(o)+2]<<8|(uint32_t)d[(o)+3])
+            uint32_t hs=BE32(0), pw=BE32(16), ph=BE32(20), bpp=BE32(44), bpl=BE32(48), ncol=BE32(76);
+            uint32_t off=hs+ncol*12;
+            if(bpp==32&&pw>0&&ph>0&&pw<=4096&&ph<=4096&&off+(uint64_t)bpl*ph<=(uint64_t)xf->size){
+                int bw=(int)pw<cw?(int)pw:cw, bh=(int)ph<ch?(int)ph:ch;
+                blit32(cx,cy,(const uint32_t*)(const void*)(d+off),(int)(bpl/4),bw,bh);
+            } else text(cx+20,cy+20,"El servidor X usa un formato que kng aun no muestra (se necesita 32 bits).",0xd6dbe8);
+        } else { text(cx+20,cy+20,"Esperando al servidor X (Xvfb)...",0xd6dbe8); text(cx+20,cy+44,"Inicia: pantalla   (en la terminal)",C_DIM); }
+        break; }
     case A_FILES:{
         static const int FX[4]={8,74,164,254}, FW[4]={60,84,84,76}; static const char *FL[4]={"Subir","Carpeta+","Archivo+","Eliminar"};
         for(int i=0;i<4;i++) button(cx+FX[i],cy+6,FW[i],24,FL[i],0);
@@ -950,6 +969,7 @@ void gui_frame(void){
     { int top=win_top(); static int ph; if(top>=0){ Win *tw=&wins[top];
         if(tw->type==A_TERM||tw->type==A_NOTES||(tw->type==A_BROWSER&&tw->editing)){ int p=(t/50)&1; if(p!=ph){ ph=p; dwin(tw); } } } }
     { static uint32_t nm; if(t>=nm){ nm=t+100; for(int i=0;i<nord;i++) if(wins[order[i]].type==A_MONITOR) dwin(&wins[order[i]]); } }
+    { for(int i=0;i<nord;i++){ Win *xw=&wins[order[i]]; if(xw->type==A_XSCR&&(int)(t-xw->xnext)>=0){ xw->xnext=t+3; dwin(xw); } } }       /* la pantalla X se redibuja ~30 veces por segundo */
     snake_tick(t); kngfs_tick();
     if(dirty||dr1x>dr0x) render();
     else if(cursor_dirty){ cursor_restore(); cursor_draw(); cursor_dirty=0; }
@@ -1052,9 +1072,15 @@ static void on_press(void){
 }
 static void mouse_set(int x,int y,int b){
     x=k_max(0,k_min(gw-1,x)); y=k_max(0,k_min(gh-1,y));
-    int pressed=(b&1)&&!(mb&1), released=!(b&1)&&(mb&1);
+    int pressed=(b&1)&&!(mb&1), released=!(b&1)&&(mb&1); int omb=mb;
     if(x!=mx||y!=my) cursor_dirty=1;
     mx=x; my=y; mb=b;
+    { int top=win_top();                                       /* sobre la pantalla X, el raton se le entrega al programa de Linux */
+      if(top>=0&&wins[top].type==A_XSCR&&drag<0){ Win *xw=&wins[top]; int lx=x-(xw->x+1), ly=y-(xw->y+TB);
+        if(lx>=0&&ly>=0&&lx<xw->xw&&ly<xw->xh){
+            if(lx!=xw->xlx||ly!=xw->xly){ xw->xlx=lx; xw->xly=ly; kinput_event(3,0,lx); kinput_event(3,1,ly); kinput_event(0,0,0); }
+            static const int bit[3]={1,2,4}, code[3]={0x110,0x111,0x112};
+            for(int k=0;k<3;k++) if((b^omb)&bit[k]){ kinput_event(1,code[k],(b&bit[k])?1:0); kinput_event(0,0,0); } } } }
     int d=dock_hit(mx,my); if(d<0) d=-1; if(d!=hover){ hover=d; { int bx,by,bw,bh; dock_geom(&bx,&by,&bw,&bh); dmark(bx-10,by-40,bw+20,bh+52); } }
     if(drag>=0){
         if(b&1){ Win *w=&wins[drag]; dwin(w); w->x=mx-dragdx; w->y=k_max(BARH,my-dragdy); dwin(w); }
@@ -1072,6 +1098,16 @@ static void mouse_set(int x,int y,int b){
             if(!dmoved && o->kind>=0 && o->kind<8){ uint32_t t=kticks(); if(dlast==i && t-dlastt<40){ open_app(DOCK_APP[o->kind]); dirty=1; dlast=-1; } else { dlast=i; dlastt=t; } } }
     }
     if(pressed) on_press();
+}
+void gui_rawkey(int byte){                                       /* bytes crudos del teclado PS/2 (set 1): se entregan tal cual si la ventana activa es la pantalla X */
+    static int e0;
+    if(byte==0xE0){ e0=1; return; }
+    int top=win_top(); int down=!(byte&0x80), sc=byte&0x7F, code=sc;
+    if(e0){ e0=0; switch(sc){ case 0x1C: code=96; break; case 0x1D: code=97; break; case 0x35: code=98; break; case 0x38: code=100; break; case 0x47: code=102; break; case 0x48: code=103; break;
+            case 0x49: code=104; break; case 0x4B: code=105; break; case 0x4D: code=106; break; case 0x4F: code=107; break; case 0x50: code=108; break; case 0x51: code=109; break;
+            case 0x52: code=110; break; case 0x53: code=111; break; case 0x5B: code=125; break; case 0x5C: code=126; break; default: return; } }
+    if(top<0||wins[top].type!=A_XSCR) return;
+    kinput_event(1,code,down); kinput_event(0,0,0);
 }
 void gui_mouse_abs(int x,int y,int b){ mouse_set(x,y,b); }
 void gui_mouse_event(int dx,int dy,int b){ mouse_set(mx+dx,my+dy,b); }

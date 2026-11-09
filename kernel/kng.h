@@ -24,6 +24,7 @@ extern void (*kcon_hook)(char);        /* si no es NULL, la salida de consola va
 extern int  kattach_pid;               /* pid del programa que acaba de lanzar el ultimo comando (0 = ninguno); lo pone el shell y lo lee la ventana */
 extern char kshell_cwd[96];            /* carpeta actual de la ventana que lanza el comando (la heredan los programas) */
 extern void (*kproc_done)(int pid,int code);   /* se llama al terminar un programa pegado a la terminal */
+void  kinput_event(int type,int code,int value);   /* evento de entrada (formato evdev) hacia /dev/input/event0 */
 void  kproc_key(int c);                /* tecla de la ventana de terminal hacia el programa (codigos Latin-1, flechas 0x11-0x16, Ctrl+x = 0x400|x) */
 
 static inline int k_strlen(const char *s){ int n=0; while(s[n]) n++; return n; }

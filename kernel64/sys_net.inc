@@ -354,7 +354,17 @@ static u64 do_select(u64 nfds,u64 rva,u64 wva,u64 eva,long tmo_ticks,u64 sigmask
 }
 
 /* ---------- dispositivos de /dev ---------- */
-static int dev_events(int dev){ (void)dev; return PIN|POUT; }
+/* /dev/input/event0: cola de eventos de entrada (formato evdev de Linux) que llena la ventana "Pantalla X" del escritorio */
+struct InEv { long sec, usec; u16 type, code; int value; };
+#define EVQ_N 512
+static struct InEv evq[EVQ_N]; static int evq_h, evq_t;
+void kinput_event(int type,int code,int value){
+    int n=(evq_h+1)%EVQ_N; if(n==evq_t) return;                      /* cola llena: se descarta */
+    u32 k=kticks(); evq[evq_h].sec=k/100; evq[evq_h].usec=(long)(k%100)*10000; evq[evq_h].type=(u16)type; evq[evq_h].code=(u16)code; evq[evq_h].value=value; evq_h=n;
+}
+static int evq_avail(void){ return evq_h!=evq_t; }
+static int w_evq(Task *t){ (void)t; return evq_avail(); }
+static int dev_events(int dev){ if(dev==DEV_EVENT) return POUT|(evq_avail()?PIN:0); return PIN|POUT; }
 static u64 console_read(u64 buf,u64 n,int nb);
 static u64 dev_read(FD *f,u64 buf,u64 n){
     switch(f->aux){
@@ -362,6 +372,11 @@ static u64 dev_read(FD *f,u64 buf,u64 n){
     case DEV_ZERO: case DEV_FULL: { static u8 z[4096]; u64 d=0; while(d<n){ u64 c=n-d>sizeof z?sizeof z:n-d; if(ucopy_to(CP,buf+d,z,c)) return d?d:RET_ERR(EFAULT); d+=c; } return n; }
     case DEV_RANDOM: { u8 r[256]; u64 d=0; while(d<n){ u64 c=n-d>sizeof r?sizeof r:n-d; rnd_fill(r,c); if(ucopy_to(CP,buf+d,r,c)) return d?d:RET_ERR(EFAULT); d+=c; } return n; }
     case DEV_TTY: return console_read(buf,n,(f->flags&0x800)!=0);
+    case DEV_EVENT: {
+        if(n<sizeof(struct InEv)) return RET_ERR(EINVAL);
+        while(!evq_avail()){ if(f->flags&0x800) return RET_ERR(EAGAIN); if(block_fn(w_evq,0)==1) return RET_ERR(EINTR); }
+        u64 d=0; while(d+sizeof(struct InEv)<=n&&evq_avail()){ if(ucopy_to(CP,buf+d,&evq[evq_t],sizeof(struct InEv))) return d?d:RET_ERR(EFAULT); evq_t=(evq_t+1)%EVQ_N; d+=sizeof(struct InEv); }
+        return d; }
     }
     return RET_ERR(ENODEV);
 }
@@ -370,6 +385,7 @@ static u64 dev_write(FD *f,u64 buf,u64 n){
     switch(f->aux){
     case DEV_NULL: case DEV_ZERO: case DEV_RANDOM: return n;
     case DEV_FULL: return RET_ERR(28);
+    case DEV_EVENT: return n;
     case DEV_TTY: while(done<n){ u64 c=n-done>sizeof tmp?sizeof tmp:n-done; if(ucopy_from(CP,tmp,buf+done,c)) return done?done:RET_ERR(EFAULT); k_write_console((char*)tmp,(int)c); done+=c; } return n;
     }
     return RET_ERR(ENODEV);
@@ -382,6 +398,7 @@ static void dev_create(void){
     FsNode *dev=fs_find(root,"dev"); if(!dev) return;
     for(unsigned i=0;i<sizeof L/sizeof *L;i++) if(!fs_find(dev,L[i].n)){ FsNode *n=fs_create(dev,L[i].n,"",0); if(n){ n->sys=1; n->dev=L[i].d; } }
     const char *sub[]={"shm","input","dri"}; for(unsigned i=0;i<3;i++) if(!fs_find(dev,sub[i])){ FsNode *d=fs_mkdir(dev,sub[i]); if(d) d->sys=1; }
+    { FsNode *in=fs_find(dev,"input"); if(in&&!fs_find(in,"event0")){ FsNode *n=fs_create(in,"event0","",0); if(n){ n->sys=1; n->dev=DEV_EVENT; } } }
     FsNode *tmp=fs_find(root,"tmp"); if(tmp&&!fs_find(tmp,".X11-unix")){ FsNode *d=fs_mkdir(tmp,".X11-unix"); if(d) d->sys=1; }
 }
 

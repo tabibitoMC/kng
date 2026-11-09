@@ -344,8 +344,8 @@ struct builtin { const char *name; char *s, *e; };
 static struct builtin builtins[]={{"hola",blob_hola_start,blob_hola_end}};
 void proc_list(void){ kprintf("Programas incluidos en el kernel (ejecutar /bin/<nombre>):\n"); for(unsigned i=0;i<sizeof builtins/sizeof *builtins;i++) kprintf("  /bin/%s  (%lu bytes)\n",builtins[i].name,(u64)(builtins[i].e-builtins[i].s)); }
 
-static const char *DEFENV[]={"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","HOME=/root","TERM=linux","LANG=C.UTF-8","USER=root","LOGNAME=root","SHELL=/bin/sh","TMPDIR=/tmp","XDG_RUNTIME_DIR=/run"};
-#define DEFENV_N 9
+static const char *DEFENV[]={"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","HOME=/root","TERM=linux","LANG=C.UTF-8","USER=root","LOGNAME=root","SHELL=/bin/sh","TMPDIR=/tmp","XDG_RUNTIME_DIR=/run","DISPLAY=:0"};
+#define DEFENV_N 10
 static int find_image(const char *path,const u8 **img,u64 *sz){
     if(k_startswith(path,"/bin/")) for(unsigned i=0;i<sizeof builtins/sizeof *builtins;i++) if(!k_strcmp(path+5,builtins[i].name)){ *img=(u8*)builtins[i].s; *sz=(u64)(builtins[i].e-builtins[i].s); return 0; }
     if(!fs_root()) fs_init();

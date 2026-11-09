@@ -13,6 +13,7 @@ void clip_reset(void);
 uint32_t mix(uint32_t a, uint32_t b, int t);                      /* t 0..255: 0=a, 255=b */
 void px_blend(int x, int y, uint32_t c, int a);
 void fill(int x, int y, int w, int h, uint32_t c, int a);
+void blit32(int x, int y, const uint32_t *src, int stride_px, int w, int h);   /* copia pixeles 0x00RRGGBB respetando el recorte */
 void rrect(int x, int y, int w, int h, int r, uint32_t c, int a);
 void circle(int cx, int cy, int r, uint32_t c, int a);
 void poly(const int *xy, int n, uint32_t c, int a);              /* relleno par-impar */

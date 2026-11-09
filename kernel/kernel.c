@@ -874,6 +874,7 @@ uint32_t kticks(void){ return ticks; }
 int kgetc(void){ return getc_nb(); }
 void kshell_exec(char *l){ if(net_cmd(l)) return; run(l); }
 int kattach_pid; char kshell_cwd[96]; void (*kproc_done)(int pid,int code); void kproc_key(int c){ (void)c; }
+void kinput_event(int type,int code,int value){ (void)type; (void)code; (void)value; }
 uint32_t kram_kb(void){ return ram_usable_kb; }
 static inline void outw(uint16_t p,uint16_t v){ __asm__ volatile("outw %0,%1"::"a"(v),"Nd"(p)); }
 void kreboot(void){ outb(0x64,0xFE); for(;;) __asm__ volatile("hlt"); }

@@ -20,6 +20,8 @@ try:
     subprocess.check_call(['gcc', '-O2', '-o', tmp + '/bin/nettest', nsrc])
     msrc2 = os.path.join(raiz, 'kernel64', 'user', 'memtest.c')
     subprocess.check_call(['gcc', '-O2', '-w', '-o', tmp + '/bin/memtest', msrc2])
+    xsrc = os.path.join(raiz, 'kernel64', 'user', 'kng-xinput.c')
+    subprocess.check_call(['gcc', '-O2', '-w', '-static', '-o', tmp + '/bin/kng-xinput', xsrc])
     ldd = subprocess.check_output(['ldd', tmp + '/bin/hola-dyn'], text=True)
     ld = libc = None
     for l in ldd.splitlines():
