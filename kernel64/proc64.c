@@ -230,13 +230,14 @@ static u64 sys_dispatch(struct sc *s){
     case 3:  if(a1>=3&&a1<MAXFD&&P.fd[a1]){ P.fd[a1]=0; return 0; } return a1<3?0:RET_ERR(EBADF);
     case 8:  { if(a1>=MAXFD||!P.fd[a1]) return RET_ERR(EBADF); long o=(long)a2; u64 sz=(u64)P.fd[a1]->size; u64 np=a3==0?(u64)o:a3==1?P.pos[a1]+(u64)o:sz+(u64)o; P.pos[a1]=np; return np; }
     case 4: case 5: case 6: case 262: {                       /* stat / fstat / lstat / newfstatat */
-        u64 sbuf=s->nr==262?a3:a2; u8 st[144]; memset(st,0,sizeof st); u32 mode=0x2190; u64 size=0;
-        if(s->nr==5){ if(a1>=3){ if(a1>=MAXFD||!P.fd[a1]) return RET_ERR(EBADF); mode=P.fd[a1]->dir?040755:0100644; size=(u64)P.fd[a1]->size; } }
+        u64 sbuf=s->nr==262?a3:a2; u8 st[144]; memset(st,0,sizeof st); u32 mode=0x2190; u64 size=0, ino=1+a1; FsNode *sn=0;
+        if(s->nr==5){ if(a1>=3){ if(a1>=MAXFD||!P.fd[a1]) return RET_ERR(EBADF); sn=P.fd[a1]; } }
         else { u64 pv=s->nr==262?a2:a1; char path[160]; int i=0; for(;i<159;i++){ u8 *c=uptr(P.pml4,pv+(u64)i); if(!c) return RET_ERR(EFAULT); path[i]=(char)*c; if(!*c) break; } path[159]=0;
-               if(s->nr==262 && !path[0] && (a4&0x1000)){ if(a1>=MAXFD||(a1>=3&&!P.fd[a1])) return RET_ERR(EBADF); if(a1>=3){ mode=P.fd[a1]->dir?040755:0100644; size=(u64)P.fd[a1]->size; } goto statfill; }
-               FsNode *n=fs_resolve(fs_root(),path); if(!n) return RET_ERR(ENOENT); mode=n->dir?040755:0100644; size=(u64)n->size; }
+               if(s->nr==262 && !path[0] && (a4&0x1000)){ if(a1>=MAXFD||(a1>=3&&!P.fd[a1])) return RET_ERR(EBADF); if(a1>=3) sn=P.fd[a1]; goto statfill; }
+               FsNode *n=fs_resolve(fs_root(),path); if(!n) return RET_ERR(ENOENT); sn=n; }
         statfill:
-        *(u32*)(st+24)=mode; *(u64*)(st+48)=size; *(u64*)(st+56)=4096;
+        if(sn){ mode=sn->dir?040755:0100644; size=(u64)sn->size; ino=(u64)(uintptr_t)sn>>4; }       /* st_dev/st_ino distintos por archivo: ld.so los usa para saber si una libreria ya esta cargada */
+        *(u64*)(st+0)=1; *(u64*)(st+8)=ino; *(u64*)(st+16)=1; *(u32*)(st+24)=mode; *(u64*)(st+48)=size; *(u64*)(st+56)=4096;
         return ucopy_to(P.pml4,sbuf,st,sizeof st)?RET_ERR(EFAULT):0; }
     case 9:  return sys_mmap(a1,a2,a3,a4,a5,a6);
     case 10: if(a3&7){ if(umap_range(P.pml4,a1,a2)) return RET_ERR(ENOMEM); } return 0;     /* mprotect: pasa a mapear lo reservado */
