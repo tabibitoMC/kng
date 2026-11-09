@@ -46,3 +46,7 @@ Capturas de la interfaz: carpeta `docs/` (generadas con el mismo código de la i
 - `make -C kernel test` / `make -C kernel64 run` — con QEMU instalado.
 
 Autor: Nick Jose Tolentino Rojas · Fuente: DejaVu Sans Mono (licencia libre Bitstream Vera/DejaVu).
+
+
+## Programas Linux (kernel de 64 bits)
+`ejecutar /bin/multi-dyn`, `ejecutar /bin/hola-pie a b`, `procesos`, `matar <pid>`. Ver TRASPASO_kng_v23.md (que funciona y que falta).
