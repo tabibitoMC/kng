@@ -6,6 +6,25 @@ static uint32_t gen;
 void (*fs_shm_hook)(void *shm);
 uint32_t (*fs_now)(void);
 static void touch(FsNode *n){ if(fs_now) n->mtime=fs_now(); }
+static void drop_data(FsNode *n);
+/* enlaces duros: los nombres de un mismo archivo forman un anillo y despues de cada cambio los demas reciben una copia del contenido */
+static void hl_sync(FsNode *n){
+    if(!n->hl) return;
+    for(FsNode *m=n->hl;m&&m!=n;m=m->hl){
+        if(m->shm||m->dir) continue;
+        char *d=kmalloc((size_t)n->size+1); if(!d) continue;
+        if(n->size) memcpy(d,n->data,(size_t)n->size);
+        d[n->size]=0; drop_data(m); m->data=d; m->size=n->size; m->cap=n->size+1; m->mtime=n->mtime;
+    }
+}
+static void hl_leave(FsNode *n){
+    if(!n->hl) return;
+    FsNode *p=n->hl; while(p->hl!=n) p=p->hl;
+    p->hl=n->hl; n->hl=0;
+    if(p->hl==p) p->hl=0;                                             /* solo queda un nombre */
+}
+int fs_nlink(FsNode *n){ int c=1; if(n&&n->hl) for(FsNode *m=n->hl;m!=n;m=m->hl) c++; return c; }
+FsNode *fs_link_id(FsNode *n){ FsNode *b=n; if(n&&n->hl) for(FsNode *m=n->hl;m!=n;m=m->hl) if(m<b) b=m; return b; }
 uint32_t fs_gen(void){ return gen; }
 FsNode *fs_root(void){ return root; }
 
@@ -38,7 +57,7 @@ int fs_write(FsNode *n,const char *data,int len){
     if(!n||n->dir||len<0) return -1;
     char *d=kmalloc((size_t)len+1); if(!d) return -1;
     memcpy(d,data,(size_t)len); d[len]=0;
-    drop_data(n); n->data=d; n->size=len; n->cap=len+1; touch(n); gen++; return 0;
+    drop_data(n); n->data=d; n->size=len; n->cap=len+1; touch(n); hl_sync(n); gen++; return 0;
 }
 void fs_adopt(FsNode *n,const char *data,int len){ drop_data(n); n->data=(char*)data; n->size=len; n->cap=len; n->ro=1; gen++; }
 static int ensure_cap(FsNode *n,int need){        /* 'need' bytes de contenido (+1 para el cero final); copia al escribir si no es nuestro */
@@ -57,14 +76,14 @@ int fs_write_at(FsNode *n,int off,const char *src,int len){
     if(off>n->size) memset(n->data+n->size,0,(size_t)(off-n->size));
     if(len) memcpy(n->data+off,src,(size_t)len);
     if(end>n->size){ n->size=end; if(!n->shm||end<n->cap) n->data[end]=0; }
-    touch(n); gen++; return 0;
+    touch(n); hl_sync(n); gen++; return 0;
 }
 int fs_resize(FsNode *n,int size){
     if(!n||n->dir||size<0) return -1;
     if(size==n->size) return 0;
-    if(size<n->size){ if(n->shm||n->ro){ if(n->ro&&!n->shm){ if(ensure_cap(n,n->size)) return -1; } } if(size<n->size) memset(n->data+size,0,(size_t)(n->size-size)); n->size=size; if(!n->shm||size<n->cap) n->data[size]=0; touch(n); gen++; return 0; }
+    if(size<n->size){ if(n->shm||n->ro){ if(n->ro&&!n->shm){ if(ensure_cap(n,n->size)) return -1; } } if(size<n->size) memset(n->data+size,0,(size_t)(n->size-size)); n->size=size; if(!n->shm||size<n->cap) n->data[size]=0; touch(n); hl_sync(n); gen++; return 0; }
     if(ensure_cap(n,size)) return -1;
-    memset(n->data+n->size,0,(size_t)(size-n->size)); n->size=size; if(!n->shm||size<n->cap) n->data[size]=0; touch(n); gen++; return 0;
+    memset(n->data+n->size,0,(size_t)(size-n->size)); n->size=size; if(!n->shm||size<n->cap) n->data[size]=0; touch(n); hl_sync(n); gen++; return 0;
 }
 FsNode *fs_symlink(FsNode *dir,const char *name,const char *target){
     if(!dir||!dir->dir||!valid_name(name)||fs_find(dir,name)) return 0;
@@ -86,11 +105,22 @@ void fs_node_unref(FsNode *n){ if(n&&--n->opens<=0&&n->dead) destroy(n); }
 int fs_remove(FsNode *n){
     if(!n||!n->parent) return -1;                      /* la raiz no se borra */
     while(n->child) fs_remove(n->child);
+    hl_leave(n);
     FsNode **pp=&n->parent->child; while(*pp&&*pp!=n) pp=&(*pp)->next;
     if(*pp) *pp=n->next;
     gen++;
     if(n->opens>0){ n->dead=1; n->parent=0; n->next=0; return 0; }      /* sigue abierto: se libera cuando se cierre el ultimo descriptor */
     destroy(n); return 0;
+}
+
+FsNode *fs_link(FsNode *src,FsNode *dir,const char *name){
+    if(!src||src->dir||src->link||!dir||!dir->dir||!valid_name(name)||fs_find(dir,name)) return 0;
+    FsNode *c=newnode(dir,name,0); if(!c) return 0;
+    c->sys=src->sys; c->dev=src->dev;
+    if(!src->hl) src->hl=src;
+    c->hl=src->hl; src->hl=c;
+    if(!src->dev){ hl_sync(src); c->mtime=src->mtime; }
+    gen++; return c;
 }
 
 /* ---- renombrar, copiar y mover ---- */

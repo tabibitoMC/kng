@@ -140,6 +140,14 @@ static void test_files(void){
     char *sm=mmap(0,4096,PROT_READ|PROT_WRITE,MAP_SHARED,sfd,0); CHECK(sm!=MAP_FAILED,"mmap compartido de /dev/shm"); sm[0]=11; pid_t c=fork();
     if(c==0){ sm[0]=22; _exit(0); } int st=0; waitpid(c,&st,0); CHECK(sm[0]==22,"shm_open: lo ve el padre"); shm_unlink("/kngtest"); munmap(sm,4096); close(sfd); close(fd);
 
+    /* enlaces duros reales (shadow/groupadd toma su candado con link() y exige st_nlink==2) */
+    { int a=open("/tmp/mt/hl-a",O_RDWR|O_CREAT|O_TRUNC,0644); write(a,"uno",3);
+      CHECK(link("/tmp/mt/hl-a","/tmp/mt/hl-b")==0,"link crea un enlace duro");
+      struct stat sa,sb; fstat(a,&sa); stat("/tmp/mt/hl-b",&sb); CHECK(sa.st_nlink==2&&sb.st_nlink==2&&sa.st_ino==sb.st_ino,"los dos nombres tienen st_nlink=2 y el mismo inodo");
+      write(a,"dos",3); char hb[16]={0}; int b=open("/tmp/mt/hl-b",O_RDONLY); read(b,hb,15); close(b); CHECK(!strcmp(hb,"unodos"),"escribir por un nombre se ve por el otro");
+      unlink("/tmp/mt/hl-a"); stat("/tmp/mt/hl-b",&sb); memset(hb,0,sizeof hb); b=open("/tmp/mt/hl-b",O_RDONLY); read(b,hb,15); close(b);
+      CHECK(sb.st_nlink==1&&!strcmp(hb,"unodos"),"al borrar un nombre el otro conserva el contenido y st_nlink=1"); close(a); }
+
     /* sendfile y copy_file_range (las usan apt, curl y los navegadores para copiar archivos) */
     { static char big[10000], chk[10000]; for(int i=0;i<10000;i++) big[i]=(char)('a'+i%26);
       int a=open("/tmp/mt/sf-a",O_RDWR|O_CREAT|O_TRUNC,0644); write(a,big,10000);

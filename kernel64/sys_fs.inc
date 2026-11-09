@@ -76,7 +76,7 @@ static u64 do_open(long dirfd,u64 path_va,u64 flags,u64 mode){
 /* ---------- stat ---------- */
 struct KStat { u32 mode; u64 size, ino, rdev; u32 nlink; u64 mtime; };
 static void node_kstat(FsNode *n,struct KStat *k){
-    k->mode=n->link?0120777:n->dir?040755:0100755; k->size=(u64)(n->link?k_strlen(n->link):n->size); k->ino=(u64)(uintptr_t)n>>4; k->rdev=0; k->nlink=n->dir?2:1; k->mtime=n->mtime;
+    k->mode=n->link?0120777:n->dir?040755:0100755; k->size=(u64)(n->link?k_strlen(n->link):n->size); k->ino=(u64)(uintptr_t)fs_link_id(n)>>4; k->rdev=0; k->nlink=n->dir?2:(u32)fs_nlink(n); k->mtime=n->mtime;
     if(n->dev==8) k->mode=0140777; else if(n->dev){ k->mode=020666; k->rdev=(u64)n->dev; }
 }
 static int fd_kstat(long fd,struct KStat *k){
@@ -201,12 +201,12 @@ static u64 sys_symlinkat(u64 target_va,long dirfd,u64 path_va){
     if(fs_find(d,leaf)) return RET_ERR(EEXIST);
     FsNode *n=fs_symlink(d,leaf,tg); if(!n) return RET_ERR(ENOSPC_); mark_sys(n); return 0;
 }
-static u64 sys_linkat(long odir,u64 opath,long ndir,u64 npath){      /* "enlace duro": kng no los tiene, se hace una copia */
+static u64 sys_linkat(long odir,u64 opath,long ndir,u64 npath){      /* enlace duro: otro nombre del mismo archivo (comparten contenido, st_nlink e inodo) */
     char o[PATH_MAX_],nw[PATH_MAX_],leaf[FS_NAME]; int e=upath(opath,o); if(e) return RET_ERR(-e); e=upath(npath,nw); if(e) return RET_ERR(-e);
     int err=ENOENT; FsNode *n=lookup_at(odir,o,1,&err); if(!n) return RET_ERR(err); if(n->dir) return RET_ERR(1);
     FsNode *d=parent_at(ndir,nw,leaf,&err); if(!d) return RET_ERR(err);
     if(fs_find(d,leaf)) return RET_ERR(EEXIST);
-    FsNode *c=fs_copy(n,d,leaf); if(!c) return RET_ERR(ENOSPC_); mark_sys(c); return 0;
+    FsNode *c=fs_link(n,d,leaf); if(!c) return RET_ERR(ENOSPC_); mark_sys(c); return 0;
 }
 static u64 sys_readlinkat(long dirfd,u64 path_va,u64 buf,u64 size){
     char path[PATH_MAX_]; int e=upath(path_va,path); if(e) return RET_ERR(-e);
