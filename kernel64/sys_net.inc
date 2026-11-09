@@ -293,6 +293,7 @@ static int epoll_scan(Proc *pr,KObj *o,u64 out,int max,int report){
 static int w_epoll(Task *t){ FD *f=&t->pr->fd[t->wa_fd]; if(f->type!=7) return 1; return epoll_scan(t->pr,f->obj,0,64,0)>0; }
 static u64 sys_epoll_wait(u64 epfd,u64 out,u64 max,u64 tmo_ms,u64 sigmask,u64 sigsize){
     if(epfd>=MAXFD||CP->fd[epfd].type!=7) return RET_ERR(EBADF);
+    max=(u64)(long)(int)max; tmo_ms=(u64)(long)(int)tmo_ms;       /* int de 32 bits: -1 llega como 0xffffffff */
     if((long)max<=0||max>1024) return RET_ERR(EINVAL);
     int m=(int)max; if(m>64) m=64;
     if(sigmask&&sigsize==8){ u64 nm; if(ucopy_from(CP,&nm,sigmask,8)) return RET_ERR(EFAULT); cur->sigsaved=cur->sigmask; cur->has_saved=1; cur->sigmask=nm&~UNBLOCKABLE; }
