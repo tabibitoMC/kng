@@ -1,0 +1,9 @@
+# Por que falla la resolucion de nombres dentro de apt (el metodo http) y no en curl
+20|ejecutar /bin/cat /etc/resolv.conf /etc/nsswitch.conf /etc/hosts
+30|ejecutar /usr/bin/getent ahosts deb.debian.org
+30|ejecutar /usr/bin/getent ahosts security.debian.org
+60|ejecutar /bin/sh -c "getent ahosts deb.debian.org & getent ahosts security.debian.org & wait"
+20|rastro 1
+200|ejecutar /usr/bin/apt-get -o Acquire::EnableSrvRecords=false -o Debug::Acquire::http=true update
+20|rastro 0
+20|procesos
