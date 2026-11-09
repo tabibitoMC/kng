@@ -46,7 +46,22 @@ static int gen_proc(const char *path,char *o,int max){
         if(!k_strcmp(p,"cpuinfo")){
             u32 a,b,c,d; __asm__ volatile("cpuid":"=a"(a),"=b"(b),"=c"(c),"=d"(d):"a"(0)); char v[13]; memcpy(v,&b,4); memcpy(v+4,&d,4); memcpy(v+8,&c,4); v[12]=0;
             PS("processor\t: 0\nvendor_id\t: "); PS(v); PS("\ncpu family\t: 6\nmodel\t\t: 60\nmodel name\t: Koenigreich virtual CPU\nstepping\t: 1\ncpu MHz\t\t: 2000.000\ncache size\t: 4096 KB\nphysical id\t: 0\nsiblings\t: 1\ncore id\t\t: 0\ncpu cores\t: 1\nfpu\t\t: yes\n");
-            PS("flags\t\t: fpu de tsc msr pae cx8 apic sep cmov pat clflush mmx fxsr sse sse2 syscall nx lm constant_tsc nopl\nbogomips\t: 4000.00\nclflush size\t: 64\naddress sizes\t: 36 bits physical, 48 bits virtual\n\n"); return n; }
+            { /* banderas reales del procesador (CPUID), en los nombres de Linux: asi los programas que leen /proc/cpuinfo (p. ej. el script de Chromium pide sse3 = "pni") deciden bien */
+              static const struct { u8 r, b; const char *n; } cf[]={
+                {0,0,"fpu"},{0,1,"vme"},{0,2,"de"},{0,3,"pse"},{0,4,"tsc"},{0,5,"msr"},{0,6,"pae"},{0,7,"mce"},{0,8,"cx8"},{0,9,"apic"},{0,11,"sep"},{0,12,"mtrr"},{0,13,"pge"},{0,14,"mca"},{0,15,"cmov"},{0,16,"pat"},{0,17,"pse36"},{0,19,"clflush"},{0,23,"mmx"},{0,24,"fxsr"},{0,25,"sse"},{0,26,"sse2"},{0,28,"ht"},
+                {2,11,"syscall"},{2,20,"nx"},{2,26,"pdpe1gb"},{2,27,"rdtscp"},{2,29,"lm"},
+                {1,0,"pni"},{1,1,"pclmulqdq"},{1,9,"ssse3"},{1,12,"fma"},{1,13,"cx16"},{1,19,"sse4_1"},{1,20,"sse4_2"},{1,22,"movbe"},{1,23,"popcnt"},{1,25,"aes"},{1,26,"xsave"},{1,27,"osxsave"},{1,28,"avx"},{1,29,"f16c"},{1,30,"rdrand"},
+                {3,0,"lahf_lm"},{3,5,"abm"},{4,3,"bmi1"},{4,5,"avx2"},{4,8,"bmi2"},{4,9,"erms"},{4,18,"rdseed"},{4,19,"adx"} };
+              u32 r[5]={0,0,0,0,0}, ma,mb,mc,md;
+              __asm__ volatile("cpuid":"=a"(ma),"=b"(mb),"=c"(mc),"=d"(md):"a"(0));
+              u32 ea,eb,ec,ed; __asm__ volatile("cpuid":"=a"(ea),"=b"(eb),"=c"(ec),"=d"(ed):"a"(1)); r[0]=ed; r[1]=ec;
+              __asm__ volatile("cpuid":"=a"(ea),"=b"(eb),"=c"(ec),"=d"(ed):"a"(0x80000000u)); u32 mx=ea;
+              if(mx>=0x80000001u){ __asm__ volatile("cpuid":"=a"(ea),"=b"(eb),"=c"(ec),"=d"(ed):"a"(0x80000001u)); r[2]=ed; r[3]=ec; }
+              if(ma>=7){ __asm__ volatile("cpuid":"=a"(ea),"=b"(eb),"=c"(ec),"=d"(ed):"a"(7),"c"(0)); r[4]=eb; }
+              PS("flags\t\t:");
+              for(unsigned i=0;i<sizeof cf/sizeof *cf;i++) if(r[cf[i].r]&(1u<<cf[i].b)){ PS(" "); PS(cf[i].n); }
+              PS(" constant_tsc nopl\n"); }
+            PS("bogomips\t: 4000.00\nclflush size\t: 64\naddress sizes\t: 36 bits physical, 48 bits virtual\n\n"); return n; }
         if(!k_strcmp(p,"meminfo")){
             u64 used,fr; kheap_info(&used,&fr); u64 tot=kram_kb(); u64 fk=fr/1024;
             PS("MemTotal:       "); PU(tot); PS(" kB\nMemFree:        "); PU(fk); PS(" kB\nMemAvailable:   "); PU(fk); PS(" kB\nBuffers:        0 kB\nCached:         0 kB\nSwapCached:     0 kB\nSwapTotal:      0 kB\nSwapFree:       0 kB\n"); return n; }

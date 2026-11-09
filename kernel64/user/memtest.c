@@ -148,6 +148,10 @@ static void test_files(void){
       unlink("/tmp/mt/hl-a"); stat("/tmp/mt/hl-b",&sb); memset(hb,0,sizeof hb); b=open("/tmp/mt/hl-b",O_RDONLY); read(b,hb,15); close(b);
       CHECK(sb.st_nlink==1&&!strcmp(hb,"unodos"),"al borrar un nombre el otro conserva el contenido y st_nlink=1"); close(a); }
 
+    /* /proc/cpuinfo con las banderas reales (el script de Chromium exige sse3 = "pni") */
+    { char ci[8192]={0}; int f=open("/proc/cpuinfo",O_RDONLY); ssize_t r=f>=0?read(f,ci,sizeof ci-1):-1; if(f>=0) close(f);
+      CHECK(r>0&&strstr(ci,"flags")&&strstr(ci," sse2")&&strstr(ci," lm"),"/proc/cpuinfo lista las banderas del procesador"); }
+
     /* sendfile y copy_file_range (las usan apt, curl y los navegadores para copiar archivos) */
     { static char big[10000], chk[10000]; for(int i=0;i<10000;i++) big[i]=(char)('a'+i%26);
       int a=open("/tmp/mt/sf-a",O_RDWR|O_CREAT|O_TRUNC,0644); write(a,big,10000);

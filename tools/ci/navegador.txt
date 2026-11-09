@@ -6,6 +6,7 @@
 @esperar 8
 20|ejecutar /bin/kng-xinput &
 @esperar 2
+20|ejecutar /bin/sh -c "grep -c pni /proc/cpuinfo; ls /usr/lib/chromium | head -5"
 120|ejecutar /usr/bin/chromium --version
 20|rastro 1
 300|ejecutar /usr/bin/chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/cr --headless --dump-dom http://10.0.2.2:18090/hola.txt
