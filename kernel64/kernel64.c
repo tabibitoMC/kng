@@ -168,36 +168,71 @@ struct mb_info { uint32_t flags, mem_lower, mem_upper, boot_dev, cmdline, mods_n
                  uint32_t fb_lo, fb_hi, fb_pitch, fb_w, fb_h; uint8_t fb_bpp, fb_type; } __attribute__((packed));
 struct mb_mmap { uint32_t size; u64 base, len; uint32_t type; } __attribute__((packed));
 extern char _kend;
+extern uint64_t pd[8192];                                         /* 16 GB en identidad (ver boot64.S) */
+#define MAPLIM  0x400000000ull                                    /* hasta donde llega la identidad: 16 GB */
+#define NREG 24
 static u64 ram_kb, heap_start, heap_end;
+static struct { u64 s, e; } hreg[NREG]; static int nhreg;          /* trozos de RAM libre que forman el heap */
+static struct mb_info mbi_copy; static struct { uint32_t s,e,c,pad; } mods_copy[16]; static uint8_t mmap_copy[4096];
+/* resta [rs,re) de todos los trozos de RAM */
+static void reg_cut(u64 rs,u64 re){
+    for(int i=0;i<nhreg;i++){
+        u64 s=hreg[i].s, e=hreg[i].e; if(re<=s||rs>=e) continue;
+        if(rs>s && re<e){ if(nhreg<NREG){ hreg[nhreg].s=re; hreg[nhreg].e=e; nhreg++; hreg[i].e=rs; } else hreg[i].e=rs; }
+        else if(rs<=s && re>=e){ hreg[i].s=hreg[i].e=0; }
+        else if(rs<=s) hreg[i].s=re;
+        else hreg[i].e=rs;
+    }
+}
 static void mem_init(struct mb_info *mi){
-    u64 best_s=0, best_e=0, kend=((u64)(uintptr_t)&_kend+0xFFF)&~0xFFFull, LIM=0x80000000ull;   /* el heap queda bajo 2 GB (zona con cache) */
+    u64 kend=((u64)(uintptr_t)&_kend+0xFFF)&~0xFFFull;
+    nhreg=0;
     if(mi->flags&(1u<<6)){
         u64 p=mi->mmap_addr, e=p+mi->mmap_len;
         while(p<e){
             struct mb_mmap *m=(struct mb_mmap*)(uintptr_t)p;
             if(m->type==1){
                 ram_kb+=m->len/1024;
-                u64 s=m->base, en=m->base+m->len; if(s<0x100000) s=0x100000; if(s<kend) s=kend; if(en>LIM) en=LIM;
-                if(en>s && en-s>best_e-best_s){ best_s=s; best_e=en; }
+                u64 s=m->base, en=m->base+m->len; if(s<0x100000) s=0x100000; if(en>MAPLIM) en=MAPLIM;
+                if(en>s && nhreg<NREG){ hreg[nhreg].s=s; hreg[nhreg].e=en; nhreg++; }
             }
             p+=m->size+4;
         }
-    } else { ram_kb=mi->mem_lower+mi->mem_upper; best_s=kend; best_e=0x100000ull+(u64)mi->mem_upper*1024; if(best_e>LIM) best_e=LIM; }
-    if(mi->flags&(1u<<3)){                           /* modulos de arranque (rootfs): el heap empieza despues de ellos */
+    } else { ram_kb=mi->mem_lower+mi->mem_upper; u64 en=0x100000ull+(u64)mi->mem_upper*1024; if(en>MAPLIM) en=MAPLIM; hreg[0].s=0x100000; hreg[0].e=en; nhreg=1; }
+    reg_cut(0,kend);                                                /* el propio kernel (empieza en 1 MB) */
+    if(mi->flags&(1u<<3)){                                          /* modulos de arranque (rootfs) */
         struct { uint32_t s,e,c,pad; } *md=(void*)(uintptr_t)mi->mods_addr;
-        for(uint32_t i=0;i<mi->mods_n;i++) if(md[i].s<best_e && md[i].e>best_s) best_s=md[i].e;
+        for(uint32_t i=0;i<mi->mods_n;i++) reg_cut(md[i].s&~0xFFFull,((u64)md[i].e+0xFFF)&~0xFFFull);
     }
-    heap_start=(best_s+0xFFF)&~0xFFFull; heap_end=best_e;
+    /* A partir de 2 GB las paginas de 2 MB arrancan sin cache (por si son MMIO): a la RAM de verdad se le devuelve la cache */
+    for(int i=0;i<nhreg;i++){
+        u64 s=hreg[i].s, e=hreg[i].e; if(e<=s) continue;
+        if(e>0x80000000ull){
+            if(s<0x80000000ull){ if(nhreg<NREG){ hreg[nhreg].s=0x80000000ull; hreg[nhreg].e=e; nhreg++; } hreg[i].e=0x80000000ull; continue; }
+            s=(s+0x1FFFFFull)&~0x1FFFFFull; e&=~0x1FFFFFull; hreg[i].s=s; hreg[i].e=e;
+            for(u64 a=s;a<e;a+=0x200000ull) pd[a>>21]&=~0x18ull;
+        }
+    }
+    { u64 cr3; __asm__ volatile("mov %%cr3,%0":"=r"(cr3)); __asm__ volatile("mov %0,%%cr3"::"r"(cr3):"memory"); }
+    for(int i=0;i<nhreg;i++){                                       /* alinear a paginas y descartar trozos diminutos */
+        u64 s=(hreg[i].s+0xFFF)&~0xFFFull, e=hreg[i].e&~0xFFFull;
+        if(e<=s||e-s<(256u<<10)){ hreg[i].s=hreg[i].e=0; } else { hreg[i].s=s; hreg[i].e=e; }
+    }
+    int k=0; for(int i=0;i<nhreg;i++) if(hreg[i].e>hreg[i].s) hreg[k++]=hreg[i]; nhreg=k;
+    for(int i=1;i<nhreg;i++){ u64 s=hreg[i].s,e=hreg[i].e; int j=i-1; while(j>=0&&hreg[j].s>s){ hreg[j+1]=hreg[j]; j--; } hreg[j+1].s=s; hreg[j+1].e=e; }
+    heap_start=nhreg?hreg[0].s:0; heap_end=nhreg?hreg[nhreg-1].e:0;
 }
 struct hblk { u64 size, used; struct hblk *next, *prev; };      /* 32 bytes: mantiene la alineacion de 16 */
 #define HDR ((u64)sizeof(struct hblk))
 static struct hblk *heap_head; static u64 heap_total;
 static void heap_init(u64 want){
-    u64 avail=heap_end>heap_start?heap_end-heap_start:0;
-    if(want>avail) want=avail;
-    want&=~0xFFFull;
-    heap_head=(struct hblk*)(uintptr_t)heap_start; heap_total=want;
-    heap_head->size=want-HDR; heap_head->used=0; heap_head->next=heap_head->prev=0;
+    (void)want; struct hblk *prev=0; heap_total=0;
+    for(int i=0;i<nhreg;i++){
+        u64 sz=hreg[i].e-hreg[i].s; if(sz<=HDR+16) continue;
+        struct hblk *b=(struct hblk*)(uintptr_t)hreg[i].s; b->size=sz-HDR; b->used=0; b->next=0; b->prev=prev;
+        if(prev) prev->next=b; else heap_head=b;
+        prev=b; heap_total+=sz;
+    }
 }
 void *kmalloc(size_t n){
     if(!n||!heap_head) return 0;
@@ -220,8 +255,8 @@ void kfree(void *p){
     struct hblk *b=(struct hblk*)((uint8_t*)p-HDR); u64 f=irq_save();
     if(b->used){
         b->used=0;
-        if(b->next && !b->next->used){ b->size+=HDR+b->next->size; b->next=b->next->next; if(b->next) b->next->prev=b; }
-        if(b->prev && !b->prev->used){ struct hblk *pv=b->prev; pv->size+=HDR+b->size; pv->next=b->next; if(b->next) b->next->prev=pv; }
+        if(b->next && !b->next->used && (uint8_t*)b+HDR+b->size==(uint8_t*)b->next){ b->size+=HDR+b->next->size; b->next=b->next->next; if(b->next) b->next->prev=b; }
+        if(b->prev && !b->prev->used && (uint8_t*)b->prev+HDR+b->prev->size==(uint8_t*)b){ struct hblk *pv=b->prev; pv->size+=HDR+b->size; pv->next=b->next; if(b->next) b->next->prev=pv; }
     }
     irq_restore(f);
 }
@@ -333,7 +368,6 @@ void proc_stdin_char(int c);
 void kproc_key(int c){ proc_stdin_char(c); }
 void kheap_info(uint64_t *used,uint64_t *freeb){ uint64_t m; heap_stats(used,freeb,&m); }
 uint32_t kram_kb(void){ return ram_kb>0xFFFFFFFFull?0xFFFFFFFFu:(uint32_t)ram_kb; }
-extern uint64_t pd[2048];
 static void fb_wc(uint32_t addr,uint32_t bytes){      /* framebuffer en write-combining (PAT); ver kernel/kernel.c */
     uint32_t a,b,c,d; __asm__ volatile("cpuid":"=a"(a),"=b"(b),"=c"(c),"=d"(d):"a"(1));
     if(!(d&(1u<<16)) || addr<0x80000000u) return;
@@ -375,8 +409,13 @@ void kmain64(uint32_t magic, struct mb_info *mi){
         fb_addr=mi->fb_lo; fb_pitch=mi->fb_pitch; fb_w=mi->fb_w; fb_h=mi->fb_h; fb_ok=1; }
     kprintf("== kng-kernel %s (%s) :: Konigreich OS ==\n",KNG_VERSION,KNG_ARCH);
     if(magic!=0x2BADB002){ kprintf("Arranque no Multiboot (magic=0x%x). Detenido.\n",magic); for(;;) __asm__ volatile("hlt"); }
-    kprintf("[ok] modo largo (64 bits), paginacion de 4 GB en identidad\n");
+    kprintf("[ok] modo largo (64 bits), paginacion de 16 GB en identidad\n");
     idt_init(); pic_init(); pit_init(); irq_handlers[1]=kb_irq; mouse_init();
+    { /* copia propia de la informacion de GRUB: asi su memoria se puede reutilizar sin riesgo */
+      memcpy(&mbi_copy,mi,sizeof mbi_copy);
+      if((mi->flags&(1u<<3)) && mi->mods_n){ uint32_t n=mi->mods_n>16?16:mi->mods_n; memcpy(mods_copy,(void*)(uintptr_t)mi->mods_addr,n*16u); mbi_copy.mods_n=n; mbi_copy.mods_addr=(uint32_t)(uintptr_t)mods_copy; }
+      if((mi->flags&(1u<<6)) && mi->mmap_len){ uint32_t n=mi->mmap_len>sizeof mmap_copy?(uint32_t)sizeof mmap_copy:mi->mmap_len; memcpy(mmap_copy,(void*)(uintptr_t)mi->mmap_addr,n); mbi_copy.mmap_len=n; mbi_copy.mmap_addr=(uint32_t)(uintptr_t)mmap_copy; }
+      mi=&mbi_copy; }
     mem_init(mi); heap_init(~0ull);
     __asm__ volatile("sti");
     kprintf("[ok] IDT, PIC, PIT(100Hz), teclado y raton PS/2\n");

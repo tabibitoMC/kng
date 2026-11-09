@@ -20,7 +20,7 @@
 .align 4096
 pml4:  .skip 4096
 pdpt:  .skip 4096
-pd:    .skip 4096*4
+pd:    .skip 4096*16
 .global pd
 .align 16
 stack_bottom: .skip 65536
@@ -70,7 +70,7 @@ _start:
     cpuid
     test $(1<<29), %edx              /* LM */
     jz .nolong
-    /* tablas: PML4[0] -> PDPT; PDPT[0..3] -> 4 PD de 512 entradas de 2 MB = 4 GB en identidad */
+    /* tablas: PML4[0] -> PDPT; PDPT[0..15] -> 16 PD de 512 entradas de 2 MB = 16 GB en identidad */
     mov $pdpt, %eax
     or $3, %eax
     mov %eax, pml4
@@ -81,19 +81,19 @@ _start:
     or $3, %eax
     mov %eax, pdpt(,%ecx,8)
     inc %ecx
-    cmp $4, %ecx
+    cmp $16, %ecx
     jne 1b
     xor %ecx, %ecx
 2:  mov %ecx, %edx
     shl $21, %edx
     or $0x83, %edx                    /* P | RW | PS */
-    cmp $1024, %ecx                   /* a partir de 2 GB: sin cache (MMIO de tarjetas PCI y framebuffer) */
+    cmp $1024, %ecx                   /* a partir de 2 GB: sin cache (MMIO de tarjetas PCI y framebuffer); kmain64 vuelve a poner cache a la RAM real */
     jb 3f
     or $0x18, %edx
 3:  mov %edx, pd(,%ecx,8)
     movl $0, pd+4(,%ecx,8)
     inc %ecx
-    cmp $2048, %ecx
+    cmp $8192, %ecx
     jne 2b
     mov %cr4, %eax
     or $0x20, %eax                    /* PAE */

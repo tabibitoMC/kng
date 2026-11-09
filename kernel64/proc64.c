@@ -204,7 +204,7 @@ static int pipe_ready(Task *t){
     return f->type==3 ? (p->count>0||p->writers<=0) : (p->count<4096||p->readers<=0);
 }
 static void poll_wakeups(void){
-    u32 now=kticks(); int any_read=0;
+    u32 now=kticks(); int any_read=0, any_fg=0;
     for(int i=0;i<MAXT;i++){ Task *t=&tasks[i];
         if(t->state==T_FREE) continue;
         if(t->leader&&t->pr&&t->pr->alarm_at&&t->state!=T_ZOMBIE&&(int)(now-(u32)t->pr->alarm_at)>=0){
@@ -217,6 +217,7 @@ static void poll_wakeups(void){
             else if(t!=cur&&t->leader&&!t->fg&&t->ppid==0) t->state=T_FREE;      /* huerfano ya terminado */
             continue; }
         if(t->state==T_READ) any_read=1;
+        if(t->leader&&(t->fg||t->bg==2)) any_fg=1;
         if(t->killed||(t->sigpend&~t->sigmask)){ t->state=T_READY; continue; }
         if(t->state==T_SLEEP&&(int)(now-(u32)t->wake_at)>=0) t->state=T_READY;
         else if(t->state==T_FUTEX&&t->wake_at&&(int)(now-(u32)t->wake_at)>=0){ t->wake_at=0; t->fut_key=0; t->timedout=1; t->state=T_READY; }
@@ -226,7 +227,7 @@ static void poll_wakeups(void){
             for(int j=0;j<MAXT;j++){ Task *c=&tasks[j]; if(c->state==T_ZOMBIE&&c->leader&&c->ppid==t->pid&&(t->wait_pid<=0||c->pid==t->wait_pid)){ t->state=T_READY; break; } }
         }
     }
-    if(any_read){ stdin_pump(); if(tty_input_ready()) for(int i=0;i<MAXT;i++) if(tasks[i].state==T_READ) tasks[i].state=T_READY; }
+    if(any_read||any_fg){ stdin_pump(); if(any_read&&tty_input_ready()) for(int i=0;i<MAXT;i++) if(tasks[i].state==T_READ) tasks[i].state=T_READY; }     /* con un programa pegado a la terminal las teclas (Ctrl+C...) se atienden aunque no lea */
 }
 static Task *pick_next(void){                    /* turnos: tasks[0..MAXT-1] y luego el kernel (task0) */
     int me=cur==&task0?MAXT:(int)(cur-tasks);
@@ -415,9 +416,17 @@ int proc_exec(char *path,int argc,char **argv,int bg){
     return code;
 }
 void proc_ps(void){
-    kprintf("  PID  PPID  ESTADO     NOMBRE\n");
+    kprintf("  PID  PPID  ESTADO     SYS  NOMBRE / ESPERA\n");
     static const char *st[]={"libre","listo","dormido","espera","entrada","futex","pipe","zombie","e/s"};
-    for(int i=0;i<MAXT;i++) if(tasks[i].state!=T_FREE) kprintf("  %-4d %-5d %-10s %s%s\n",tasks[i].tid,tasks[i].ppid,st[tasks[i].state],tasks[i].name,tasks[i].leader?"":" (hilo)");
+    for(int i=0;i<MAXT;i++){ Task *t=&tasks[i]; if(t->state==T_FREE) continue;
+        kprintf("  %-4d %-5d %-10s %-4d %s%s%s",t->tid,t->ppid,st[t->state],t->sysnr,t->name,t->leader?"":" (hilo)",t->fg?" [fg]":"");
+        if(t->state==T_WAIT) kprintf("  espera hijo %d",t->wait_pid);
+        else if(t->state==T_PIPE) kprintf("  pipe fd %d",t->pipe_fd);
+        else if(t->state==T_FUTEX) kprintf("  futex %lx",t->fut_key&0xFFFFFFFFull);
+        else if(t->state==T_FN) kprintf("  fd %d n %d mascara %x",t->wa_fd,t->wa_n,t->wa_mask);
+        else if(t->state==T_SLEEP) kprintf("  %d ticks",(int)((u32)t->wake_at-kticks()));
+        kprintf("\n");
+    }
 }
 int proc_kill(int pid,int sig){
     int n=0; for(int i=0;i<MAXT;i++) if(tasks[i].state!=T_FREE&&tasks[i].state!=T_ZOMBIE&&tasks[i].pid==pid){ tasks[i].killed=sig?sig:9; n++; }

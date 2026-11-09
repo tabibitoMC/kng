@@ -94,6 +94,10 @@ for c in cmds:
     except Exception: break
     if not espera(t):
         with lock: log.write(('\n[ci_drive] TIEMPO AGOTADO esperando el fin de: %s\n' % c).encode()); log.flush()
+        try:                                                  # Ctrl+] : el kernel lista los procesos y lo que espera cada uno
+            with lock: log.write(b'\n[ci_drive] ---- procesos (Ctrl+]) ----\n'); log.flush()
+            p.stdin.write(b'\x1d'); p.stdin.flush(); time.sleep(2.5)
+        except Exception: pass
         if not hang_vuelcos: hang_vuelcos.append(1); volcar_cuelgue()
         # se intenta recuperar el indicador con Ctrl+C
         try: p.stdin.write(b'\x03\r'); p.stdin.flush()

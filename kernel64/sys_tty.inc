@@ -20,7 +20,9 @@ static void tty_signal(int sig){
     for(int i=0;i<MAXT;i++){ Task *t=&tasks[i]; if(t->state==T_FREE||t->state==T_ZOMBIE||!t->leader||!t->pr) continue;
         if(t->fg||t->bg==2) sig_queue_proc(t->pr,sig); }
 }
+void proc_ps(void);
 static void stdin_char(int c){
+    if(c==0x1d||c==0x41d){ proc_ps(); return; }                   /* Ctrl+] : lista de procesos y lo que espera cada uno (diagnostico) */
     if(c>=0x400) c&=31;                                           /* Ctrl+letra */
     if((tty.lflag&TL_ISIG)&&c>=0&&c<32){
         int sig=c==tty.cc[0]?2:c==tty.cc[1]?3:0;
