@@ -29,7 +29,7 @@ static int gen_proc_pid(Task *tk,const char *rest,char *o,int max){
         PS("555555554000-5555555c0000 r-xp 00000000 00:00 0 "); PS(pr->exe); PS("\n");
         PX(pr->brk0); PS("-"); PX(pr->brk); PS(" rw-p 00000000 00:00 0 [heap]\n");
         PX(STACK_TOP-STACK_SIZE); PS("-"); PX(STACK_TOP); PS(" rw-p 00000000 00:00 0 [stack]\n"); return n; }
-    if(!k_strcmp(rest,"limits")){ PS("Limit                     Soft Limit           Hard Limit           Units\nMax open files            64                   64                   files\nMax stack size            8388608              unlimited            bytes\n"); return n; }
+    if(!k_strcmp(rest,"limits")){ PS("Limit                     Soft Limit           Hard Limit           Units\nMax open files            512                  512                  files\nMax stack size            8388608              unlimited            bytes\n"); return n; }
     if(!k_strcmp(rest,"cgroup")){ PS("0::/\n"); return n; }
     if(!k_strcmp(rest,"mountinfo")||!k_strcmp(rest,"mounts")){ PS("rootfs / rootfs rw 0 0\n"); return n; }
     if(!k_strcmp(rest,"oom_score_adj")||!k_strcmp(rest,"oom_adj")){ PS("0\n"); return n; }

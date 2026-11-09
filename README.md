@@ -48,5 +48,15 @@ Capturas de la interfaz: carpeta `docs/` (generadas con el mismo código de la i
 Autor: Nick Jose Tolentino Rojas · Fuente: DejaVu Sans Mono (licencia libre Bitstream Vera/DejaVu).
 
 
-## Programas Linux (kernel de 64 bits)
-`ejecutar /bin/multi-dyn`, `ejecutar /bin/hola-pie a b`, `procesos`, `matar <pid>`. Ver TRASPASO_kng_v23.md (que funciona y que falta).
+## Programas Linux REALES (kernel de 64 bits)
+kng 64 bits ejecuta programas de Linux sin modificar (ELF, glibc, ld.so) con su propia capa de compatibilidad (sin código de Linux): procesos, hilos, señales,
+sockets, epoll, mmap/memoria compartida, tty, /proc y /dev. Encima corre un **Debian 12 real** (apt/dpkg, curl, busybox...).
+
+**ISO con Debian** (necesita WSL con sudo): `KNG_DEBIAN=1 bash tools/build-iso.sh` (o el workflow *construir-iso* en GitHub Actions, que lo publica en Releases).
+Máquina virtual con **4 GB de RAM o más** (el sistema vive en memoria).
+
+Comandos en español (en la terminal de kng, también dentro de la ventana gráfica):
+`actualizar` · `instalar <nombre>` · `quitar <nombre>` · `mejorar` · `buscar <palabra>` · `mostrar <nombre>` · `paquetes` · `limpiar` · `ayuda-programas`
+Nombres especiales de `instalar`: `brave`, `chrome`, `opera`, `chromium`, `firefox`, `libreoffice`, `openoffice` (el resto es cualquier paquete de Debian).
+Programas con ventana: `pantalla` (servidor X real) y `abrir <programa>` (p. ej. `abrir brave`), o la ventana **Programas** del dock.
+Diagnóstico: `rastro 1` muestra las llamadas del sistema que fallan. Estado real y pendientes: ver `TRASPASO_kng_v24.md`.
