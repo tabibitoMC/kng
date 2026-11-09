@@ -1,0 +1,8 @@
+# apt-get update sin rastro, en segundo plano
+20|ejecutar /usr/bin/apt-get -o Debug::pkgAcquire::Worker=true update &
+@esperar 20
+20|procesos
+@esperar 40
+20|procesos
+@esperar 60
+20|procesos
