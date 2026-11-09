@@ -1,0 +1,15 @@
+# LibreOffice real con ventana en el servidor X (Xvfb) de kng
+240|actualizar
+1500|instalar libreoffice-writer fonts-dejavu-core xvfb x11-utils xauth
+20|ejecutar /bin/mkdir -p /var/lib/xvfb /tmp/.X11-unix
+20|ejecutar /usr/bin/Xvfb :0 -screen 0 1024x768x24 -fbdir /var/lib/xvfb -ac -nolisten tcp &
+@esperar 8
+20|ejecutar /bin/kng-xinput &
+@esperar 2
+20|rastro 1
+20|ejecutar /usr/bin/soffice --writer --norestore --nologo -env:UserInstallation=file:///tmp/lo2 &
+@esperar 120
+20|rastro 0
+60|ejecutar /usr/bin/xwininfo -root -tree
+30|ejecutar /bin/sh -c "tr -d '\000' < /var/lib/xvfb/Xvfb_screen0 | wc -c"
+20|procesos
