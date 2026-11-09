@@ -43,39 +43,25 @@ jobs:
           ( sleep 8; echo "ejecutar /bin/memtest"; sleep 60; echo "procesos"; sleep 2 ) | timeout 110 qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd rootfs.cpio -display none -serial stdio -m 512M > mem64.log 2>&1 || true
           echo "=== mem64 ==="; cat mem64.log
           grep -q "memtest resultado.*TODO OK" mem64.log && echo "PRUEBA memoria+archivos: OK" || echo "PRUEBA memoria+archivos: FALLO"
-      - name: Debian real sobre kng (sh, coreutils, curl con HTTPS, dpkg, apt)
+      - name: Debian real (cache)
+        id: debcache
+        uses: actions/cache@v4
+        with:
+          path: build/debian.cpio.gz
+          key: debian-${{ hashFiles('tools/mkdebian.sh', 'tools/rootfs-es/**') }}
+      - name: Debian real sobre kng (sh, coreutils, curl con HTTPS, dpkg, apt, comandos en espanol)
+        timeout-minutes: 30
         run: |
           sudo apt-get install -y debootstrap debian-archive-keyring cpio
-          sudo debootstrap --variant=minbase --include=busybox,curl,ca-certificates,xz-utils,less bookworm debroot http://deb.debian.org/debian > debootstrap.log 2>&1 || { tail -30 debootstrap.log; exit 1; }
-          sudo mkdir -p debroot/root
-          sudo tee debroot/root/prueba.sh > /dev/null <<'EOS'
-          echo "== sh ok =="
-          uname -a
-          echo "== ls / =="
-          ls /
-          echo "== os-release =="
-          head -3 /etc/os-release
-          echo "== busybox =="
-          /bin/busybox echo "busybox funciona"
-          echo "== curl http =="
-          curl -sS -m 20 http://10.0.2.2:18090/hola.txt
-          echo "== curl https =="
-          curl -sS -m 40 -I https://deb.debian.org/debian/dists/bookworm/Release | head -3
-          echo "== dpkg =="
-          dpkg --version | head -1
-          echo "== apt =="
-          apt-get --version | head -1
-          echo "== fin prueba =="
-          EOS
-          sudo sed -i 's/^          //' debroot/root/prueba.sh
-          ( cd debroot && sudo find . | sudo cpio -o -H newc --quiet > ../debian.cpio )
-          ls -la debian.cpio; sudo du -sh debroot || true
+          [ -f build/debian.cpio.gz ] || bash tools/mkdebian.sh
+          ls -la build/debian.cpio.gz
+          zcat build/debian.cpio.gz > debian.cpio
+          python3 tools/mkrootfs.py --debian kng-extra.cpio
           mkdir -p www; echo "hola desde el anfitrion" > www/hola.txt
           ( cd www && python3 -m http.server 18090 > ../http.log 2>&1 & )
           sleep 1
-          ( sleep 40; echo "ejecutar /bin/sh /root/prueba.sh"; sleep 150; echo "procesos"; sleep 2 ) | timeout 260 qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd debian.cpio -display none -serial stdio -m 2G -netdev user,id=n0 -device e1000,netdev=n0 > deb64.log 2>&1 || true
+          python3 tools/ci_drive.py tools/ci/debian.txt deb64.log -- qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd debian.cpio,kng-extra.cpio -display none -serial stdio -m 3G -netdev user,id=n0 -device e1000,netdev=n0 || true
           echo "=== deb64 ==="; cat deb64.log
-          grep -q "== fin prueba ==" deb64.log && echo "PRUEBA debian: LLEGO AL FINAL" || echo "PRUEBA debian: NO TERMINO"
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: logs, path: "*.log" }

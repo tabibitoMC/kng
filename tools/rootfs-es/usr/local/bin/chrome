@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /usr/bin/google-chrome-stable --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --password-store=basic "$@"

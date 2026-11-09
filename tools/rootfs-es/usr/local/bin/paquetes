@@ -1,0 +1,3 @@
+#!/bin/sh
+# paquetes: lista los programas instalados
+dpkg-query -W -f='${Package}\t${Version}\n' | sort

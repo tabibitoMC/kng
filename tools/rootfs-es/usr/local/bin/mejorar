@@ -1,0 +1,3 @@
+#!/bin/sh
+# mejorar: actualiza los programas ya instalados (equivale a "apt upgrade")
+exec apt-get -y upgrade "$@"

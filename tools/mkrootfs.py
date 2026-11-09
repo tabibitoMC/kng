@@ -1,35 +1,40 @@
 #!/usr/bin/env python3
 """Arma out/rootfs.cpio (formato cpio newc) para kng: programas de prueba + enlazador dinamico y libc del PC (copias reales).
-Uso: python3 tools/mkrootfs.py [salida.cpio]     Necesita gcc con libc estatica (libc6-dev)."""
+Uso: python3 tools/mkrootfs.py [salida.cpio]            Necesita gcc con libc estatica (libc6-dev).
+     python3 tools/mkrootfs.py --debian [salida.cpio]   Solo programas ESTATICOS (sin libc del PC): para ponerlos encima de un Debian real."""
 import os, subprocess, sys, tempfile, shutil
 raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(raiz, 'out', 'rootfs.cpio')
+args = [a for a in sys.argv[1:] if not a.startswith('--')]
+DEB = '--debian' in sys.argv
+out = args[0] if args else os.path.join(raiz, 'out', 'rootfs.cpio')
 os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
 tmp = tempfile.mkdtemp()
 try:
-    for d in ('bin', 'lib64', 'lib/x86_64-linux-gnu'): os.makedirs(os.path.join(tmp, d))
-    src = os.path.join(raiz, 'kernel64', 'user', 'hola-glibc.c')
-    subprocess.check_call(['gcc', '-O2', '-static-pie', '-o', tmp + '/bin/hola-pie', src])
-    subprocess.check_call(['gcc', '-O2', '-static', '-no-pie', '-o', tmp + '/bin/hola-static', src])
-    subprocess.check_call(['gcc', '-O2', '-o', tmp + '/bin/hola-dyn', src])
-    msrc = os.path.join(raiz, 'kernel64', 'user', 'multi.c')
-    subprocess.check_call(['gcc', '-O2', '-pthread', '-static-pie', '-o', tmp + '/bin/multi-pie', msrc])
-    subprocess.check_call(['gcc', '-O2', '-pthread', '-static', '-no-pie', '-o', tmp + '/bin/multi-static', msrc])
-    subprocess.check_call(['gcc', '-O2', '-pthread', '-o', tmp + '/bin/multi-dyn', msrc])
-    nsrc = os.path.join(raiz, 'kernel64', 'user', 'nettest.c')
-    subprocess.check_call(['gcc', '-O2', '-o', tmp + '/bin/nettest', nsrc])
-    msrc2 = os.path.join(raiz, 'kernel64', 'user', 'memtest.c')
-    subprocess.check_call(['gcc', '-O2', '-w', '-o', tmp + '/bin/memtest', msrc2])
-    xsrc = os.path.join(raiz, 'kernel64', 'user', 'kng-xinput.c')
-    subprocess.check_call(['gcc', '-O2', '-w', '-static', '-o', tmp + '/bin/kng-xinput', xsrc])
-    ldd = subprocess.check_output(['ldd', tmp + '/bin/hola-dyn'], text=True)
-    ld = libc = None
-    for l in ldd.splitlines():
-        p = l.split()
-        if 'ld-linux' in l: ld = p[0] if p[0].startswith('/') else p[2]
-        if l.strip().startswith('libc.so.6'): libc = p[2]
-    shutil.copyfile(os.path.realpath(ld), tmp + '/lib64/ld-linux-x86-64.so.2')
-    shutil.copyfile(os.path.realpath(libc), tmp + '/lib/x86_64-linux-gnu/libc.so.6')
+    for d in ('bin',) + (() if DEB else ('lib64', 'lib/x86_64-linux-gnu')): os.makedirs(os.path.join(tmp, d))
+    def cc(extra, dst, srcf, w=False):
+        subprocess.check_call(['gcc', '-O2'] + (['-w'] if w else []) + extra + ['-o', tmp + '/bin/' + dst, srcf])
+    u = lambda f: os.path.join(raiz, 'kernel64', 'user', f)
+    cc(['-static-pie'], 'hola-pie', u('hola-glibc.c'))
+    cc(['-static', '-no-pie'], 'hola-static', u('hola-glibc.c'))
+    cc(['-pthread', '-static-pie'], 'multi-pie', u('multi.c'))
+    cc(['-pthread', '-static', '-no-pie'], 'multi-static', u('multi.c'))
+    cc(['-static'], 'kng-xinput', u('kng-xinput.c'), True)
+    if DEB:
+        cc(['-static'], 'nettest', u('nettest.c'), True)
+        cc(['-static'], 'memtest', u('memtest.c'), True)
+    else:
+        cc([], 'hola-dyn', u('hola-glibc.c'))
+        cc(['-pthread'], 'multi-dyn', u('multi.c'))
+        cc([], 'nettest', u('nettest.c'))
+        cc([], 'memtest', u('memtest.c'), True)
+        ldd = subprocess.check_output(['ldd', tmp + '/bin/hola-dyn'], text=True)
+        ld = libc = None
+        for l in ldd.splitlines():
+            p = l.split()
+            if 'ld-linux' in l: ld = p[0] if p[0].startswith('/') else p[2]
+            if l.strip().startswith('libc.so.6'): libc = p[2]
+        shutil.copyfile(os.path.realpath(ld), tmp + '/lib64/ld-linux-x86-64.so.2')
+        shutil.copyfile(os.path.realpath(libc), tmp + '/lib/x86_64-linux-gnu/libc.so.6')
     ents = []
     for dp, dn, fn in os.walk(tmp):
         for n in sorted(dn + fn): ents.append(os.path.relpath(os.path.join(dp, n), tmp))

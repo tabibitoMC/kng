@@ -1,0 +1,9 @@
+#!/bin/sh
+# actualizar: descarga la lista de programas disponibles (equivale a "apt update")
+echo "Actualizando la lista de programas..."
+if apt-get update "$@"; then
+  echo "Listo. Ahora puedes usar:  instalar <nombre>   |   mejorar   |   buscar <palabra>"
+else
+  echo "No se pudo actualizar. Revisa la red con:  ping 10.0.2.2   y   dns deb.debian.org"
+  exit 1
+fi

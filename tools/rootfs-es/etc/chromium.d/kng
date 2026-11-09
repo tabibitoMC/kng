@@ -1,0 +1,2 @@
+# kng no tiene los espacios de nombres de Linux que usa el aislamiento de Chromium: se desactiva (corre como root)
+export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --password-store=basic"

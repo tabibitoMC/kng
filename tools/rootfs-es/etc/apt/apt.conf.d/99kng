@@ -1,0 +1,9 @@
+// Ajustes de apt para Konigreich OS (kng): se ejecuta como root, sin usuario de descarga aparte,
+// y no se guardan los .deb descargados (el sistema vive en memoria, cada MB cuenta).
+APT::Sandbox::User "root";
+APT::Keep-Downloaded-Packages "false";
+APT::Install-Recommends "false";
+Acquire::Languages "none";
+Dpkg::Options { "--force-unsafe-io"; };
+Binary::apt::APT::Keep-Downloaded-Packages "false";
+DPkg::Post-Invoke { "rm -f /var/cache/apt/archives/*.deb /var/cache/apt/*.bin || true"; };

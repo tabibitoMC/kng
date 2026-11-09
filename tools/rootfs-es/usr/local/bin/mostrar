@@ -1,0 +1,4 @@
+#!/bin/sh
+# mostrar <programa>: informacion de un programa
+[ $# -eq 0 ] && { echo "uso: mostrar <programa>"; exit 1; }
+exec apt-cache show "$@"

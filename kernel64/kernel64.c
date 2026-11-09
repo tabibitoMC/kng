@@ -297,6 +297,7 @@ static void run(char *l){
         int n=tokenize(p,a,48);
         if(n>1&&streq(a[n-1],"&")){ bg=1; n--; }
         if(n){ char path[160]; if(!find_program(a[0],path,sizeof path)) k_strcpy(path,a[0],sizeof path); launch(path,n,a,bg); } else kprintf("uso: ejecutar <ruta> [argumentos] [&]\n"); }
+    else if(startswith(l,"rastro")){ extern int krastro; krastro=l[6]==' '&&l[7]>='0'&&l[7]<='2'?l[7]-'0':1; kprintf("rastro de llamadas al sistema: nivel %d (0 apagado, 1 solo errores, 2 todo)\n",krastro); }
     else if(streq(l,"pantalla")) cmd_pantalla();
     else if(streq(l,"procesos")||streq(l,"ps")) proc_ps();
     else if(startswith(l,"matar ")){ int pid=0; for(const char *q=l+6;*q>='0'&&*q<='9';q++) pid=pid*10+(*q-'0'); kprintf(proc_kill(pid,9)?"senal enviada\n":"no existe ese proceso\n"); }

@@ -1,0 +1,58 @@
+#!/bin/sh
+# instalar <programa>...: instala programas reales (Debian) desde internet.
+# Nombres especiales: brave, chrome, opera, chromium, firefox, libreoffice, openoffice. Cualquier otro es el nombre del paquete de Debian.
+# Opciones: --completo  tambien instala los paquetes recomendados (ocupa mas memoria).
+[ $# -eq 0 ] && { echo "uso: instalar <programa>...   (ej: instalar brave | instalar libreoffice | instalar xterm)"; exit 1; }
+EXTRA=""
+APT="apt-get -y install"
+LISTAS=/var/lib/apt/lists
+[ -d "$LISTAS" ] && [ -n "$(ls "$LISTAS" 2>/dev/null | grep -v '^lock$\|^partial$')" ] || { echo "Primero hay que bajar la lista de programas..."; apt-get update || exit 1; }
+
+agrega_repo() {   # nombre url-llave archivo-llave linea-del-repo
+  mkdir -p /etc/apt/keyrings /etc/apt/sources.list.d
+  echo "Agregando el repositorio oficial de $1..."
+  curl -fsSL "$2" -o "/etc/apt/keyrings/$3" || { echo "No pude bajar la llave de $1"; return 1; }
+  echo "$4" > "/etc/apt/sources.list.d/$1.list"
+  apt-get update || return 1
+}
+pantalla_base="xvfb xterm xauth x11-utils x11-xserver-utils fonts-dejavu-core fonts-liberation libgl1 libgl1-mesa-dri"
+
+lista=""
+for p in "$@"; do
+  case "$p" in
+    --completo) APT="apt-get -y --install-recommends install" ;;
+    brave)
+      agrega_repo brave https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg brave-browser-archive-keyring.gpg \
+        "deb [signed-by=/etc/apt/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main" || exit 1
+      lista="$lista $pantalla_base brave-browser" ;;
+    chrome|google-chrome)
+      agrega_repo google-chrome https://dl.google.com/linux/linux_signing_key.pub google-chrome.asc \
+        "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.asc] https://dl.google.com/linux/chrome/deb/ stable main" || exit 1
+      lista="$lista $pantalla_base google-chrome-stable" ;;
+    opera)
+      agrega_repo opera https://deb.opera.com/archive.key opera.asc \
+        "deb [signed-by=/etc/apt/keyrings/opera.asc] https://deb.opera.com/opera-stable/ stable non-free" || exit 1
+      lista="$lista $pantalla_base opera-stable" ;;
+    chromium) lista="$lista $pantalla_base chromium" ;;
+    firefox) lista="$lista $pantalla_base firefox-esr" ;;
+    libreoffice)
+      lista="$lista $pantalla_base libreoffice-writer libreoffice-calc libreoffice-impress libreoffice-draw libreoffice-math libreoffice-l10n-es fonts-noto-core" ;;
+    openoffice)
+      lista="$lista $pantalla_base"; OO=1 ;;
+    *) lista="$lista $p" ;;
+  esac
+done
+if [ -n "$lista" ]; then
+  echo "Instalando:$lista"
+  $APT $lista || { echo "La instalacion fallo."; exit 1; }
+fi
+if [ -n "$OO" ]; then
+  mkdir -p /tmp/oo && cd /tmp/oo || exit 1
+  URL="https://sourceforge.net/projects/openofficeorg.mirror/files/4.1.15/binaries/es/Apache_OpenOffice_4.1.15_Linux_x86-64_install-deb_es.tar.gz/download"
+  echo "Bajando Apache OpenOffice 4.1.15 (espanol)..."
+  curl -fL "$URL" -o oo.tar.gz || { echo "No pude bajar OpenOffice"; exit 1; }
+  tar xzf oo.tar.gz && rm -f oo.tar.gz && dpkg -i es/DEBS/*.deb es/DEBS/desktop-integration/*.deb 2>&1 | tail -5
+  cd / && rm -rf /tmp/oo
+  [ -x /opt/openoffice4/program/soffice ] && ln -sf /opt/openoffice4/program/soffice /usr/local/bin/openoffice && echo "OpenOffice instalado. Abrelo con:  openoffice -writer"
+fi
+echo "Listo."

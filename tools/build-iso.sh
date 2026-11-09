@@ -16,11 +16,19 @@ rm -rf build/iso && mkdir -p build/iso/boot/grub out
 cp kernel/kng-kernel.elf kernel/kng-kernel-text.elf kernel64/kng-kernel64.elf kernel64/kng-kernel64-text.elf build/iso/boot/
 # rootfs (programas Linux + enlazador dinamico + libc del PC) como modulo de arranque; solo lo usa el kernel de 64 bits
 if python3 tools/mkrootfs.py build/iso/boot/rootfs.cpio; then ROOTFS=1; else ROOTFS=0; echo "[aviso] sin rootfs (falta libc estatica: sudo apt install libc6-dev). El ISO igual arranca, sin programas Linux."; fi
+# Debian real (opcional): se usa si ya existe build/debian.cpio.gz, o si se pide con  KNG_DEBIAN=1 bash tools/build-iso.sh
+if [ "$KNG_DEBIAN" = 1 ] && [ ! -f build/debian.cpio.gz ]; then bash tools/mkdebian.sh; fi
+if [ -f build/debian.cpio.gz ]; then
+  cp build/debian.cpio.gz build/iso/boot/debian.cpio.gz
+  python3 tools/mkrootfs.py --debian build/iso/boot/kng-extra.cpio
+  DEBIAN=1
+else DEBIAN=0; echo "[aviso] sin Debian (para incluirlo:  KNG_DEBIAN=1 bash tools/build-iso.sh )."; fi
 python3 tools/check-mb.py build/iso/boot/*.elf
 cat > build/iso/boot/grub/grub.cfg <<'CFG'
 set timeout=6
 set default=1
 insmod all_video
+insmod gzio
 menuentry "Königreich OS - 32 bits (grafico)" {
     set gfxpayload=1024x768x32
     multiboot /boot/kng-kernel.elf
@@ -45,9 +53,42 @@ menuentry "Königreich OS - 64 bits (modo texto)" {
 }
 CFG
 [ "$ROOTFS" = 1 ] || sed -i '/rootfs.cpio/d' build/iso/boot/grub/grub.cfg
+if [ "$DEBIAN" = 1 ]; then      # con Debian: sus archivos primero y los programas de kng encima (sin la libc del PC, que no es la de Debian)
+  cat > build/iso/boot/grub/grub.cfg <<'CFG'
+set timeout=6
+set default=0
+insmod all_video
+insmod gzio
+menuentry "Königreich OS - 64 bits con Debian (grafico)" {
+    set gfxpayload=1024x768x32
+    multiboot /boot/kng-kernel64.elf
+    module /boot/debian.cpio.gz
+    module /boot/kng-extra.cpio
+    boot
+}
+menuentry "Königreich OS - 64 bits con Debian (modo texto)" {
+    set gfxpayload=text
+    multiboot /boot/kng-kernel64-text.elf
+    module /boot/debian.cpio.gz
+    module /boot/kng-extra.cpio
+    boot
+}
+menuentry "Königreich OS - 64 bits (grafico, sin Debian)" {
+    set gfxpayload=1024x768x32
+    multiboot /boot/kng-kernel64.elf
+    module /boot/rootfs.cpio
+    boot
+}
+menuentry "Königreich OS - 32 bits (grafico)" {
+    set gfxpayload=1024x768x32
+    multiboot /boot/kng-kernel.elf
+    boot
+}
+CFG
+fi
 # -d fuerza la plataforma BIOS (i386-pc): el kernel usa Multiboot 1, que GRUB UEFI no carga.
 grub-mkrescue -d /usr/lib/grub/i386-pc -o out/KonigreichOS-kng.iso build/iso 2>&1 | tail -3
 ( cd out && sha256sum KonigreichOS-kng.iso > KonigreichOS-kng.iso.sha256 )
 ls -la out/KonigreichOS-kng.iso
 echo "Listo: out/KonigreichOS-kng.iso"
-echo "Maquina virtual: BIOS/Legacy (no UEFI), 256 MB de RAM o mas, tarjeta de red Intel e1000 (o RTL8139) en NAT, raton PS/2."
+echo "Maquina virtual: BIOS/Legacy (no UEFI), 256 MB de RAM o mas (con Debian: 4 GB o mas), tarjeta de red Intel e1000 (o RTL8139) en NAT, raton PS/2."

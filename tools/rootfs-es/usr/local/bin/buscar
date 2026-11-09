@@ -1,0 +1,4 @@
+#!/bin/sh
+# buscar <palabra>: busca programas disponibles
+[ $# -eq 0 ] && { echo "uso: buscar <palabra>"; exit 1; }
+exec apt-cache search "$@"

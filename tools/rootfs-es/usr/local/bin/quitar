@@ -1,0 +1,13 @@
+#!/bin/sh
+# quitar <programa>...: desinstala programas
+[ $# -eq 0 ] && { echo "uso: quitar <programa>..."; exit 1; }
+for p in "$@"; do
+  case "$p" in
+    brave) p=brave-browser ;;
+    chrome) p=google-chrome-stable ;;
+    openoffice) rm -rf /opt/openoffice4 /usr/local/bin/openoffice /usr/local/bin/soffice-oo; echo "OpenOffice quitado."; continue ;;
+    libreoffice) p="libreoffice-core libreoffice-common" ;;
+  esac
+  apt-get -y remove $p
+done
+apt-get -y autoremove

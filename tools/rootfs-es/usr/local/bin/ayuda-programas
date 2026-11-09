@@ -1,0 +1,14 @@
+#!/bin/sh
+cat <<'T'
+Comandos de Konigreich OS para programas (todos reales, de Debian):
+  actualizar            baja la lista de programas disponibles
+  instalar <nombre>     instala (brave, chrome, opera, chromium, firefox, libreoffice, openoffice, o cualquier paquete)
+  quitar <nombre>       desinstala
+  mejorar               actualiza lo instalado
+  buscar <palabra>      busca programas
+  mostrar <nombre>      informacion de un programa
+  paquetes              lista lo instalado
+  limpiar               libera memoria (borra descargas)
+  pantalla              abre la pantalla grafica para programas con ventanas
+Para abrir un programa con ventana: primero  pantalla  y luego su nombre (brave, chrome, opera, libreoffice, xterm...)
+T

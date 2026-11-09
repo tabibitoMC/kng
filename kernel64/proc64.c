@@ -816,12 +816,24 @@ static u64 sys_dispatch(struct regs *r){
 }
 
 /* ---------- punto de entrada desde ring 3 (lo llama proc64.S con la CR3 del kernel) ---------- */
+/* rastro: diagnostico. 1 = muestra las llamadas que fallan (con la ruta si la tiene), 2 = muestra todas. Se activa con el comando "rastro". */
+int krastro;
+static int sc_path_arg(u64 nr){ switch(nr){ case 2: case 4: case 6: case 21: case 59: case 89: case 80: case 82: case 83: case 84: case 87: case 88: case 90: return 1; case 257: case 262: case 267: case 332: case 439: case 258: case 263: case 264: case 259: return 2; } return 0; }
+static void rastro_log(u64 nr,u64 a1,u64 a2,u64 rv,int pre){
+    char ps[80]; ps[0]=0; int pa=sc_path_arg(nr); if(pa){ if(ustr(CP,ps,sizeof ps,pa==1?a1:a2)) k_strcpy(ps,"?",sizeof ps); }
+    if(pre) kprintf("[rs %d] %lu %s ...\n",cur->pid,nr,ps);
+    else if((long)rv<0&&(long)rv>-4096) kprintf("[rs %d] %lu %s -> -%ld (a1=%lx a2=%lx)\n",cur->pid,nr,ps,-(long)rv,a1,a2);
+    else kprintf("[rs %d] %lu %s -> %ld\n",cur->pid,nr,ps,(long)rv);
+}
 void kernel_entry(struct regs *r){
     cur->frame=r;
     int from_sys=0;
     if(r->int_no==0x80){
         cur->sysnr=(int)r->rax; from_sys=1;
+        u64 nr0=r->rax,b1=r->rdi,b2=r->rsi;
+        if(krastro&&(nr0==59||krastro>1)) rastro_log(nr0,b1,b2,0,1);
         u64 rv=sys_dispatch(r);
+        if(krastro&&rv!=EXEC_DONE&&(krastro>1||((long)rv<0&&(long)rv>-4096&&nr0!=61&&nr0!=7&&nr0!=232&&nr0!=202))) rastro_log(nr0,b1,b2,rv,0);
         if(rv!=EXEC_DONE) r->rax=rv;
     } else if(r->int_no<32){
         u64 cr2=0; if(r->int_no==14) __asm__ volatile("mov %%cr2,%0":"=r"(cr2));
@@ -861,12 +873,24 @@ static FsNode *mkpath(const char *path,int want_parent_only,const char **leaf){
         cur2=c; p+=n;
     }
 }
+/* cpio "newc": cuando un archivo tiene varios nombres (enlaces duros), solo el ultimo trae los datos; los anteriores vienen vacios.
+ * Se anotan los vacios y, al llegar el que trae los datos, todos apuntan a ellos. */
+struct HlPend { u32 ino,dev; FsNode *f; };
+static struct HlPend *hl_tab; static int hl_n, hl_cap;
+static void hl_add(u32 ino,u32 dev,FsNode *f){
+    if(hl_n==hl_cap){ int nc=hl_cap?hl_cap*2:512; struct HlPend *t=kmalloc((size_t)nc*sizeof *t); if(!t) return; if(hl_tab){ memcpy(t,hl_tab,(size_t)hl_n*sizeof *t); kfree(hl_tab); } hl_tab=t; hl_cap=nc; }
+    hl_tab[hl_n].ino=ino; hl_tab[hl_n].dev=dev; hl_tab[hl_n].f=f; hl_n++;
+}
+static int hl_fill(u32 ino,u32 dev,const char *data,int fsz){
+    int k=0; for(int i=0;i<hl_n;i++){ if(hl_tab[i].ino==ino&&hl_tab[i].dev==dev){ fs_adopt(hl_tab[i].f,data,fsz); k++; } else hl_tab[i-k]=hl_tab[i]; }
+    hl_n-=k; return k;
+}
 void rootfs_load(u32 mods_n,u32 mods_addr){
-    struct mod { u32 s,e,c,pad; } *m=(struct mod*)(uintptr_t)mods_addr; int files=0, links=0; u64 bytes=0;
+    struct mod { u32 s,e,c,pad; } *m=(struct mod*)(uintptr_t)mods_addr; int files=0, links=0, hard=0; u64 bytes=0;
     for(u32 i=0;i<mods_n;i++){
         const u8 *p=(const u8*)(uintptr_t)m[i].s, *end=(const u8*)(uintptr_t)m[i].e;
         while(p+110<=end && p[0]=='0'&&p[1]=='7'&&p[2]=='0'&&p[3]=='7'&&p[4]=='0'&&p[5]=='1'){
-            u32 mode=hex8(p+14), fsz=hex8(p+54), nsz=hex8(p+94);
+            u32 mode=hex8(p+14), fsz=hex8(p+54), nsz=hex8(p+94), nlink=hex8(p+38), ino=hex8(p+6), dev=hex8(p+62)*4096u+hex8(p+70);
             const char *name=(const char*)p+110; const u8 *data=(const u8*)(((uintptr_t)p+110+nsz+3)&~3ull); p=(const u8*)(((uintptr_t)data+fsz+3)&~3ull);
             if(!k_strcmp(name,"TRAILER!!!")) break;
             while(name[0]=='.'&&name[1]=='/'){ name+=2; }
@@ -882,9 +906,12 @@ void rootfs_load(u32 mods_n,u32 mods_addr){
             const char *leaf=0; FsNode *d=mkpath(name,1,&leaf); if(!d||!leaf||k_strlen(leaf)>=FS_NAME) continue;
             FsNode *f=fs_find(d,leaf); if(f&&f->dir) continue;
             if(!f) f=fs_create(d,leaf,"",0);
-            if(f){ fs_adopt(f,(const char*)data,(int)fsz); f->sys=1; files++; bytes+=fsz; }          /* sin copiar: el archivo apunta a la memoria del modulo */
+            if(f){ f->sys=1; files++;
+                if(nlink>1&&fsz==0) hl_add(ino,dev,f);                                                  /* nombre extra de un archivo: los datos llegan despues */
+                else{ fs_adopt(f,(const char*)data,(int)fsz); bytes+=fsz; if(nlink>1) hard+=hl_fill(ino,dev,(const char*)data,(int)fsz); } }   /* sin copiar: el archivo apunta a la memoria del modulo */
         }
     }
     dev_create(); etc_defaults(); refresh_resolv();
-    kprintf("[ok] rootfs: %d archivos y %d enlaces (%lu KB) desde el modulo de arranque\n",files,links,bytes/1024);
+    kprintf("[ok] rootfs: %d archivos y %d enlaces (%lu KB, %d nombres extra) desde el modulo de arranque\n",files,links,bytes/1024,hard);
+    if(hl_tab){ kfree(hl_tab); hl_tab=0; hl_n=hl_cap=0; }
 }
