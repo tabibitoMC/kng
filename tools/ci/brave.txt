@@ -1,0 +1,6 @@
+# Brave real: instalar desde su repositorio oficial con 8 GB y ver si termina
+240|actualizar
+1700|instalar brave
+20|ejecutar /bin/ls -l /opt/brave.com/brave/brave
+20|ejecutar /usr/bin/brave-browser --version
+20|procesos
