@@ -4,6 +4,7 @@
 # Opciones: --completo  tambien instala los paquetes recomendados (ocupa mas memoria).
 [ $# -eq 0 ] && { echo "uso: instalar <programa>...   (ej: instalar brave | instalar libreoffice | instalar xterm)"; exit 1; }
 EXTRA=""
+export DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true
 APT="apt-get -y install"
 LISTAS=/var/lib/apt/lists
 poner-hora
@@ -46,7 +47,12 @@ for p in "$@"; do
 done
 if [ -n "$lista" ]; then
   echo "Instalando:$lista"
-  $APT $lista || { echo "La instalacion fallo."; exit 1; }
+  echo "(Los programas grandes, como un navegador, tardan: de 10 a 30 minutos. No cierres la ventana ni apagues la maquina.)"
+  if ! $APT $lista; then
+    echo "Algo fallo. Reparando e intentando otra vez..."
+    dpkg --configure -a; apt-get -y -f install
+    $APT $lista || { echo "La instalacion fallo."; exit 1; }
+  fi
 fi
 if [ -n "$OO" ]; then
   mkdir -p /tmp/oo && cd /tmp/oo || exit 1

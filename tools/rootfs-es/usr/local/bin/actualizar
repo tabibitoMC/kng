@@ -1,4 +1,5 @@
 #!/bin/sh
+export DEBIAN_FRONTEND=noninteractive
 # actualizar: descarga la lista de programas disponibles (equivale a "apt update")
 poner-hora
 dpkg --configure -a >/dev/null 2>&1

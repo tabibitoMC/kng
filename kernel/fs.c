@@ -63,7 +63,7 @@ void fs_adopt(FsNode *n,const char *data,int len){ drop_data(n); n->data=(char*)
 static int ensure_cap(FsNode *n,int need){        /* 'need' bytes de contenido (+1 para el cero final); copia al escribir si no es nuestro */
     if(n->shm){ if(need<=n->cap) return 0; }                   /* en un bloque compartido solo se escribe hasta su tamano */
     else if(!n->ro && need+1<=n->cap) return 0;
-    int nc=need+1; if(!n->ro&&!n->shm&&n->cap>0&&nc<n->cap*2) nc=n->cap*2; if(nc<64) nc=64;
+    int nc=need+1; if(!n->ro&&!n->shm&&n->cap>0&&nc<n->cap*2) nc=(n->cap>(64<<20))?nc+nc/4:n->cap*2; if(nc<64) nc=64;   /* archivos enormes (navegadores): crecer un 25 % y no el doble, para no necesitar dos bloques gigantes a la vez */
     char *d=kmalloc((size_t)nc); if(!d) return -1;
     if(n->size) memcpy(d,n->data,(size_t)(n->size<nc?n->size:nc));
     memset(d+n->size,0,(size_t)(nc-n->size));

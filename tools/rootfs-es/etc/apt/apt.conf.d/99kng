@@ -7,3 +7,9 @@ Acquire::Languages "none";
 Dpkg::Options { "--force-unsafe-io"; };
 Binary::apt::APT::Keep-Downloaded-Packages "false";
 DPkg::Post-Invoke { "rm -f /var/cache/apt/archives/*.deb /var/cache/apt/*.bin || true"; };
+// Reloj: las VM entregan la hora local como si fuera UTC. No rechazar repositorios "del futuro" y ajustar la hora antes de cada "update".
+Acquire::Check-Date "false";
+APT::Update::Pre-Invoke { "/usr/local/bin/poner-hora > /dev/null 2>&1 || true"; };
+// Nunca preguntar nada: una pregunta de debconf dejaria la instalacion esperando para siempre
+Dpkg::Options:: "--force-confold";
+Acquire::Retries "3";
