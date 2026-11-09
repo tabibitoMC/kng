@@ -1,0 +1,8 @@
+kernel/*.o
+kernel/*.elf
+kernel64/*.o
+kernel64/*.x64
+kernel64/*.elf
+kernel/user/*.elf
+out/
+__pycache__/

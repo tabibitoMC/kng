@@ -1,0 +1,22 @@
+name: arranque-qemu
+on: [push, workflow_dispatch]
+jobs:
+  boot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Herramientas
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 gcc gcc-multilib binutils grub-pc-bin xorriso mtools python3
+      - name: Compilar 32 y 64 bits
+        run: make -C kernel && make -C kernel64
+      - name: Arranque 32 bits (texto, serie)
+        run: |
+          timeout 20 qemu-system-i386 -kernel kernel/kng-kernel-text.elf -display none -serial file:boot32.log -m 256M -netdev user,id=n0 -device e1000,netdev=n0 || true
+          echo "=== boot32 ==="; cat boot32.log
+      - name: Arranque 64 bits (texto, serie)
+        run: |
+          timeout 20 qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -display none -serial file:boot64.log -m 256M -netdev user,id=n0 -device e1000,netdev=n0 || true
+          echo "=== boot64 ==="; cat boot64.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: logs, path: "boot*.log" }
