@@ -3,6 +3,7 @@
  * y archivos: crear, escribir 3 MB, pread/pwrite, truncar, enlaces simbolicos, renombrar, borrar con el archivo abierto, carpetas grandes, stat/statx. */
 #define _GNU_SOURCE
 #include <stdio.h>
+#include <sys/sendfile.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -138,6 +139,18 @@ static void test_files(void){
     int sfd=shm_open("/kngtest",O_RDWR|O_CREAT,0600); CHECK(sfd>=0,"shm_open"); ftruncate(sfd,4096);
     char *sm=mmap(0,4096,PROT_READ|PROT_WRITE,MAP_SHARED,sfd,0); CHECK(sm!=MAP_FAILED,"mmap compartido de /dev/shm"); sm[0]=11; pid_t c=fork();
     if(c==0){ sm[0]=22; _exit(0); } int st=0; waitpid(c,&st,0); CHECK(sm[0]==22,"shm_open: lo ve el padre"); shm_unlink("/kngtest"); munmap(sm,4096); close(sfd); close(fd);
+
+    /* sendfile y copy_file_range (las usan apt, curl y los navegadores para copiar archivos) */
+    { static char big[10000], chk[10000]; for(int i=0;i<10000;i++) big[i]=(char)('a'+i%26);
+      int a=open("/tmp/mt/sf-a",O_RDWR|O_CREAT|O_TRUNC,0644); write(a,big,10000);
+      int b=open("/tmp/mt/sf-b",O_RDWR|O_CREAT|O_TRUNC,0644); lseek(a,0,SEEK_SET);
+      ssize_t r=sendfile(b,a,NULL,10000); CHECK(r==10000,"sendfile copia 10000 bytes");
+      memset(chk,0,sizeof chk); pread(b,chk,10000,0); CHECK(!memcmp(chk,big,10000),"sendfile: el contenido copiado es igual");
+      int c2=open("/tmp/mt/sf-c",O_RDWR|O_CREAT|O_TRUNC,0644); off_t off=100; r=sendfile(c2,a,&off,500);
+      memset(chk,0,sizeof chk); pread(c2,chk,500,0); CHECK(r==500&&off==600&&!memcmp(chk,big+100,500),"sendfile con desplazamiento actualiza el offset");
+      int c3=open("/tmp/mt/sf-d",O_RDWR|O_CREAT|O_TRUNC,0644); long long io=0,oo=0; r=syscall(326,a,&io,c3,&oo,4096,0);
+      memset(chk,0,sizeof chk); pread(c3,chk,4096,0); CHECK(r==4096&&io==4096&&oo==4096&&!memcmp(chk,big,4096),"copy_file_range copia y avanza los desplazamientos");
+      close(a); close(b); close(c2); close(c3); }
 }
 int main(void){
     SAY("== memtest: memoria ==\n"); test_mem();

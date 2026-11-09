@@ -262,3 +262,36 @@ static u64 sys_utime(long dirfd,u64 path_va,u64 times,int mode,int follow){
     }
     n->mtime=(uint32_t)mt; return 0;
 }
+
+/* sendfile / copy_file_range: copia de un descriptor a otro por la memoria intermedia del nucleo */
+static u64 sys_kcopy_in(u64 fi,u64 poi,u64 fo,u64 poo,u64 len){
+    if(fi>=MAXFD||fo>=MAXFD||!CP->fd[fi].type||!CP->fd[fo].type) return RET_ERR(EBADF);
+    u64 oi=0,oo=0;
+    if(poi&&ucopy_from(CP,&oi,poi,8)) return RET_ERR(EFAULT);
+    if(poo&&ucopy_from(CP,&oo,poo,8)) return RET_ERR(EFAULT);
+    u64 tot=0;
+    while(tot<len){
+        u64 c=len-tot; if(c>sizeof kbounce) c=sizeof kbounce;
+        u64 r=poi?sys_pio(fi,KB_VA,c,oi,0):fd_read(fi,KB_VA,c);
+        if((long)r<0){ if(tot) break; return r; }
+        if(!r) break;
+        u64 w=0;
+        while(w<r){
+            u64 x=poo?sys_pio(fo,KB_VA+w,r-w,oo+w,1):fd_write(fo,KB_VA+w,r-w);
+            if((long)x<=0){ if(!tot&&!w) return x?x:RET_ERR(5); break; }
+            w+=x;
+        }
+        if(w<r&&!poi&&CP->fd[fi].type==2) CP->fd[fi].pos-=r-w;             /* lo leido y no escrito se devuelve */
+        oi+=w; oo+=w; tot+=w;
+        if(w<r) break;
+    }
+    if(poi&&ucopy_to(CP,poi,&oi,8)) return RET_ERR(EFAULT);
+    if(poo&&ucopy_to(CP,poo,&oo,8)) return RET_ERR(EFAULT);
+    return tot;
+}
+static int kb_busy;                                                     /* la memoria intermedia es una sola: una copia a la vez */
+static int w_kb(Task *t){ (void)t; return !kb_busy; }
+static u64 sys_kcopy(u64 fi,u64 poi,u64 fo,u64 poo,u64 len){
+    while(kb_busy){ if(block_fn(w_kb,0)==1) return RET_ERR(EINTR); }
+    kb_busy=1; u64 r=sys_kcopy_in(fi,poi,fo,poo,len); kb_busy=0; return r;
+}

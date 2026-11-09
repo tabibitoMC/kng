@@ -153,8 +153,11 @@ static u8 *uptr(Proc *pr,u64 va){
     }
     return 0;
 }
-static int ucopy_to(Proc *pr,u64 va,const void *src,u64 n){ const u8 *s=src; while(n){ u8 *d=uptr(pr,va); if(!d) return -1; u64 c=4096-(va&0xFFF); if(c>n) c=n; memcpy(d,s,c); va+=c; s+=c; n-=c; } return 0; }
-static int ucopy_from(Proc *pr,void *dst,u64 va,u64 n){ u8 *o=dst; while(n){ u8 *s=uptr(pr,va); if(!s) return -1; u64 c=4096-(va&0xFFF); if(c>n) c=n; memcpy(o,s,c); va+=c; o+=c; n-=c; } return 0; }
+/* memoria intermedia del nucleo con una direccion 'virtual' propia: permite a sendfile/copy_file_range reutilizar fd_read/fd_write sin pasar por el usuario */
+#define KB_VA 0xFFFF900000000000ull
+static u8 kbounce[65536];
+static int ucopy_to(Proc *pr,u64 va,const void *src,u64 n){ const u8 *s=src; if(va>=KB_VA&&va-KB_VA<=sizeof kbounce&&n<=sizeof kbounce-(va-KB_VA)){ memcpy(kbounce+(va-KB_VA),src,n); return 0; } while(n){ u8 *d=uptr(pr,va); if(!d) return -1; u64 c=4096-(va&0xFFF); if(c>n) c=n; memcpy(d,s,c); va+=c; s+=c; n-=c; } return 0; }
+static int ucopy_from(Proc *pr,void *dst,u64 va,u64 n){ u8 *o=dst; if(va>=KB_VA&&va-KB_VA<=sizeof kbounce&&n<=sizeof kbounce-(va-KB_VA)){ memcpy(dst,kbounce+(va-KB_VA),n); return 0; } while(n){ u8 *s=uptr(pr,va); if(!s) return -1; u64 c=4096-(va&0xFFF); if(c>n) c=n; memcpy(o,s,c); va+=c; o+=c; n-=c; } return 0; }
 static int umap_range(Proc *pr,u64 va,u64 len){ for(u64 p=va&~0xFFFull;p<va+len;p+=4096) if(umap(pr,p)) return -1; return 0; }
 static int ustr(Proc *pr,char *out,int max,u64 va){ for(int i=0;i<max-1;i++){ u8 *c=uptr(pr,va+(u64)i); if(!c) return -1; out[i]=(char)*c; if(!*c) return 0; } out[max-1]=0; return 0; }
 
@@ -842,6 +845,8 @@ static u64 sys_dispatch(struct regs *r){
     case 302: return a4?sys_getrlimit_k(a2,a4):0;
     case 318: { static u64 rs=0x9E3779B97F4A7C15ull; u8 b[256]; u64 n=a2>256?256:a2; rs^=kticks(); for(u64 i=0;i<n;i++){ rs^=rs<<13; rs^=rs>>7; rs^=rs<<17; b[i]=(u8)rs; } return ucopy_to(CP,a1,b,n)?RET_ERR(EFAULT):n; }
     case 334: return RET_ERR(ENOSYS);
+    case 40:  return sys_kcopy(a2,a3,a1,0,a4);                       /* sendfile(out,in,*off,count) */
+    case 326: return sys_kcopy(a1,a2,a3,a4,a5);                      /* copy_file_range(in,*off_in,out,*off_out,len,flags) */
     case 97:  return sys_getrlimit_k(a1,a2);
     case 160: return 0;                                             /* setrlimit */
     case 201: { u64 t=wall_sec(); if(a1&&ucopy_to(CP,a1,&t,8)) return RET_ERR(EFAULT); return t; }
