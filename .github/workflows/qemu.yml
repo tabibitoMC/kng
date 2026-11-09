@@ -28,6 +28,15 @@ jobs:
           grep -q "argv\[1\]=x" proc64.log && echo "PRUEBA static no-PIE (direccion baja 0x400000): OK" || echo "PRUEBA static no-PIE: FALLO"
           grep -q "argv\[1\]=y" proc64.log && echo "PRUEBA dinamico (ld.so + libc.so.6): OK" || echo "PRUEBA dinamico: FALLO"
           echo "multi 'TODO OK' veces: $(grep -c 'TODO OK' proc64.log) (esperado 3: estatico, static-pie, dinamico)"
+      - name: Red, senales y eventos en programas de usuario (64 bits)
+        run: |
+          python3 tools/mkrootfs.py rootfs.cpio
+          python3 tools/ci_server.py 18080 18081 > servidor.log 2>&1 &
+          sleep 1
+          ( sleep 8; echo "red"; sleep 1; echo "ejecutar /bin/nettest 18080 18081"; sleep 75; echo "procesos"; sleep 2 ) | timeout 140 qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd rootfs.cpio -display none -serial stdio -m 512M -netdev user,id=n0 -device e1000,netdev=n0 > red64.log 2>&1 || true
+          echo "=== red64 ==="; cat red64.log
+          echo "=== servidor ==="; cat servidor.log
+          grep -q "nettest resultado.*TODO OK" red64.log && echo "PRUEBA red+senales+eventos: OK" || echo "PRUEBA red+senales+eventos: FALLO"
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: logs, path: "*.log" }

@@ -18,4 +18,11 @@ int         http_status(void);
 const char *http_error(void);
 const char *http_final_url(void);        /* URL final tras redirecciones */
 void        http_cancel(void);
+
+/* Para la capa de sockets de los programas de usuario (sock.c) */
+int      net_ip_send(uint8_t proto,uint32_t dst,const uint8_t *pl,int plen);       /* 0/1 ok (1: esperando ARP), <0 error */
+int      net_udp_send(uint32_t dst,uint16_t sp,uint16_t dp,const uint8_t *d,int n);
+uint32_t net_my_ip(void); uint32_t net_dns_addr(void); uint32_t net_gw_addr(void);
+extern void (*sock_tick_hook)(void);
+extern int (*sock_ip_hook)(uint8_t proto,uint32_t src,uint32_t dst,const uint8_t *p,int n);   /* devuelve 1 si el paquete es de un socket */
 #endif

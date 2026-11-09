@@ -16,6 +16,8 @@ try:
     subprocess.check_call(['gcc', '-O2', '-pthread', '-static-pie', '-o', tmp + '/bin/multi-pie', msrc])
     subprocess.check_call(['gcc', '-O2', '-pthread', '-static', '-no-pie', '-o', tmp + '/bin/multi-static', msrc])
     subprocess.check_call(['gcc', '-O2', '-pthread', '-o', tmp + '/bin/multi-dyn', msrc])
+    nsrc = os.path.join(raiz, 'kernel64', 'user', 'nettest.c')
+    subprocess.check_call(['gcc', '-O2', '-o', tmp + '/bin/nettest', nsrc])
     ldd = subprocess.check_output(['ldd', tmp + '/bin/hola-dyn'], text=True)
     ld = libc = None
     for l in ldd.splitlines():

@@ -3,7 +3,7 @@ CC      = gcc
 K       = ../kernel
 KFLAGS  = -m64 -std=gnu11 -O2 -ffreestanding -fno-pie -no-pie -mcmodel=small -mno-red-zone -fno-stack-protector -fno-asynchronous-unwind-tables -fno-builtin -fno-tree-loop-distribute-patterns -mgeneral-regs-only -Wall -Wextra -nostdlib -I$(K) -DKNG_ARCH='"x86_64, 64 bits"'
 LDFLAGS = -m64 -T linker64.ld -nostdlib -static -no-pie -Wl,-z,noexecstack -Wl,--build-id=none -Wl,-z,max-page-size=4096
-OBJS    = kernel64.o proc64.o proc64s.o blob64.o gfx.o fs.o html.o gui.o net.o disk.o kbd.o
+OBJS    = kernel64.o proc64.o proc64s.o sock.o blob64.o gfx.o fs.o html.o gui.o net.o disk.o kbd.o
 
 UFLAGS = -m64 -O2 -ffreestanding -fPIE -pie -nostdlib -fno-stack-protector -Wl,-z,max-page-size=4096 -Wl,--build-id=none -Wl,-e,_start -Wl,--no-dynamic-linker
 
@@ -29,6 +29,8 @@ blob64.o: blob64.S user/hola.elf
 proc64s.o: proc64.S
 	$(CC) -m64 -c $< -o $@
 proc64.o: proc64.c $(K)/kng.h $(K)/fs.h
+	$(CC) $(KFLAGS) -c $< -o $@
+sock.o: sock.c sock.h $(K)/net.h $(K)/kng.h
 	$(CC) $(KFLAGS) -c $< -o $@
 kernel64.o: kernel64.c $(K)/kng.h $(K)/gui.h $(K)/net.h
 	$(CC) $(KFLAGS) -c $< -o $@

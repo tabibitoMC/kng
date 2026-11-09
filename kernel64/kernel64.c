@@ -258,6 +258,7 @@ void k_write_console(const char *s,int n){ for(int i=0;i<n;i++) putc(s[i]); }
 uint32_t kticks(void){ return ticks; }
 int kgetc(void){ return getc_nb(); }
 void kshell_exec(char *l){ if(net_cmd(l)) return; run(l); }
+void kheap_info(uint64_t *used,uint64_t *freeb){ uint64_t m; heap_stats(used,freeb,&m); }
 uint32_t kram_kb(void){ return ram_kb>0xFFFFFFFFull?0xFFFFFFFFu:(uint32_t)ram_kb; }
 extern uint64_t pd[2048];
 static void fb_wc(uint32_t addr,uint32_t bytes){      /* framebuffer en write-combining (PAT); ver kernel/kernel.c */

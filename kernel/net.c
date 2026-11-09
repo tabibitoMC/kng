@@ -643,6 +643,7 @@ static void http_step(void){
 
 /* ---------- recepcion ---------- */
 static u8 rxf[2048];
+int (*sock_ip_hook)(u8 proto,u32 src,u32 dst,const u8 *p,int n);
 static void ip_in(const u8 *p,int n){
     if(n<20 || (p[0]>>4)!=4) return;
     int ihl=(p[0]&15)*4, tl=rd16(p+2);
@@ -652,6 +653,7 @@ static void ip_in(const u8 *p,int n){
     u32 src=rd32(p+12), dst=rd32(p+16);
     if(my_ip && dst!=my_ip && dst!=0xFFFFFFFFu && !(mask && dst==((my_ip&mask)|~mask))) return;
     const u8 *q=p+ihl; int qn=tl-ihl;
+    if(sock_ip_hook && (p[9]==6||p[9]==17) && sock_ip_hook(p[9],src,dst,q,qn)) return;   /* sockets de programas de usuario (sock.c) */
     switch(p[9]){
     case 1: icmp_in(src,q,qn); break;
     case 6: tcp_in(src,q,qn); break;
@@ -716,6 +718,7 @@ int net_init(void){
     return -1;
 #endif
 }
+void (*sock_tick_hook)(void);
 void net_poll(void){
     if(!nic) return;
     int cnt=0;
@@ -730,6 +733,7 @@ void net_poll(void){
         if(++pend_try>3) pend_len=0; else { arp_request(pend_ip); pend_t=now; }
     }
     dhcp_tick(); dns_tick(); tcp_tick(); http_step(); ping_step(); dns_job(); wget_step();
+    if(sock_tick_hook) sock_tick_hook();
 }
 
 /* ---------- informacion y comandos ---------- */
@@ -796,3 +800,10 @@ int net_cmd(char *l){
     }
     return 0;
 }
+
+/* ---------- servicios para la capa de sockets (sock.c) ---------- */
+int net_ip_send(uint8_t proto,uint32_t dst,const uint8_t *pl,int plen){ return ip_out(proto,dst,pl,plen); }
+int net_udp_send(uint32_t dst,uint16_t sp,uint16_t dp,const uint8_t *d,int n){ return udp_out(dst,sp,dp,d,n); }
+uint32_t net_my_ip(void){ return my_ip; }
+uint32_t net_dns_addr(void){ return dns_ip; }
+uint32_t net_gw_addr(void){ return gw; }

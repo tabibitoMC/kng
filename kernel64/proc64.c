@@ -11,6 +11,8 @@
 #include <stddef.h>
 #include "kng.h"
 #include "fs.h"
+#include "sock.h"
+#include "net.h"
 
 typedef uint64_t u64; typedef uint32_t u32; typedef uint16_t u16; typedef uint8_t u8;
 void kprintf(const char *f,...);
@@ -47,6 +49,7 @@ struct __attribute__((packed)) gdtr { u16 lim; u64 base; };
 static inline void wrmsr(u32 m,u64 v){ __asm__ volatile("wrmsr"::"c"(m),"a"((u32)v),"d"((u32)(v>>32)):"memory"); }
 static inline u64 rdmsr(u32 m){ u32 a,d; __asm__ volatile("rdmsr":"=a"(a),"=d"(d):"c"(m)); return ((u64)d<<32)|a; }
 static int proc_ready;
+static void dev_create(void);
 
 /* ---------- estructuras ---------- */
 #define SLAB_PAGES 64
@@ -55,17 +58,33 @@ static int proc_ready;
 #define MAXT  64
 #define KSTK  32768
 struct Pipe { u8 buf[4096]; int r,w,count,readers,writers; };
-typedef struct { u8 type; FsNode *node; u64 pos; int flags; struct Pipe *pipe; } FD;      /* 0 libre, 1 consola, 2 archivo, 3 pipe (lectura), 4 pipe (escritura) */
+/* Objetos del kernel que se ven como descriptores (eventfd, epoll, timerfd, archivos generados como /proc) */
+#define EP_MAX 64
+typedef struct KObj {
+    int refs, kind, flags; u64 cnt; u64 t_next, t_int;
+    char *data; int size;
+    int nw; struct { int fd; u32 ev; u64 data; } w[EP_MAX];
+} KObj;
+typedef struct { u8 type, cloexec; FsNode *node; u64 pos; int flags; struct Pipe *pipe; int aux; KObj *obj; u32 tmo_r, tmo_s; } FD;
+/* tipos: 0 libre, 1 consola, 2 archivo, 3 pipe (lectura), 4 pipe (escritura), 5 socket (aux = indice), 6 eventfd, 7 epoll, 8 timerfd,
+ *        10 dispositivo (aux = numero), 11 archivo generado (obj->data) */
+struct SigAct { u64 h, flags, restorer, mask; };
 typedef struct Proc {
     u64 *pml4; void *slab_raw[SLAB_MAX]; u64 slab_base[SLAB_MAX]; int slab_n, slab_used;
-    u64 brk, brk0, mmap_next; FD fd[MAXFD]; int nthreads, pid; u64 sighand[65]; char cwd[96];
+    u64 brk, brk0, mmap_next; FD fd[MAXFD]; int nthreads, pid; struct SigAct sa[65]; char cwd[96]; char exe[96];
+    u64 alarm_at, alarm_int; u32 umask; int pgid;
 } Proc;
-enum { T_FREE, T_READY, T_SLEEP, T_WAIT, T_READ, T_FUTEX, T_PIPE, T_ZOMBIE };
+enum { T_FREE, T_READY, T_SLEEP, T_WAIT, T_READ, T_FUTEX, T_PIPE, T_ZOMBIE, T_FN };
 typedef struct Task {
     int tid, pid, ppid, state, leader, killed, exit_code, wait_pid, bg, fg, timedout, pipe_fd; Proc *pr; u8 *kstk; u64 ksp; struct regs *frame;
     u64 wake_at, fut_key, clear_tid, fs_base; char name[24];
+    u64 sigpend, sigmask, sigsaved; int has_saved, sysnr, in_sig; u64 alt_sp, alt_size;
+    int (*wait_fn)(struct Task*); int wa_fd, wa_mask, wa_n; u64 wa_p1, wa_p2, wa_p3;
+    u8 fx[512] __attribute__((aligned(16)));
 } Task;
 static Task tasks[MAXT]; static Task task0; static Task *cur=&task0; static int next_tid=1;
+#define INTR() (cur->killed || (cur->sigpend&~cur->sigmask))
+static void sig_queue_proc(Proc *pr,int sig);
 static void (*idle_hook)(void);
 void proc_set_idle(void (*f)(void)){ idle_hook=f; }
 
@@ -86,6 +105,7 @@ int proc_init(void){
     wrmsr(0xC0000084,0x4700);
     u64 cr3; __asm__ volatile("mov %%cr3,%0":"=r"(cr3)); kcr3=cr3;
     task0.state=T_READY; task0.leader=1; k_strcpy(task0.name,"kernel",sizeof task0.name);
+    sock_init(); dev_create();
     proc_ready=1; return 0;
 }
 
@@ -141,6 +161,7 @@ static Task *task_alloc(void){
     for(int i=0;i<MAXT;i++) if(tasks[i].state==T_FREE){
         Task *t=&tasks[i]; u8 *ks=t->kstk; memset(t,0,sizeof *t); t->kstk=ks;
         if(!t->kstk){ t->kstk=kmalloc(KSTK); if(!t->kstk) return 0; }
+        t->fx[0]=0x7F; t->fx[1]=0x03; t->fx[24]=0x80; t->fx[25]=0x1F;          /* FCW=0x37F, MXCSR=0x1F80 */
         t->tid=next_tid++; return t; }
     return 0;
 }
@@ -148,11 +169,14 @@ static void task_prepare(Task *t,const struct regs *fr){      /* pila de kernel:
     u8 *top=t->kstk+KSTK; struct regs *f=(struct regs*)(top-sizeof(struct regs)); *f=*fr; t->frame=f;
     u64 *sp=(u64*)f; *--sp=(u64)(uintptr_t)task_start; for(int i=0;i<6;i++) *--sp=0; t->ksp=(u64)(uintptr_t)sp;
 }
+static void obj_unref(KObj *o){ if(o&&--o->refs<=0){ if(o->data) kfree(o->data); kfree(o); } }
 static void fd_close(FD *f){
     if(f->type==3||f->type==4){ struct Pipe *p=f->pipe; if(f->type==3) p->readers--; else p->writers--; if(p->readers<=0&&p->writers<=0) kfree(p); }
+    else if(f->type==5) sock_unref(f->aux);
+    else if(f->type==6||f->type==7||f->type==8||f->type==11) obj_unref(f->obj);
     memset(f,0,sizeof *f);
 }
-static void fd_dup_into(FD *d,const FD *s){ *d=*s; if(s->type==3) s->pipe->readers++; else if(s->type==4) s->pipe->writers++; }
+static void fd_dup_into(FD *d,const FD *s){ *d=*s; d->cloexec=0; if(s->type==3) s->pipe->readers++; else if(s->type==4) s->pipe->writers++; else if(s->type==5) sock_ref(s->aux); else if(s->obj&&(s->type==6||s->type==7||s->type==8||s->type==11)) s->obj->refs++; }
 
 static u8 inl[256]; static int inl_n, inl_r, inl_ready;
 static void stdin_pump(void){
@@ -170,17 +194,21 @@ static int pipe_ready(Task *t){
 static void poll_wakeups(void){
     u32 now=kticks(); int any_read=0;
     for(int i=0;i<MAXT;i++){ Task *t=&tasks[i];
-        if(t->state==T_FREE||t->state==T_READY) continue;
+        if(t->state==T_FREE) continue;
+        if(t->leader&&t->pr&&t->pr->alarm_at&&t->state!=T_ZOMBIE&&(int)(now-(u32)t->pr->alarm_at)>=0){
+            t->pr->alarm_at=t->pr->alarm_int?(u64)(u32)(now+(u32)t->pr->alarm_int):0; sig_queue_proc(t->pr,14); }
+        if(t->state==T_READY) continue;
         if(t->state==T_ZOMBIE){
             if(t!=cur&&!t->leader) t->state=T_FREE;                       /* hilo terminado: su hueco se reutiliza */
             else if(t!=cur&&t->leader&&t->bg){ kprintf("[proceso %d termino con codigo %d]\n",t->pid,t->exit_code); t->state=T_FREE; }
             else if(t!=cur&&t->leader&&!t->fg&&t->ppid==0) t->state=T_FREE;      /* huerfano ya terminado */
             continue; }
         if(t->state==T_READ) any_read=1;
-        if(t->killed){ t->state=T_READY; continue; }
+        if(t->killed||(t->sigpend&~t->sigmask)){ t->state=T_READY; continue; }
         if(t->state==T_SLEEP&&(int)(now-(u32)t->wake_at)>=0) t->state=T_READY;
         else if(t->state==T_FUTEX&&t->wake_at&&(int)(now-(u32)t->wake_at)>=0){ t->wake_at=0; t->fut_key=0; t->timedout=1; t->state=T_READY; }
         else if(t->state==T_PIPE&&pipe_ready(t)) t->state=T_READY;
+        else if(t->state==T_FN){ if(t->wait_fn(t)) t->state=T_READY; else if(t->wake_at&&(int)(now-(u32)t->wake_at)>=0){ t->timedout=1; t->state=T_READY; } }
         else if(t->state==T_WAIT){
             for(int j=0;j<MAXT;j++){ Task *c=&tasks[j]; if(c->state==T_ZOMBIE&&c->leader&&c->ppid==t->pid&&(t->wait_pid<=0||c->pid==t->wait_pid)){ t->state=T_READY; break; } }
         }
@@ -195,14 +223,23 @@ static Task *pick_next(void){                    /* turnos: tasks[0..MAXT-1] y l
 static int any_ready_user(void){ for(int i=0;i<MAXT;i++) if(tasks[i].state==T_READY) return 1; return 0; }
 static void run_task(Task *n){
     if(n==cur) return;
-    Task *p=cur; if(p->pr) p->fs_base=rdmsr(0xC0000100);
+    Task *p=cur; if(p->pr){ p->fs_base=rdmsr(0xC0000100); __asm__ volatile("fxsave %0":"=m"(*(u8(*)[512])p->fx)); }
     cur=n;
     if(n->kstk){ cur_ktop=(u64)(uintptr_t)(n->kstk+KSTK); }
-    if(n->pr){ ucr3=(u64)(uintptr_t)n->pr->pml4; wrmsr(0xC0000100,n->fs_base); }
+    if(n->pr){ ucr3=(u64)(uintptr_t)n->pr->pml4; wrmsr(0xC0000100,n->fs_base); __asm__ volatile("fxrstor %0"::"m"(*(u8(*)[512])n->fx)); }
     switch_to(&p->ksp,n->ksp);
 }
 static void schedule(void){ poll_wakeups(); run_task(pick_next()); }
-static void block(int state){ cur->state=state; schedule(); }
+static int block(int state){ cur->state=state; schedule(); return INTR()!=0; }
+static int w_never(Task *t){ (void)t; return 0; }
+/* espera hasta que se cumpla fn(tarea) o pasen 'tmo' ticks (0 = sin limite). 0 listo, 1 interrumpido por senal, 2 tiempo agotado */
+static int block_fn(int (*fn)(Task*),u32 tmo){
+    cur->wait_fn=fn; cur->timedout=0; cur->wake_at=tmo?(u64)(kticks()+tmo):0; if(tmo&&!cur->wake_at) cur->wake_at=1;
+    block(T_FN);
+    cur->wake_at=0;
+    if(cur->timedout){ cur->timedout=0; return 2; }
+    return INTR()?1:0;
+}
 void proc_pump(void){ if(!proc_ready) return; poll_wakeups(); if(any_ready_user()) schedule(); }
 
 /* ---------- salida de procesos ---------- */
@@ -226,6 +263,7 @@ static void do_exit_group(int code){
     thread_exit_cleanup(me);
     for(int i=0;i<MAXT;i++){ Task *t=&tasks[i]; if(t!=me&&t->pr==pr&&t->state!=T_FREE&&t->state!=T_ZOMBIE){ thread_exit_cleanup(t); if(t->leader) t->exit_code=code; t->state=T_ZOMBIE; } }
     for(int i=0;i<MAXT;i++) if(tasks[i].state!=T_FREE&&tasks[i].ppid==pid&&tasks[i].leader){ tasks[i].ppid=0; if(tasks[i].state==T_ZOMBIE&&!tasks[i].bg) tasks[i].state=T_FREE; }
+    if(me->leader&&me->ppid) for(int i=0;i<MAXT;i++){ Task *pt=&tasks[i]; if(pt->state!=T_FREE&&pt->state!=T_ZOMBIE&&pt->leader&&pt->pid==me->ppid&&pt->pr&&pt->pr->sa[17].h>1){ sig_queue_proc(pt->pr,17); break; } }
     proc_teardown(pr);
     me->exit_code=code; me->state=T_ZOMBIE;
     schedule();
@@ -313,6 +351,7 @@ static int load_image(Proc *pr,const char *path,int argc,char **argv,int envc,ch
         if(elf_map(pr,(u8*)f->data,(u64)f->size,INTERP_BASE,&in,0)) return -ENOEXEC;
         *entry=in.entry; at_base=in.base;
     }
+    k_strcpy(pr->exe,path,sizeof pr->exe);
     if(!envp){ envp=(char**)DEFENV; envc=4; }
     if(build_stack(pr,sp,argc,argv,envc,envp,path,m.entry,m.phdr,m.phnum,at_base)) return -ENOMEM;
     pr->brk0=pr->brk=(m.end+4095+65536)&~4095ull; pr->mmap_next=MMAP_BASE;
@@ -346,7 +385,7 @@ int proc_exec(char *path,int argc,char **argv,int bg){
 }
 void proc_ps(void){
     kprintf("  PID  PPID  ESTADO     NOMBRE\n");
-    static const char *st[]={"libre","listo","dormido","espera","entrada","futex","pipe","zombie"};
+    static const char *st[]={"libre","listo","dormido","espera","entrada","futex","pipe","zombie","e/s"};
     for(int i=0;i<MAXT;i++) if(tasks[i].state!=T_FREE) kprintf("  %-4d %-5d %-10s %s%s\n",tasks[i].tid,tasks[i].ppid,st[tasks[i].state],tasks[i].name,tasks[i].leader?"":" (hilo)");
 }
 int proc_kill(int pid,int sig){
@@ -371,73 +410,122 @@ static FsNode *resolve_parent(const char *path,char *leaf){      /* carpeta cont
     if(s2<=1) full[1]=0; else full[s2-1]=0;
     return fs_resolve(fs_root(),full);
 }
+#include "sys_sig.inc"
+#include "sys_net.inc"
+#include "sys_proc.inc"
+static void etc_defaults(void){
+    FsNode *root=fs_root(), *etc=root?fs_find(root,"etc"):0; if(!etc) return;
+    static const struct { const char *n,*d; } L[]={{"hosts","127.0.0.1 localhost\n10.0.2.15 kng\n"},{"hostname","kng\n"},{"passwd","root:x:0:0:root:/root:/bin/sh\nnobody:x:65534:65534:nobody:/:/bin/false\n"},
+        {"group","root:x:0:\nnogroup:x:65534:\n"},{"nsswitch.conf","passwd: files\ngroup: files\nhosts: files dns\n"},{"os-release","NAME=\"Koenigreich OS\"\nID=kng\nPRETTY_NAME=\"Koenigreich OS (kng)\"\n"},{"machine-id","6b6e6700000040008000000000000001\n"}};
+    for(unsigned i=0;i<sizeof L/sizeof *L;i++) if(!fs_find(etc,L[i].n)){ FsNode *n=fs_create(etc,L[i].n,L[i].d,k_strlen(L[i].d)); if(n) n->sys=1; }
+}
+static void refresh_resolv(void){
+    FsNode *etc=fs_find(fs_root(),"etc"); if(!etc) return;
+    u32 d=net_dns_addr(); if(!d) d=(10u<<24)|(0<<16)|(2<<8)|3;
+    char b[64]; int n=0; const char *h="nameserver "; while(*h) b[n++]=*h++;
+    for(int i=0;i<4;i++){ u32 v=(d>>(24-8*i))&255; char t[4]; int k=0; if(!v) t[k++]='0'; while(v){ t[k++]=(char)('0'+v%10); v/=10; } while(k) b[n++]=t[--k]; if(i<3) b[n++]='.'; }
+    b[n++]='\n'; b[n]=0;
+    FsNode *f=fs_create(etc,"resolv.conf",b,n); if(f) f->sys=1;
+}
 static u64 sys_open(u64 path_va,u64 flags){
     char path[160]; if(ustr(CP,path,sizeof path,path_va)) return RET_ERR(EFAULT);
+    if(!k_strcmp(path,"/etc/resolv.conf")) refresh_resolv();
     FsNode *n=resolve_path(path);
+    if(!n){ u64 v=virt_open(path,flags); if(v!=RET_ERR(ENOENT)) return v; }
     if(!n&&(flags&0x40)){ char leaf[32]; FsNode *d=resolve_parent(path,leaf); if(d&&d->dir) n=fs_create(d,leaf,"",0); }
     if(!n) return RET_ERR(ENOENT);
-    if((flags&0x200)&&!n->dir) fs_write(n,"",0);
+    if(n->dev==8) return RET_ERR(6);                                 /* archivo de socket AF_UNIX: se abre con connect(), no con open() */
     int f=fd_alloc(CP,3); if(f<0) return RET_ERR(24);
-    CP->fd[f].type=2; CP->fd[f].node=n; CP->fd[f].pos=0; CP->fd[f].flags=(int)flags; return (u64)f;
+    FD *fp=&CP->fd[f]; memset(fp,0,sizeof *fp); fp->cloexec=(flags&0x80000)?1:0; fp->flags=(int)flags;
+    if(n->dev){ fp->type=10; fp->aux=n->dev; return (u64)f; }
+    if((flags&0x200)&&!n->dir) fs_write(n,"",0);
+    fp->type=2; fp->node=n; fp->pos=0; return (u64)f;
+}
+static u64 console_read(u64 buf,u64 n,int nb){
+    if(!n) return 0;
+    for(;;){
+        stdin_pump();
+        if(inl_ready&&inl_r<inl_n){ u64 k=(u64)(inl_n-inl_r); if(k>n) k=n; if(ucopy_to(CP,buf,inl+inl_r,k)) return RET_ERR(EFAULT); inl_r+=(int)k; if(inl_r>=inl_n){ inl_ready=0; inl_n=inl_r=0; } return k; }
+        if(nb) return RET_ERR(EAGAIN);
+        if(INTR()) return RET_ERR(EINTR);
+        block(T_READ);
+    }
 }
 static u64 fd_read(u64 fdn,u64 buf,u64 n){
     if(fdn>=MAXFD||!CP->fd[fdn].type) return RET_ERR(EBADF);
     FD *f=&CP->fd[fdn];
-    if(f->type==1){
-        if(fdn!=0) return RET_ERR(EBADF);
-        if(!n) return 0;
-        for(;;){
-            if(inl_ready&&inl_r<inl_n){ u64 k=(u64)(inl_n-inl_r); if(k>n) k=n; if(ucopy_to(CP,buf,inl+inl_r,k)) return RET_ERR(EFAULT); inl_r+=(int)k; if(inl_r>=inl_n){ inl_ready=0; inl_n=inl_r=0; } return k; }
-            if(cur->killed) return RET_ERR(EINTR);
-            block(T_READ);
-        }
-    }
-    if(f->type==2){
+    switch(f->type){
+    case 1: if(fdn!=0) return RET_ERR(EBADF); return console_read(buf,n,(f->flags&0x800)!=0);
+    case 2: {
         FsNode *nd=f->node; if(nd->dir) return RET_ERR(EISDIR);
         u64 left=f->pos<(u64)nd->size?(u64)nd->size-f->pos:0; if(n>left) n=left;
         if(n&&ucopy_to(CP,buf,nd->data+f->pos,n)) return RET_ERR(EFAULT);
-        f->pos+=n; return n;
-    }
-    if(f->type==3){
+        f->pos+=n; return n; }
+    case 3: {
         struct Pipe *p=f->pipe;
         for(;;){
             if(p->count>0){ u64 k=0; u8 tmp[512]; while(k<n&&p->count>0){ u64 c=n-k; if(c>sizeof tmp) c=sizeof tmp; u64 j=0; while(j<c&&p->count>0){ tmp[j++]=p->buf[p->r]; p->r=(p->r+1)%4096; p->count--; }
                     if(ucopy_to(CP,buf+k,tmp,j)){ return RET_ERR(EFAULT); }
                     k+=j; } return k; }
             if(p->writers<=0) return 0;
-            if(cur->killed) return RET_ERR(EINTR);
+            if(f->flags&0x800) return RET_ERR(EAGAIN);
+            if(INTR()) return RET_ERR(EINTR);
             cur->pipe_fd=(int)fdn; block(T_PIPE);
-        }
+        } }
+    case 5: return sock_recv_fd(fdn,buf,n,0,0,0);
+    case 6: {
+        if(n<8) return RET_ERR(EINVAL);
+        KObj *o=f->obj;
+        for(;;){
+            if(o->cnt>0){ u64 v=(o->flags&1)?1:o->cnt; o->cnt-=v; return ucopy_to(CP,buf,&v,8)?RET_ERR(EFAULT):8; }
+            if(f->flags&0x800) return RET_ERR(EAGAIN);
+            if(INTR()) return RET_ERR(EINTR);
+            if(wait_fd((int)fdn,PIN,0)==1) return RET_ERR(EINTR);
+        } }
+    case 8: {
+        if(n<8) return RET_ERR(EINVAL);
+        KObj *o=f->obj;
+        for(;;){
+            tfd_update(o);
+            if(o->cnt>0){ u64 v=o->cnt; o->cnt=0; return ucopy_to(CP,buf,&v,8)?RET_ERR(EFAULT):8; }
+            if(f->flags&0x800) return RET_ERR(EAGAIN);
+            if(INTR()) return RET_ERR(EINTR);
+            if(wait_fd((int)fdn,PIN,0)==1) return RET_ERR(EINTR);
+        } }
+    case 10: return dev_read(f,buf,n);
+    case 11: { KObj *o=f->obj; u64 left=f->pos<(u64)o->size?(u64)o->size-f->pos:0; if(n>left) n=left; if(n&&ucopy_to(CP,buf,o->data+f->pos,n)) return RET_ERR(EFAULT); f->pos+=n; return n; }
     }
     return RET_ERR(EBADF);
 }
 static u64 fd_write(u64 fdn,u64 buf,u64 n){
     if(fdn>=MAXFD||!CP->fd[fdn].type) return RET_ERR(EBADF);
     FD *f=&CP->fd[fdn]; u8 tmp[1024]; u64 done=0;
-    if(f->type==1){
+    switch(f->type){
+    case 1:
         if(fdn==0) return RET_ERR(EBADF);
         while(done<n){ u64 c=n-done; if(c>sizeof tmp) c=sizeof tmp; if(ucopy_from(CP,tmp,buf+done,c)) return done?done:RET_ERR(EFAULT); k_write_console((char*)tmp,(int)c); done+=c; }
         return n;
-    }
-    if(f->type==2){
+    case 2: {
         FsNode *nd=f->node; if(nd->dir) return RET_ERR(EISDIR);
         if(f->flags&0x400) f->pos=(u64)nd->size;
         u64 end=f->pos+n; u64 nsz=end>(u64)nd->size?end:(u64)nd->size; if(nsz>(64ull<<20)) return RET_ERR(ENOMEM);
         char *nb=kmalloc(nsz?nsz:1); if(!nb) return RET_ERR(ENOMEM);
         memset(nb,0,nsz); if(nd->size) memcpy(nb,nd->data,(size_t)nd->size);
         if(n&&ucopy_from(CP,nb+f->pos,buf,n)){ kfree(nb); return RET_ERR(EFAULT); }
-        fs_write(nd,nb,(int)nsz); kfree(nb); f->pos=end; return n;
-    }
-    if(f->type==4){
+        fs_write(nd,nb,(int)nsz); kfree(nb); f->pos=end; return n; }
+    case 4: {
         struct Pipe *p=f->pipe;
         while(done<n){
-            if(p->readers<=0) return done?done:RET_ERR(EPIPE);
-            if(p->count>=4096){ if(cur->killed) return done?done:RET_ERR(EINTR); cur->pipe_fd=(int)fdn; block(T_PIPE); continue; }
+            if(p->readers<=0){ sig_self(13); return done?done:RET_ERR(EPIPE); }
+            if(p->count>=4096){ if(f->flags&0x800) return done?done:RET_ERR(EAGAIN); if(INTR()) return done?done:RET_ERR(EINTR); cur->pipe_fd=(int)fdn; block(T_PIPE); continue; }
             u64 c=n-done; if(c>sizeof tmp) c=sizeof tmp; if(c>(u64)(4096-p->count)) c=(u64)(4096-p->count);
             if(ucopy_from(CP,tmp,buf+done,c)) return done?done:RET_ERR(EFAULT);
             for(u64 j=0;j<c;j++){ p->buf[p->w]=tmp[j]; p->w=(p->w+1)%4096; p->count++; } done+=c;
         }
-        return n;
+        return n; }
+    case 5: return sock_send_fd(fdn,buf,n,0,0,0,0,0,0);
+    case 6: { if(n<8) return RET_ERR(EINVAL); u64 v; if(ucopy_from(CP,&v,buf,8)) return RET_ERR(EFAULT); if(v==~0ull) return RET_ERR(EINVAL); f->obj->cnt+=v; return 8; }
+    case 10: return dev_write(f,buf,n);
     }
     return RET_ERR(EBADF);
 }
@@ -472,11 +560,12 @@ static u64 sys_clone(struct regs *r,u64 flags,u64 stack,u64 ptid,u64 ctid,u64 tl
     if(!thread){
         Proc *np=proc_new(); if(!np){ return RET_ERR(ENOMEM); }
         if(proc_space(np)||as_clone(np,pr)){ pg_free_all(np); kfree(np); return RET_ERR(ENOMEM); }
-        np->brk=pr->brk; np->brk0=pr->brk0; np->mmap_next=pr->mmap_next; memcpy(np->sighand,pr->sighand,sizeof np->sighand); memcpy(np->cwd,pr->cwd,sizeof np->cwd);
-        for(int i=0;i<MAXFD;i++) if(pr->fd[i].type) fd_dup_into(&np->fd[i],&pr->fd[i]);
+        np->brk=pr->brk; np->brk0=pr->brk0; np->mmap_next=pr->mmap_next; memcpy(np->sa,pr->sa,sizeof np->sa); memcpy(np->cwd,pr->cwd,sizeof np->cwd); memcpy(np->exe,pr->exe,sizeof np->exe); np->umask=pr->umask;
+        for(int i=0;i<MAXFD;i++) if(pr->fd[i].type){ fd_dup_into(&np->fd[i],&pr->fd[i]); np->fd[i].cloexec=pr->fd[i].cloexec; }
         np->pid=t->tid; np->nthreads=1; t->pr=np; t->pid=t->tid; t->ppid=cur->pid; t->leader=1;
     } else { pr->nthreads++; t->pr=pr; t->pid=cur->pid; t->ppid=cur->ppid; t->leader=0; }
-    t->fs_base=(flags&0x80000)?tls:cur->fs_base; memcpy(t->name,cur->name,sizeof t->name);
+    t->fs_base=(flags&0x80000)?tls:cur->fs_base; memcpy(t->name,cur->name,sizeof t->name); t->sigmask=cur->sigmask;
+    __asm__ volatile("fxsave %0":"=m"(*(u8(*)[512])cur->fx)); memcpy(t->fx,cur->fx,512);
     struct regs fr=*r; fr.rax=0; if(stack) fr.rsp=stack; fr.rflags|=0x200;
     task_prepare(t,&fr);
     u32 tid=(u32)t->tid;
@@ -495,8 +584,13 @@ static u64 sys_execve(struct regs *r,u64 path_va,u64 argv_va,u64 envp_va){
     int rc=load_image(np,path,argc,pa,envc,envc?pe:0,&entry,&sp);
     if(rc){ if(np->slab_n) pg_free_all(np); kfree(np); return RET_ERR(-rc); }
     Proc *op=CP; memcpy(np->fd,op->fd,sizeof np->fd); memcpy(np->cwd,op->cwd,sizeof np->cwd); np->pid=op->pid; np->nthreads=op->nthreads;
+    for(int i=1;i<65;i++) if(op->sa[i].h==1) np->sa[i]=op->sa[i];                /* lo ignorado sigue ignorado; los manejadores vuelven a "por omision" */
+    np->umask=op->umask; np->alarm_at=op->alarm_at; np->alarm_int=op->alarm_int;
     memset(op->fd,0,sizeof op->fd); pg_free_all(op);
     *op=*np; kfree(np);
+    for(int i=0;i<MAXFD;i++) if(op->fd[i].type&&op->fd[i].cloexec) fd_close(&op->fd[i]);
+    cur->alt_sp=cur->alt_size=0;
+    memset(cur->fx,0,512); cur->fx[0]=0x7F; cur->fx[1]=0x03; cur->fx[24]=0x80; cur->fx[25]=0x1F; __asm__ volatile("fxrstor %0"::"m"(*(u8(*)[512])cur->fx));
     ucr3=(u64)(uintptr_t)op->pml4; cur->fs_base=0; wrmsr(0xC0000100,0); cur->clear_tid=0;
     memset(r,0,22*8); r->rip=entry; r->cs=0x23; r->ss=0x1B; r->rflags=0x202; r->rsp=sp; r->int_no=0x80;
     k_strcpy(cur->name,path+(k_startswith(path,"/bin/")?5:0),sizeof cur->name);
@@ -514,7 +608,7 @@ static u64 sys_wait4(u64 pid,u64 status_va,u64 options){
                 c->state=T_FREE; return (u64)rv; } }
         if(!have) return RET_ERR(ECHILD);
         if(options&1) return 0;
-        if(cur->killed) return RET_ERR(EINTR);
+        if(INTR()) return RET_ERR(EINTR);
         cur->wait_pid=(int)(long)pid; block(T_WAIT);
     }
 }
@@ -525,31 +619,16 @@ static u64 sys_futex(u64 uaddr,u64 op,u64 val,u64 timeout_va){
         if(cv!=(u32)val) return RET_ERR(EAGAIN);
         cur->fut_key=(u64)(uintptr_t)CP+uaddr; cur->wake_at=0; cur->timedout=0;
         if(timeout_va){ u64 t[2]; if(ucopy_from(CP,t,timeout_va,16)) return RET_ERR(EFAULT); u32 tk=(u32)(t[0]*100+t[1]/10000000ull); if(!tk) tk=1; cur->wake_at=(u64)(kticks()+tk); }
-        if(cur->killed) return RET_ERR(EINTR);
+        if(INTR()) return RET_ERR(EINTR);
         block(T_FUTEX);
         if(cur->timedout){ cur->timedout=0; return RET_ERR(ETIMEDOUT); }
+        if(cur->fut_key){ cur->fut_key=0; if(INTR()) return RET_ERR(EINTR); }
         return 0;
     }
     if(cmd==1||cmd==10){ int w=0; futex_wake(CP,uaddr,(int)(val>0x7fffffff?0x7fffffff:val),&w); return (u64)w; }
     if(cmd==3||cmd==4){ int w=0; futex_wake(CP,uaddr,0x7fffffff,&w); return (u64)w; }      /* REQUEUE: se despierta a todos (aproximacion) */
     return RET_ERR(ENOSYS);
 }
-static int sig_default_ignored(int s){ return s==17||s==23||s==28||s==18||s==0; }
-static u64 sys_kill(int pid,int sig,int tid_only,int tid){
-    if(sig<0||sig>64) return RET_ERR(EINVAL);
-    int found=0;
-    for(int i=0;i<MAXT;i++){ Task *t=&tasks[i]; if(t->state==T_FREE||t->state==T_ZOMBIE) continue;
-        if(tid_only?(t->tid!=tid):(t->pid!=pid)) continue;
-        found=1;
-        if(!sig) continue;
-        u64 h=t->pr?t->pr->sighand[sig]:0;
-        if(sig_default_ignored(sig)||h==1) continue;           /* ignorada */
-        if(h>1&&sig!=9&&sig!=19) continue;                     /* manejador del usuario: aun no se entrega */
-        for(int j=0;j<MAXT;j++) if(tasks[j].pr==t->pr&&tasks[j].state!=T_FREE) tasks[j].killed=sig;
-    }
-    return found?0:RET_ERR(ESRCH);
-}
-
 static u64 sys_dispatch(struct regs *r){
     u64 nr=r->rax,a1=r->rdi,a2=r->rsi,a3=r->rdx,a4=r->r10,a5=r->r8,a6=r->r9;
     switch(nr){
@@ -564,36 +643,98 @@ static u64 sys_dispatch(struct regs *r){
         if(nr==5){ if(a1>=MAXFD||!CP->fd[a1].type) return RET_ERR(EBADF); if(CP->fd[a1].type==2) sn=CP->fd[a1].node; else if(CP->fd[a1].type>=3) mode=010600; }
         else { u64 pv=nr==262?a2:a1; char path[160]; if(ustr(CP,path,sizeof path,pv)) return RET_ERR(EFAULT);
                if(nr==262 && !path[0] && (a4&0x1000)){ if(a1>=MAXFD||!CP->fd[a1].type) return RET_ERR(EBADF); if(CP->fd[a1].type==2) sn=CP->fd[a1].node; }
-               else { FsNode *n=resolve_path(path); if(!n) return RET_ERR(ENOENT); sn=n; } }
-        if(sn){ mode=sn->dir?040755:0100755; size=(u64)sn->size; ino=(u64)(uintptr_t)sn>>4; }       /* st_dev/st_ino distintos por archivo: ld.so los usa para saber si una libreria ya esta cargada */
+               else { FsNode *n=resolve_path(path);
+                      if(!n){ char full[200],tmpb[4096]; if(abs_path(path,full,sizeof full)==0&&is_virtual_path(full)&&gen_proc(full,tmpb,sizeof tmpb)>=0){ mode=0100444; ino=0x7000+(u64)k_strlen(full); goto stat_done; } return RET_ERR(ENOENT); }
+                      sn=n; } }
+        if(nr==5&&CP->fd[a1].type==5) mode=0140777;
+        if(nr==5&&(CP->fd[a1].type==1||CP->fd[a1].type==10)) mode=020620;
+        if(sn){ mode=sn->dir?040755:0100755; size=(u64)sn->size; ino=(u64)(uintptr_t)sn>>4; if(sn->dev==8) mode=0140777; else if(sn->dev) mode=020666; }
+        stat_done:       /* st_dev/st_ino distintos por archivo: ld.so los usa para saber si una libreria ya esta cargada */
         *(u64*)(st+0)=1; *(u64*)(st+8)=ino; *(u64*)(st+16)=1; *(u32*)(st+24)=mode; *(u64*)(st+48)=size; *(u64*)(st+56)=4096;
         return ucopy_to(CP,sbuf,st,sizeof st)?RET_ERR(EFAULT):0; }
     case 9:  return sys_mmap(a1,a2,a3,a4,a5,a6);
     case 10: if(a3&7){ if(umap_range(CP,a1,a2)) return RET_ERR(ENOMEM); } return 0;
     case 11: case 28: return 0;                                 /* munmap/madvise: de momento no devuelven memoria */
     case 12: return sys_brk(a1);
-    case 13: { if(a1>64||a1==9||a1==19) return RET_ERR(EINVAL); u64 old=CP->sighand[a1]; if(a3&&ucopy_to(CP,a3,&old,8)) return RET_ERR(EFAULT);
-               if(a2){ u64 h; if(ucopy_from(CP,&h,a2,8)) return RET_ERR(EFAULT); CP->sighand[a1]=h; } return 0; }
-    case 14: case 131: { if(nr==14&&a3){ u64 z=0; ucopy_to(CP,a3,&z,8); } return 0; }
-    case 16: if((a2==0x5413)&&CP->fd[a1<MAXFD?a1:0].type==1){ u16 ws[4]={25,80,0,0}; return ucopy_to(CP,a3,ws,8)?RET_ERR(EFAULT):0; } return RET_ERR(ENOTTY);
+    case 13: return sys_rt_sigaction(a1,a2,a3,a4);
+    case 14: return sys_sigprocmask(a1,a2,a3,a4);
+    case 15: return sys_sigreturn(r);
+    case 127: { u64 p=cur->sigpend&cur->sigmask; return ucopy_to(CP,a1,&p,8)?RET_ERR(EFAULT):0; }
+    case 130: return sys_sigsuspend(a1,a2);
+    case 34: return sys_pause();
+    case 131: return sys_sigaltstack(a1,a2);
+    case 36: { u64 v[4]; u32 now=kticks(); u64 left=CP->alarm_at?(u64)(int)((u32)CP->alarm_at-now):0; if((long)left<0) left=0; v[0]=CP->alarm_int/100; v[1]=(CP->alarm_int%100)*10000; v[2]=left/100; v[3]=(left%100)*10000; return ucopy_to(CP,a2,v,32)?RET_ERR(EFAULT):0; }
+    case 37: return sys_alarm(a1);
+    case 38: return sys_alarm_set(a1,a2,a3);
+    case 16: { if(a1>=MAXFD||!CP->fd[a1].type) return RET_ERR(EBADF);
+        if(a2==0x5421){ int v=0; if(a3&&ucopy_from(CP,&v,a3,4)) return RET_ERR(EFAULT); if(v) CP->fd[a1].flags|=0x800; else CP->fd[a1].flags&=~0x800; return 0; }      /* FIONBIO */
+        if(a2==0x541B){ int v=0; if(CP->fd[a1].type==5) { u8 tb[1]; (void)tb; v=0; } else if(CP->fd[a1].type==3) v=CP->fd[a1].pipe->count; return ucopy_to(CP,a3,&v,4)?RET_ERR(EFAULT):0; }   /* FIONREAD */
+        if((a2==0x5413)&&CP->fd[a1].type==1){ u16 ws[4]={25,80,0,0}; return ucopy_to(CP,a3,ws,8)?RET_ERR(EFAULT):0; }
+        return RET_ERR(ENOTTY); }
     case 17: { if(a1>=MAXFD||CP->fd[a1].type!=2) return RET_ERR(EBADF); FsNode *f=CP->fd[a1].node; u64 left=a4<(u64)f->size?(u64)f->size-a4:0; if(a3>left) a3=left; if(a3&&ucopy_to(CP,a2,f->data+a4,a3)) return RET_ERR(EFAULT); return a3; }
     case 20: { u64 tot=0; for(u64 i=0;i<a3&&i<64;i++){ u64 iov[2]; if(ucopy_from(CP,iov,a2+i*16,16)) return RET_ERR(EFAULT); long rv=(long)fd_write(a1,iov[0],iov[1]); if(rv<0) return tot?tot:(u64)rv; tot+=(u64)rv; } return tot; }
     case 19: { u64 tot=0; for(u64 i=0;i<a3&&i<64;i++){ u64 iov[2]; if(ucopy_from(CP,iov,a2+i*16,16)) return RET_ERR(EFAULT); long rv=(long)fd_read(a1,iov[0],iov[1]); if(rv<0) return tot?tot:(u64)rv; tot+=(u64)rv; if((u64)rv<iov[1]) break; } return tot; }
     case 21: case 269: { char path[160]; if(ustr(CP,path,sizeof path,nr==21?a1:a2)) return RET_ERR(EFAULT); return resolve_path(path)?0:RET_ERR(ENOENT); }
-    case 89: case 267: return RET_ERR(ENOENT);
+    case 89: return sys_readlink(a1,a2,a3);
+    case 267: return sys_readlink(a2,a3,a4);
     case 22: case 293: {                                      /* pipe / pipe2 */
         int f0=fd_alloc(CP,3); if(f0<0) return RET_ERR(EMFILE); CP->fd[f0].type=9; int f1=fd_alloc(CP,3); CP->fd[f0].type=0; if(f1<0) return RET_ERR(EMFILE);
         struct Pipe *p=kmalloc(sizeof *p); if(!p) return RET_ERR(ENOMEM); memset(p,0,sizeof *p); p->readers=1; p->writers=1;
+        u64 fl=nr==293?a2:0; memset(&CP->fd[f0],0,sizeof(FD)); memset(&CP->fd[f1],0,sizeof(FD));
         CP->fd[f0].type=3; CP->fd[f0].pipe=p; CP->fd[f1].type=4; CP->fd[f1].pipe=p;
+        CP->fd[f0].flags=CP->fd[f1].flags=(fl&0x800)?0x800:0; CP->fd[f0].cloexec=CP->fd[f1].cloexec=(fl&0x80000)?1:0;
         int fds[2]={f0,f1}; return ucopy_to(CP,a1,fds,8)?RET_ERR(EFAULT):0; }
     case 32: { if(a1>=MAXFD||!CP->fd[a1].type) return RET_ERR(EBADF); int n=fd_alloc(CP,0); if(n<0) return RET_ERR(EMFILE); fd_dup_into(&CP->fd[n],&CP->fd[a1]); return (u64)n; }
-    case 33: case 292: { if(a1>=MAXFD||a2>=MAXFD||!CP->fd[a1].type) return RET_ERR(EBADF); if(a1==a2) return a2; if(CP->fd[a2].type) fd_close(&CP->fd[a2]); fd_dup_into(&CP->fd[a2],&CP->fd[a1]); return a2; }
+    case 33: case 292: { if(a1>=MAXFD||a2>=MAXFD||!CP->fd[a1].type) return RET_ERR(EBADF); if(a1==a2) return nr==292?RET_ERR(EINVAL):a2; if(CP->fd[a2].type) fd_close(&CP->fd[a2]); fd_dup_into(&CP->fd[a2],&CP->fd[a1]); if(nr==292&&(a3&0x80000)) CP->fd[a2].cloexec=1; return a2; }
     case 72: { if(a1>=MAXFD||!CP->fd[a1].type) return RET_ERR(EBADF);
-        if(a2==0||a2==1030){ int n=fd_alloc(CP,(int)a3); if(n<0) return RET_ERR(EMFILE); fd_dup_into(&CP->fd[n],&CP->fd[a1]); return (u64)n; }
+        if(a2==0||a2==1030){ int n=fd_alloc(CP,(int)a3); if(n<0) return RET_ERR(EMFILE); fd_dup_into(&CP->fd[n],&CP->fd[a1]); if(a2==1030) CP->fd[n].cloexec=1; return (u64)n; }
+        if(a2==1) return CP->fd[a1].cloexec;
+        if(a2==2){ CP->fd[a1].cloexec=(u8)(a3&1); return 0; }
         if(a2==3){ return (u64)(CP->fd[a1].flags&~3)|2; }
+        if(a2==4){ CP->fd[a1].flags=(CP->fd[a1].flags&~0x800)|(int)(a3&0x800); return 0; }
         return 0; }
+    /* ---- red ---- */
+    case 41: return sys_socket(a1,a2,a3);
+    case 42: return sys_connect(a1,a2,a3);
+    case 43: return sys_accept(a1,a2,a3,0);
+    case 288: return sys_accept(a1,a2,a3,a4);
+    case 44: { int have=0; u32 ip=0; u16 port=0; char up[108]; int pl=0, fam=0; if(a5&&a6){ int rr=get_sockaddr(a5,a6,&fam,&ip,&port,up,&pl); if(rr<0) return RET_ERR(-rr); have=1; }
+               if(a1>=MAXFD||CP->fd[a1].type!=5) return RET_ERR(a1<MAXFD&&CP->fd[a1].type?ENOTSOCK:EBADF);
+               return sock_send_fd(a1,a2,a3,a4,have,ip,port,up,pl); }
+    case 45: if(a1>=MAXFD||CP->fd[a1].type!=5) return RET_ERR(a1<MAXFD&&CP->fd[a1].type?ENOTSOCK:EBADF); return sock_recv_fd(a1,a2,a3,a4,a5,a6);
+    case 46: return sys_sendmsg(a1,a2,a3);
+    case 47: return sys_recvmsg(a1,a2,a3);
+    case 48: return sys_shutdown(a1,a2);
+    case 49: return sys_bind(a1,a2,a3);
+    case 50: return sys_listen(a1,a2);
+    case 51: return sys_getsockname(a1,a2,a3,0);
+    case 52: return sys_getsockname(a1,a2,a3,1);
+    case 53: return sys_socketpair(a1,a2,a3,a4);
+    case 54: return sys_setsockopt(a1,a2,a3,a4,a5);
+    case 55: return sys_getsockopt(a1,a2,a3,a4,a5);
+    case 7:   return do_poll(a1,a2,(long)(int)a3,0,0);
+    case 271: { long ms=-1; if(a3){ u64 t[2]; if(ucopy_from(CP,t,a3,16)) return RET_ERR(EFAULT); ms=(long)(t[0]*1000+t[1]/1000000); } return do_poll(a1,a2,ms,a4,a5); }
+    case 23:  { long tk=-1; if(a5){ u64 t[2]; if(ucopy_from(CP,t,a5,16)) return RET_ERR(EFAULT); tk=(long)(t[0]*100+t[1]/10000); if(!tk&&(t[0]||t[1])) tk=1; } return do_select(a1,a2,a3,a4,tk,0); }
+    case 270: { long tk=-1; if(a5){ u64 t[2]; if(ucopy_from(CP,t,a5,16)) return RET_ERR(EFAULT); tk=(long)(t[0]*100+t[1]/10000000ull); if(!tk&&(t[0]||t[1])) tk=1; } return do_select(a1,a2,a3,a4,tk,a6); }
+    case 213: case 291: return sys_epoll_create(nr==291?a1:0);
+    case 233: return sys_epoll_ctl(a1,a2,a3,a4);
+    case 232: return sys_epoll_wait(a1,a2,a3,a4,0,0);
+    case 281: return sys_epoll_wait(a1,a2,a3,a4,a5,a6);
+    case 284: return sys_eventfd(a1,0);
+    case 290: return sys_eventfd(a1,a2);
+    case 283: return sys_timerfd_create(a1,a2);
+    case 286: return sys_timerfd_settime(a1,a2,a3,a4);
+    case 287: return sys_timerfd_gettime(a1,a2);
+    /* ---- varias que piden los programas ---- */
+    case 95: { u32 o=CP->umask; CP->umask=(u32)a1&0777; return o; }
+    case 98: case 100: { u8 z[144]; memset(z,0,sizeof z); if(a2&&nr==98) return ucopy_to(CP,a2,z,144)?RET_ERR(EFAULT):0; if(a1&&nr==100) ucopy_to(CP,a1,z,32); return kticks(); }
+    case 74: case 75: case 91: case 92: case 93: case 90: case 94: case 268: case 260: case 26: case 27: case 149: case 150: case 221: case 144: case 142: case 141: case 145: case 146: return 0;
+    case 77: case 76: { if(nr==77){ if(a1>=MAXFD||CP->fd[a1].type!=2) return RET_ERR(EBADF); FsNode *nd=CP->fd[a1].node; if(a2>(64ull<<20)) return RET_ERR(ENOMEM); char *nb=kmalloc(a2?a2:1); if(!nb) return RET_ERR(ENOMEM); memset(nb,0,a2); if(nd->size) memcpy(nb,nd->data,(size_t)(nd->size<(int)a2?nd->size:(int)a2)); fs_write(nd,nb,(int)a2); kfree(nb); return 0; } return 0; }
+    case 137: case 138: { u8 sf[120]; memset(sf,0,sizeof sf); *(u64*)(sf+0)=0xEF53; *(u64*)(sf+8)=4096; *(u64*)(sf+16)=262144; *(u64*)(sf+24)=131072; *(u64*)(sf+32)=131072; *(u64*)(sf+40)=100000; *(u64*)(sf+48)=50000; *(u64*)(sf+72)=255; return ucopy_to(CP,a2,sf,sizeof sf)?RET_ERR(EFAULT):0; }
+    case 157: { if(a1==15){ char nm[16]; if(ustr(CP,nm,sizeof nm,a2)) return RET_ERR(EFAULT); k_strcpy(cur->name,nm,sizeof cur->name); return 0; } if(a1==16){ return ucopy_to(CP,a2,cur->name,16)?RET_ERR(EFAULT):0; } return 0; }
+    case 111: return (u64)cur->pid;
     case 24: if(any_ready_user()){ cur->state=T_READY; schedule(); } return 0;
-    case 35: case 230: { u64 ts=nr==35?a1:a3; u64 t[2]; if(ucopy_from(CP,t,ts,16)) return RET_ERR(EFAULT); u32 tk=(u32)(t[0]*100+t[1]/10000000ull); cur->wake_at=(u64)(kticks()+(tk?tk:1)); if(cur->killed) return RET_ERR(EINTR); block(T_SLEEP); return 0; }
+    case 35: case 230: { u64 ts=nr==35?a1:a3; u64 t[2]; if(ucopy_from(CP,t,ts,16)) return RET_ERR(EFAULT); u32 tk=(u32)(t[0]*100+t[1]/10000000ull); cur->wake_at=(u64)(kticks()+(tk?tk:1)); if(INTR()) return RET_ERR(EINTR); block(T_SLEEP); if(INTR()) return RET_ERR(EINTR); return 0; }
     case 39: return (u64)cur->pid;
     case 56: return sys_clone(r,a1,a2,a3,a4,a5);
     case 57: return sys_clone(r,0x11,0,0,0,0);                 /* fork */
@@ -645,19 +786,25 @@ static u64 sys_dispatch(struct regs *r){
 /* ---------- punto de entrada desde ring 3 (lo llama proc64.S con la CR3 del kernel) ---------- */
 void kernel_entry(struct regs *r){
     cur->frame=r;
+    int from_sys=0;
     if(r->int_no==0x80){
+        cur->sysnr=(int)r->rax; from_sys=1;
         u64 rv=sys_dispatch(r);
         if(rv!=EXEC_DONE) r->rax=rv;
     } else if(r->int_no<32){
         u64 cr2=0; if(r->int_no==14) __asm__ volatile("mov %%cr2,%0":"=r"(cr2));
-        kprintf("\n[proceso %d] excepcion %lu en el programa: rip=0x%lx err=0x%lx cr2=0x%lx -> terminado\n",cur->pid,r->int_no,r->rip,r->err,cr2);
-        do_exit_group(r->int_no==14||r->int_no==13?-11:r->int_no==6?-4:r->int_no==0?-8:-6);
+        int sig=(r->int_no==14||r->int_no==13||r->int_no==12||r->int_no==11)?11:r->int_no==6?4:(r->int_no==0||r->int_no==16||r->int_no==19)?8:r->int_no==17?7:5;
+        if(sig_fault(r,sig,cr2)){
+            kprintf("\n[proceso %d] excepcion %lu en el programa: rip=0x%lx err=0x%lx cr2=0x%lx -> terminado\n",cur->pid,r->int_no,r->rip,r->err,cr2);
+            do_exit_group(-sig);
+        }
     } else {
         isr_handler64(r);
         if(r->int_no==32){ static int q; if(++q>=2){ q=0; Task *n=pick_next(); if(n!=cur){ poll_wakeups(); run_task(pick_next()); } } }
     }
     r->rflags|=0x200;
     if(cur->killed) do_exit_group(-cur->killed);
+    sig_deliver(r,from_sys);
 }
 
 /* ---------- rootfs (archivo cpio "newc" entregado como modulo Multiboot: -initrd en QEMU, "module" en GRUB) ---------- */
@@ -694,5 +841,6 @@ void rootfs_load(u32 mods_n,u32 mods_addr){
             FsNode *f=fs_create(d,leaf,(const char*)data,(int)fsz); if(f){ f->sys=1; files++; bytes+=fsz; }
         }
     }
+    dev_create(); etc_defaults(); refresh_resolv();
     kprintf("[ok] rootfs: %d archivos (%lu KB) desde el modulo de arranque\n",files,bytes/1024);
 }
