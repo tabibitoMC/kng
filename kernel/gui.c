@@ -284,7 +284,7 @@ static void term_cmd(Win *w,char *line){
     while(*line==' ') line++;
     if(!*line) return;
     char *arg=line; while(*arg&&*arg!=' ') arg++;
-    char cmd[16]; int n=(int)(arg-line); if(n>15) n=15; memcpy(cmd,line,(size_t)n); cmd[n]=0;
+    char cmd[40]; int n=(int)(arg-line); if(n>39) n=39; memcpy(cmd,line,(size_t)n); cmd[n]=0;
     while(*arg==' ') arg++;
     if(!k_strcmp(cmd,"help")){
         tp(w,"Archivos: ls cd pwd cat mkdir touch rm write cp mv ren df\nDisco:    disco  disco formatear si  guardar\nSistema:  info mem heap ps uptime echo clear teclado reboot halt\n"); }
