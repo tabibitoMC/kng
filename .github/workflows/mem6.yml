@@ -12,8 +12,16 @@ jobs:
         run: |
           run(){ ( sleep 8; for c in "$@"; do echo "$c"; sleep 40; done; echo procesos; sleep 2 ) | timeout 200 qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd rootfs.cpio -display none -serial stdio -m 6G 2>&1 || true; }
           run "ejecutar /bin/memtest" > a.log; echo "A (sin probar-ram): $(grep -a 'memtest resultado' a.log) $(grep -a excepcion a.log)"
-          run "probar-ram" "ejecutar /bin/memtest" > b.log; echo "B (con probar-ram): $(grep -a 'memtest resultado' b.log) $(grep -a excepcion b.log)"
+          run "probar-ram" "rastro 2" "ejecutar /bin/memtest" > b.log; echo "B (con probar-ram): $(grep -a 'memtest resultado' b.log) $(grep -a excepcion b.log)"
+          echo "--- mmap/openat de memtest:"; grep -a -E "\] (9|257|2) " b.log | head -30
+          echo "--- ultimas llamadas antes del fallo:"; grep -a -B25 "excepcion 6" b.log | head -40
+          L=$(ldd $(which ls) | grep -o '/[^ ]*libc.so.6'); echo "libc: $L"; ls -la $L; LD=$(ldd $(which ls) | grep -o '/[^ ]*ld-linux[^ ]*'); echo "ld: $LD"
           grep -a "modulo\|regiones" b.log
+      - name: Desensamblar
+        if: always()
+        run: |
+          L=$(ldd $(which ls) | grep -o '/[^ ]*libc.so.6'); for off in 0x0baadb; do echo "== libc $off"; objdump -d $L --start-address=$((off-24)) --stop-address=$((off+8)) | tail -12; done
+          LD=$(ldd $(which ls) | grep -o '/[^ ]*ld-linux[^ ]*'); objdump -d $LD --start-address=$((0x0baadb-24)) --stop-address=$((0x0baadb+8)) | tail -8 || true
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: m, path: "*.log" }
