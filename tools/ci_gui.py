@@ -27,13 +27,13 @@ def mon(c):
     except Exception: pass
 mon('info status')
 pos = [0, 0]
-def ir(x, y):                                     # el raton es relativo: primero a la esquina, luego al destino
-    mon('mouse_move -3000 -3000'); time.sleep(0.15)
-    while abs(x - 0) > 0 or abs(y - 0) > 0:
-        dx = max(-200, min(200, x)); dy = max(-200, min(200, y))
-        mon('mouse_move %d %d' % (dx, dy)); x -= dx; y -= dy
-    time.sleep(0.15)
-def boton(b): mon('mouse_button %d' % b); time.sleep(0.12)
+def ir(x, y):                                     # el raton es relativo: primero a la esquina, luego al destino (pasos cortos y con pausa:
+    for _ in range(12): mon('mouse_move -120 -120'); time.sleep(0.12)   #  la cola PS/2 de QEMU guarda pocos paquetes y el escritorio los lee al ritmo de sus cuadros)
+    while x > 0 or y > 0:
+        dx = min(100, x); dy = min(100, y)
+        mon('mouse_move %d %d' % (dx, dy)); x -= dx; y -= dy; time.sleep(0.12)
+    time.sleep(0.6)
+def boton(b): mon('mouse_button %d' % b); time.sleep(0.5)
 def clic(b=1): boton(b); boton(0)
 TECLAS = {' ': 'spc', '.': 'dot', '-': 'minus', '_': 'shift-minus', '/': 'slash', ',': 'comma'}
 def escribir(t):
@@ -56,11 +56,11 @@ for linea in open(guion):
     if o == 'esperar': time.sleep(float(a))
     elif o == 'raton': x, y = map(int, a.split()); ir(x, y); cur = [x, y]
     elif o == 'clic': clic(1)
-    elif o == 'doble': clic(1); time.sleep(0.05); clic(1)
+    elif o == 'doble': mon('mouse_button 1'); time.sleep(0.15); mon('mouse_button 0'); time.sleep(0.15); mon('mouse_button 1'); time.sleep(0.15); mon('mouse_button 0'); time.sleep(0.5)
     elif o == 'der': clic(2)
     elif o == 'arrastrar':
         x, y = map(int, a.split()); boton(1)
-        for i in range(1, 9): mon('mouse_move %d %d' % ((x - cur[0]) // 8, (y - cur[1]) // 8)); time.sleep(0.08)
+        for i in range(1, 17): mon('mouse_move %d %d' % ((x - cur[0]) // 16, (y - cur[1]) // 16)); time.sleep(0.15)
         time.sleep(0.2); boton(0); cur = [x, y]
     elif o == 'tecla': mon('sendkey ' + a); time.sleep(0.1)
     elif o == 'escribir': escribir(a)
