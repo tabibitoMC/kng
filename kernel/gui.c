@@ -61,6 +61,7 @@ static void dmark(int x,int y,int w,int h){
 static void dwin(const Win *w){ dmark(w->x-14,w->y-10,w->w+28,w->h+32); }
 static uint32_t *wall;
 static int acc_i=0, wall_i=0, tz=-5, show24=1;
+static int set_tab, fmt_confirm; static uint32_t *fb_front; static int fb_bpp0=32;
 static int clk_h=12, clk_m=0; static uint32_t clk_next;
 static const uint32_t ACC[6]={0x7c5cff,0x14b8a6,0xf59e0b,0xec4899,0x3b82f6,0x22c55e};
 #define ACCENT ACC[acc_i]
@@ -198,7 +199,7 @@ static void term_put(Win *w,char c){
     else { if(w->tc>=TW) term_nl(w); w->grid[w->tr][w->tc++]=(char)u; }
     dwin(w);
 }
-static void tp(Win *w,const char *s){ while(*s) term_put(w,*s++); }
+static void tp(Win *w,const char *s){ kserial_puts(s); while(*s) term_put(w,*s++); }
 static void term_prompt(Win *w){ char p[110]; fs_path(w->cwd,p,sizeof p); cat(p,sizeof p,"> "); tp(w,p); kserial_puts("\n"); kserial_puts(p); }
 static void term_done(int pid,int code){                 /* un programa pegado a una terminal termino: mensaje y prompt otra vez */
     for(int i=0;i<MAXW;i++){ Win *w=&wins[i]; if(!w->used||w->type!=A_TERM||!w->busy||w->bpid!=pid) continue;
@@ -247,7 +248,7 @@ static Win *open_app(int type){
     case A_FILES:    w->w=660; w->h=440; set_title(w,"Archivos"); w->dir=fs_root(); break;
     case A_TERM:     w->w=TW*8+2; w->h=TH*16+TB+1; set_title(w,"Terminal"); w->cwd=fs_root();
                      memset(w->grid,' ',sizeof w->grid); tp(w,"Königreich OS - terminal. Escribe 'help'.\n"); term_prompt(w); break;
-    case A_SETTINGS: w->w=520; w->h=600; set_title(w,"Ajustes"); break;
+    case A_SETTINGS: w->w=520; w->h=560; set_title(w,"Ajustes"); break;
     case A_VIEWER:   w->w=600; w->h=420; set_title(w,"Visor de texto"); break;
     case A_NOTES:    w->w=520; w->h=400; set_title(w,"Notas"); break;
     case A_CALC:     w->w=272; w->h=TB+1+316; set_title(w,"Calculadora"); w->cdec=-1; break;
@@ -982,6 +983,79 @@ static void win_set_max(Win *w,int x,int y,int ww,int hh){
 }
 static void win_toggle_max(Win *w){ if(w->maxed) win_restore(w); else win_set_max(w,0,BARH,gw,gh-BARH-86); }
 static int text_w_big(const char *s){ return text_w(s)*3/2; }
+/* ---------------- ajustes: almacenamiento y pantalla ---------------- */
+static void hsize(uint64_t b,char *o,int max){                    /* 1.5 GB, 320 MB, 12 KB (sin divisiones de 64 bits) */
+    o[0]=0;
+    if(b<1024){ cat_int(o,max,(int)b); cat(o,max," B"); return; }
+    if(b<(1u<<20)){ cat_int(o,max,(int)(b>>10)); cat(o,max," KB"); return; }
+    uint32_t v=b<(1ull<<30)?(uint32_t)((b*10)>>20):(uint32_t)((b*10)>>30);
+    cat_int(o,max,(int)(v/10));
+    if(v%10){ cat(o,max,"."); cat_int(o,max,(int)(v%10)); }
+    cat(o,max,b<(1ull<<30)?" MB":" GB");
+}
+#define NSC 8
+static const char *SCAT[NSC]={"Sistema","Programas instalados","Documentos","Imagenes","Escritorio","Descargas","Papelera","Otros"};
+static const uint32_t SCOL[NSC]={0x64748b,0x3b82f6,0xf59e0b,0xec4899,0x22c55e,0x06b6d4,0xef4444,0xa78bfa};
+static uint64_t sstat[NSC]; static uint32_t sstat_gen=0xFFFFFFFFu, sstat_t;
+static void stor_rec(FsNode *d,int cat,int sysdir){
+    for(FsNode *c=d->child;c;c=c->next){
+        if(c->dev||c->link) continue;
+        int k=cat, sd=sysdir;
+        if(d==fs_root()){
+            static const char *U[]={"Documentos","Imagenes","Escritorio","Descargas","Papelera"}; k=-1; sd=0;
+            for(int i=0;i<5;i++) if(!k_strcmp(c->name,U[i])) k=2+i;
+            if(!k_strcmp(c->name,"proc")||!k_strcmp(c->name,"dev")||!k_strcmp(c->name,"sys")) continue;
+            static const char *S[]={"usr","opt","var","etc","lib","lib64","bin","sbin","boot","root"};
+            for(int i=0;i<10;i++) if(!k_strcmp(c->name,S[i])) sd=1;
+        }
+        if(c->dir){ stor_rec(c,k,sd); continue; }
+        int cc=k>=2?k:(c->sys&&!c->chg)?0:sd?1:7;
+        sstat[cc]+=(uint64_t)(uint32_t)c->size;
+    }
+}
+static void stor_update(void){
+    uint32_t g=fs_gen(), t=kticks();
+    if(g==sstat_gen||(sstat_gen!=0xFFFFFFFFu&&t-sstat_t<200)) return;
+    sstat_gen=g; sstat_t=t; for(int i=0;i<NSC;i++) sstat[i]=0;
+    stor_rec(fs_root(),-1,0);
+}
+static void stor_bar(int x,int y,int w,int h,const uint64_t *seg,const uint32_t *col,int n,uint64_t total){   /* barra de bloques de colores, como Android */
+    rrect(x,y,w,h,6,0xffffff,22);
+    uint32_t t=(uint32_t)(total>>10); if(!t) return;
+    int px=x;
+    for(int i=0;i<n;i++){ uint32_t s=(uint32_t)(seg[i]>>10); int sw=(int)udiv64((uint64_t)s*(uint32_t)w,t,0);
+        if(s&&sw<3) sw=3;
+        if(px+sw>x+w) sw=x+w-px;
+        if(sw<=0) continue;
+        rrect(px,y,sw,h,i==0&&px==x?6:2,col[i],255); px+=sw; }
+}
+/* resolucion en caliente: adaptador grafico "Bochs/VirtualBox" (VBE DISPI). En PC reales la resolucion se elige en el menu de arranque. */
+static inline void bga_w(uint16_t i,uint16_t v){ __asm__ volatile("outw %0,%1"::"a"(i),"Nd"((uint16_t)0x1CE)); __asm__ volatile("outw %0,%1"::"a"(v),"Nd"((uint16_t)0x1CF)); }
+static inline uint16_t bga_r(uint16_t i){ uint16_t v; __asm__ volatile("outw %0,%1"::"a"(i),"Nd"((uint16_t)0x1CE)); __asm__ volatile("inw %1,%0":"=a"(v):"Nd"((uint16_t)0x1CF)); return v; }
+static int bga_ok(void){ uint16_t id=bga_r(0); return id>=0xB0C0&&id<=0xB0C5&&fb_bpp0==32; }
+static const int RES[][2]={{800,600},{1024,768},{1280,720},{1280,1024},{1366,768},{1600,900},{1920,1080}};
+#define NRES 7
+static int set_resolution(int w,int h){
+    if(!bga_ok()) return -1;
+    if(w==gw&&h==gh) return 0;
+    uint16_t vm=bga_r(0xA); if(vm&&(uint32_t)vm*65536u<(uint32_t)w*(uint32_t)h*4u) return -2;   /* no cabe en la memoria de video */
+    uint32_t *nwall=kmalloc((size_t)w*h*4); if(!nwall) return -3;
+    int ow=gw, oh=gh;
+    bga_w(4,0); bga_w(1,(uint16_t)w); bga_w(2,(uint16_t)h); bga_w(3,32); bga_w(4,0x41);
+    if(bga_r(1)!=w||bga_r(2)!=h||gfx_resize(fb_front,w,h,w*4)){ kfree(nwall); bga_w(4,0); bga_w(1,(uint16_t)ow); bga_w(2,(uint16_t)oh); bga_w(3,32); bga_w(4,0x41); return -4; }
+    kfree(wall); wall=nwall; build_wall();
+    for(int i=0;i<MAXW;i++) if(wins[i].used){ Win *v=&wins[i];
+        if(v->w>w) v->w=w;
+        if(v->h>h-BARH) v->h=h-BARH;
+        if(v->x+v->w>w) v->x=w-v->w;
+        if(v->y+v->h>h) v->y=h-v->h;
+        if(v->y<BARH) v->y=BARH;
+        if(v->x<0) v->x=0; }
+    if(mx>=w) mx=w-1;
+    if(my>=h) my=h-1;
+    char r[16]=""; cat_int(r,16,w); cat(r,16,"x"); cat_int(r,16,h); cfg_set("resolucion",r);
+    dsk_sync(); dirty=1; cursor_dirty=1; return 0;
+}
 static void draw_window(int wi,int focused){
     Win *w=&wins[wi]; int x=w->x,y=w->y; int focused_cursor=focused;
     { int X0=x-8,Y0=y-6,X1=x+w->w+8,Y1=y+w->h+14;                                     /* sombra suave, solo fuera de la ventana */
@@ -1160,28 +1234,70 @@ static void draw_window(int wi,int focused){
             text(cx+cw/2-text_w("Espacio para reintentar")/2,oy+SGH*SCELL/2+10,"Espacio para reintentar",C_DIM); }
         break; }
     case A_SETTINGS:{
-        text_bold(cx+20,cy+14,"Color de acento",C_TXT);
-        for(int i=0;i<6;i++){ int sx=cx+20+i*44+14, sy=cy+54; if(i==acc_i) circle(sx,sy,18,0xffffff,255); circle(sx,sy,14,ACC[i],255); }
-        text_bold(cx+20,cy+88,"Fondo de pantalla",C_TXT);
-        for(int i=0;i<3;i++){ int tx2=cx+20+i*112, ty=cy+114;
-            if(i==wall_i) rrect(tx2-3,ty-3,102,66,7,0xffffff,255);
-            rrect(tx2,ty,96,60,5,0x000000,255);
-            { uint32_t *th=get_thumb(i); if(th) for(int yy=2;yy<58;yy++) for(int xx=2;xx<94;xx++) px_blend(tx2+xx,ty+yy,th[yy*THW+xx],255); } }
-        text_bold(cx+20,cy+192,"Hora",C_TXT);
-        button(cx+20,cy+218,28,24,"-",0); button(cx+56,cy+218,28,24,"+",0);
-        { char b[40]="Zona horaria: UTC"; if(tz>=0) cat(b,40,"+"); cat_int(b,40,tz); text(cx+98,cy+222,b,C_TXT); }
-        button(cx+20,cy+252,190,24,show24?"Reloj de 24 horas: si":"Reloj de 24 horas: no",0);
-        text_bold(cx+20,cy+296,"Teclado",C_TXT);
-        for(int i=0;i<3;i++) button(cx+20+i*150,cy+322,140,26,kbd_layout_name(i),kbd_layout()==i);
-        text(cx+20,cy+354,"Tambien: escribe  teclado latam | es | us  en la terminal",C_DIM);
-        text_bold(cx+20,cy+380,"Sistema",C_TXT);
-        { char b[80];
-          b[0]=0; cat(b,80,"Pantalla: "); cat_int(b,80,gw); cat(b,80," x "); cat_int(b,80,gh); text(cx+20,cy+404,b,C_DIM);
-          b[0]=0; cat(b,80,"Memoria: "); cat_int(b,80,(int)(kram_kb()/1024)); cat(b,80," MB"); text(cx+20,cy+424,b,C_DIM);
-          text(cx+20,cy+444,"Kernel: kng-kernel " KNG_VERSION " (" KNG_ARCH ")",C_DIM);
-          b[0]=0; cat(b,80,"Tiempo activo: "); cat_int(b,80,(int)(kticks()/6000)); cat(b,80," min"); text(cx+20,cy+464,b,C_DIM); }
-        { char nb[90]; net_info(nb,sizeof nb); text(cx+20,cy+484,nb,C_DIM); }
-        button(cx+20,cy+ch-44,110,28,"Reiniciar",0); button(cx+142,cy+ch-44,110,28,"Apagar",0);
+        static const char *TABS[4]={"General","Pantalla","Almacenamiento","Sistema"};
+        for(int i=0;i<4;i++) button(cx+12+i*124,cy+10,118,28,TABS[i],i==set_tab);
+        int oy=cy+50;
+        if(set_tab==0){
+            text_bold(cx+20,oy+14,"Color de acento",C_TXT);
+            for(int i=0;i<6;i++){ int sx=cx+20+i*44+14, sy=oy+54; if(i==acc_i) circle(sx,sy,18,0xffffff,255); circle(sx,sy,14,ACC[i],255); }
+            text_bold(cx+20,oy+88,"Fondo de pantalla",C_TXT);
+            for(int i=0;i<3;i++){ int tx2=cx+20+i*112, ty=oy+114;
+                if(i==wall_i) rrect(tx2-3,ty-3,102,66,7,0xffffff,255);
+                rrect(tx2,ty,96,60,5,0x000000,255);
+                { uint32_t *th=get_thumb(i); if(th) for(int yy=2;yy<58;yy++) for(int xx=2;xx<94;xx++) px_blend(tx2+xx,ty+yy,th[yy*THW+xx],255); } }
+            text_bold(cx+20,oy+192,"Hora",C_TXT);
+            button(cx+20,oy+218,28,24,"-",0); button(cx+56,oy+218,28,24,"+",0);
+            { char b[40]="Zona horaria: UTC"; if(tz>=0) cat(b,40,"+"); cat_int(b,40,tz); text(cx+98,oy+222,b,C_TXT); }
+            button(cx+20,oy+252,190,24,show24?"Reloj de 24 horas: si":"Reloj de 24 horas: no",0);
+            text_bold(cx+20,oy+296,"Teclado",C_TXT);
+            for(int i=0;i<3;i++) button(cx+20+i*150,oy+322,140,26,kbd_layout_name(i),kbd_layout()==i);
+            text(cx+20,oy+354,"Tambien: escribe  teclado latam | es | us  en la terminal",C_DIM);
+        } else if(set_tab==1){
+            char b[80]=""; cat(b,80,"Resolucion actual: "); cat_int(b,80,gw); cat(b,80," x "); cat_int(b,80,gh); cat(b,80,fb_bpp0==24?" (24 bits)":" (32 bits)");
+            text_bold(cx+20,oy+14,b,C_TXT);
+            if(bga_ok()){
+                text(cx+20,oy+42,"Elige una resolucion (se aplica al instante y se recuerda):",C_DIM);
+                for(int i=0;i<NRES;i++){ char r[16]=""; cat_int(r,16,RES[i][0]); cat(r,16," x "); cat_int(r,16,RES[i][1]);
+                    button(cx+20+(i%3)*160,oy+70+(i/3)*36,150,28,r,RES[i][0]==gw&&RES[i][1]==gh); }
+            } else {
+                text(cx+20,oy+42,"En este equipo la resolucion la pone el menu de arranque:",C_DIM);
+                text(cx+20,oy+64,"al encender, entra en \"Resolucion de pantalla\", elige una",C_DIM);
+                text(cx+20,oy+84,"y luego arranca Konigreich OS. Por defecto usa la mayor",C_DIM);
+                text(cx+20,oy+104,"disponible hasta 1920 x 1080.",C_DIM);
+            }
+        } else if(set_tab==2){
+            stor_update();
+            uint64_t tot=0; for(int i=0;i<NSC;i++) tot+=sstat[i];
+            uint64_t ram=(uint64_t)kram_kb()*1024u;
+            char b[96], s1[24], s2[24];
+            text_bold(cx+20,oy+10,"Archivos (viven en la memoria RAM)",C_TXT);
+            hsize(tot,s1,24); hsize(ram>tot?ram-tot:0,s2,24); b[0]=0; cat(b,96,s1); cat(b,96," usados  -  "); cat(b,96,s2); cat(b,96," libres");
+            text(cx+20,oy+32,b,C_DIM);
+            stor_bar(cx+20,oy+56,cw-40,22,sstat,SCOL,NSC,ram>tot?ram:tot);
+            for(int i=0;i<NSC;i++){ int lx=cx+20+(i%2)*240, ly2=oy+92+(i/2)*26;
+                rrect(lx,ly2+3,14,14,4,SCOL[i],255); text(lx+22,ly2,SCAT[i],C_TXT); hsize(sstat[i],s1,24); text(lx+226-text_w(s1),ly2,s1,C_DIM); }
+            int dy=oy+206; text_bold(cx+20,dy,"Disco (donde se guardan tus datos al apagar)",C_TXT);
+            if(disk_init()==0){
+                uint64_t cap=(uint64_t)disk_sectors()*512u, used=kngfs_active()?(uint64_t)kngfs_last_size():0;
+                hsize(cap,s1,24); b[0]=0; cat(b,96,disk_kind()); cat(b,96,": "); cat(b,96,disk_model()); cat(b,96,", "); cat(b,96,s1); text(cx+20,dy+24,b,C_DIM);
+                uint64_t seg[1]={used}; uint32_t col[1]={ACCENT}; stor_bar(cx+20,dy+48,cw-40,22,seg,col,1,cap);
+                if(kngfs_active()){ hsize(used,s1,24); b[0]=0; cat(b,96,"Guardado: "); cat(b,96,s1); cat(b,96,"  (se guarda solo y al apagar)"); text(cx+20,dy+78,b,0x7ee787);
+                    button(cx+20,dy+104,150,28,"Guardar ahora",1); }
+                else { text(cx+20,dy+78,"Este disco aun no guarda datos de Konigreich OS.",0xffb86b);
+                    button(cx+20,dy+104,260,28,fmt_confirm?"Pulsa otra vez: BORRA el disco":"Usar este disco para guardar",fmt_confirm); }
+            } else { text(cx+20,dy+24,"No se encontro un disco duro (IDE o SATA).",C_DIM); text(cx+20,dy+44,"Sin disco, lo que hagas se pierde al apagar.",0xffb86b); }
+            button(cx+cw-170,dy+104,150,28,"Vaciar Papelera",0);
+        } else {
+            char b[96];
+            text_bold(cx+20,oy+10,"Sistema",C_TXT);
+            b[0]=0; cat(b,96,"Kernel: kng-kernel " KNG_VERSION " (" KNG_ARCH ")"); text(cx+20,oy+38,b,C_DIM);
+            b[0]=0; cat(b,96,"Memoria RAM: "); { char s1[24]; hsize((uint64_t)kram_kb()*1024u,s1,24); cat(b,96,s1); } text(cx+20,oy+60,b,C_DIM);
+            b[0]=0; cat(b,96,"Pantalla: "); cat_int(b,96,gw); cat(b,96," x "); cat_int(b,96,gh); text(cx+20,oy+82,b,C_DIM);
+            b[0]=0; cat(b,96,"Tiempo encendido: "); cat_int(b,96,(int)(kticks()/6000)); cat(b,96," min"); text(cx+20,oy+104,b,C_DIM);
+            { char nb[90]; net_info(nb,sizeof nb); text(cx+20,oy+126,nb,C_DIM); }
+            b[0]=0; cat(b,96,"Disco: "); if(disk_init()==0){ cat(b,96,disk_kind()); cat(b,96,", "); cat(b,96,kngfs_active()?"guardando datos":"sin usar"); } else cat(b,96,"ninguno"); text(cx+20,oy+148,b,C_DIM);
+            button(cx+20,cy+ch-44,110,28,"Reiniciar",0); button(cx+142,cy+ch-44,110,28,"Apagar",0);
+        }
         break; }
     }
     clip_reset();
@@ -1431,17 +1547,33 @@ static void files_click(Win *w,int lx,int ly,int cw,int ch){
     w->sel=f; w->last=f; w->lastclick=t; dirty=1;
     fd_cand=1; fd_on=0; fd_sx=mx; fd_sy=my; fd_win=wi; fs_path(f,fd_path,sizeof fd_path); k_strcpy(fd_name,f->name,sizeof fd_name);
 }
-static void settings_click(int lx,int ly,int ch){
-    for(int i=0;i<6;i++){ int dx=lx-(20+i*44+14), dy=ly-54; if(dx*dx+dy*dy<=18*18){ acc_i=i; dirty=1; return; } }
-    for(int i=0;i<3;i++) if(in_rect(lx,ly,20+i*112,114,96,60)){ if(wall_i!=i){ wall_i=i; build_wall(); } dirty=1; return; }
-    if(in_rect(lx,ly,20,218,28,24)){ if(tz>-12) tz--; clk_next=0; dirty=1; }
-    else if(in_rect(lx,ly,56,218,28,24)){ if(tz<14) tz++; clk_next=0; dirty=1; }
-    else if(in_rect(lx,ly,20,252,190,24)){ show24=!show24; dirty=1; }
-    else if(in_rect(lx,ly,20,322,140,26)) set_layout(KBD_US);
-    else if(in_rect(lx,ly,170,322,140,26)) set_layout(KBD_LATAM);
-    else if(in_rect(lx,ly,320,322,140,26)) set_layout(KBD_ES);
-    else if(in_rect(lx,ly,20,ch-44,110,28)) kreboot();
-    else if(in_rect(lx,ly,142,ch-44,110,28)) khalt();
+static void settings_click(int lx,int ly,int cw,int ch){
+    for(int i=0;i<4;i++) if(in_rect(lx,ly,12+i*124,10,118,28)){ set_tab=i; fmt_confirm=0; dirty=1; return; }
+    int y=ly-50;
+    if(set_tab==0){
+        for(int i=0;i<6;i++){ int dx=lx-(20+i*44+14), dy=y-54; if(dx*dx+dy*dy<=18*18){ acc_i=i; dirty=1; return; } }
+        for(int i=0;i<3;i++) if(in_rect(lx,y,20+i*112,114,96,60)){ if(wall_i!=i){ wall_i=i; build_wall(); } dirty=1; return; }
+        if(in_rect(lx,y,20,218,28,24)){ if(tz>-12) tz--; clk_next=0; dirty=1; }
+        else if(in_rect(lx,y,56,218,28,24)){ if(tz<14) tz++; clk_next=0; dirty=1; }
+        else if(in_rect(lx,y,20,252,190,24)){ show24=!show24; dirty=1; }
+        else if(in_rect(lx,y,20,322,140,26)) set_layout(KBD_US);
+        else if(in_rect(lx,y,170,322,140,26)) set_layout(KBD_LATAM);
+        else if(in_rect(lx,y,320,322,140,26)) set_layout(KBD_ES);
+    } else if(set_tab==1){
+        if(bga_ok()) for(int i=0;i<NRES;i++) if(in_rect(lx,y,20+(i%3)*160,70+(i/3)*36,150,28)){ set_resolution(RES[i][0],RES[i][1]); return; }
+    } else if(set_tab==2){
+        int dy=206;
+        if(in_rect(lx,y,20,dy+104,260,28)&&disk_init()==0){
+            if(kngfs_active()){ if(in_rect(lx,y,20,dy+104,150,28)) (void)kngfs_save(); }
+            else if(!fmt_confirm) fmt_confirm=1;
+            else { fmt_confirm=0; (void)kngfs_format(); }
+            dirty=1; return; }
+        if(in_rect(lx,y,cw-170,dy+104,150,28)){ FsNode *tr=trash_dir(); if(tr) while(tr->child) fs_remove(tr->child); dirty=1; return; }
+        if(fmt_confirm){ fmt_confirm=0; dirty=1; }
+    } else {
+        if(in_rect(lx,ly,20,ch-44,110,28)) kreboot();
+        else if(in_rect(lx,ly,142,ch-44,110,28)) khalt();
+    }
 }
 static void browser_click(Win *w,int lx,int ly,int cw,int ch){
     (void)ch;
@@ -1458,7 +1590,7 @@ static void app_click(Win *w,int lx,int ly){
     int cx,cy,cw,ch; crect(w,&cx,&cy,&cw,&ch);
     switch(w->type){
     case A_FILES: files_click(w,lx,ly,cw,ch); break;
-    case A_SETTINGS: settings_click(lx,ly,ch); break;
+    case A_SETTINGS: settings_click(lx,ly,cw,ch); break;
     case A_BROWSER: browser_click(w,lx,ly,cw,ch); break;
     case A_NOTES:
         if(in_rect(lx,ly,8,6,70,24)){ notes_new(w); dirty=1; }
@@ -1666,10 +1798,12 @@ void gui_key(int c){
 void gui_storage_ready(void){
     (void)kngfs_mount(); fs_track=1;
     { char kv[16]; if(cfg_get("teclado",kv,sizeof kv)){ int l=layout_from_name(kv); if(l>=0) kbd_set_layout(l); } }
+    { char r[16]; if(cfg_get("resolucion",r,sizeof r)){ int w=0,h=0; const char *q=r; while(*q>='0'&&*q<='9') w=w*10+(*q++-'0'); if(*q=='x') q++; while(*q>='0'&&*q<='9') h=h*10+(*q++-'0'); if(w>=640&&h>=480&&(w!=gw||h!=gh)) set_resolution(w,h); } }
     build_wall(); dsk_sync(); dirty=1;
 }
 int gui_init(uint32_t *fb,int w,int h,int pitch_bytes){
     if(gfx_init(fb,w,h,pitch_bytes)) return -1;
+    fb_front=fb; fb_bpp0=pitch_bytes>=w*4?32:24;
     wall=kmalloc((size_t)w*h*4); if(!wall) return -1;
     if(!fs_root()){ fs_init(); }
     build_wall();

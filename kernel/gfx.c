@@ -9,6 +9,11 @@ void gfx_set_bpp(int b){ fbpp=b; }
 static int cx0, cy0, cx1, cy1;
 static int bx0, by0, bx1, by1;                              /* recorte base (rectangulo sucio) */
 
+int gfx_resize(uint32_t *f,int w,int h,int pitch_bytes){             /* nueva resolucion: otro backbuffer */
+    uint32_t *n=kmalloc((size_t)w*h*4); if(!n) return -1;
+    if(bb) kfree(bb);
+    bb=n; front=f; gw=w; gh=h; fpitch=pitch_bytes/4; fpitchb=pitch_bytes; memset(bb,0,(size_t)w*h*4); clip_base(0,0,w,h); return 0;
+}
 int gfx_init(uint32_t *f, int w, int h, int pitch_bytes){
     front=f; gw=w; gh=h; fpitch=pitch_bytes/4; fpitchb=pitch_bytes;
     bb=kmalloc((size_t)w*h*4); if(!bb) return -1;
