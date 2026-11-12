@@ -25,7 +25,7 @@ typedef struct {
     int used, type, x, y, w, h; char title[40];
     char grid[TH][TW]; int tr, tc; char in[256]; int inlen; FsNode *cwd;          /* terminal */
     int busy, bpid, esc, escp, escv[6], escq, savr, savc;                         /* terminal: programa pegado, secuencias ANSI */
-    int xw, xh; uint32_t xnext; int xlx, xly;                                     /* pantalla X (servidor Xvfb) */
+    int xw, xh; uint32_t xnext; int xlx, xly; uint32_t xsum; int xnegro;                                     /* pantalla X (servidor Xvfb) */
     FsNode *dir, *sel, *last; int scroll; uint32_t lastclick;                    /* archivos / visor */
     FsNode *file;                                                                /* visor */
     char url[192], hist[8][192], ebuf[192]; int nhist, bscroll, editing, elen; HPage page;   /* navegador */
@@ -215,6 +215,14 @@ static void snake_reset(Win *w);
 static Win *open_app(int type);
 static void open_file(FsNode *n);
 static int xs_w=1024, xs_h=640;
+/* Suma de muestra de la pantalla X: solo se redibuja la ventana cuando el contenido cambia (evita parpadeo del puntero). */
+static uint32_t xs_sum(int *negro){
+    FsNode *xf=fs_resolve(fs_root(),"/var/lib/xvfb/Xvfb_screen0"); *negro=1;
+    if(!xf||xf->dir||xf->size<100||!xf->data) return 0;
+    const unsigned char *d=(const unsigned char*)xf->data; uint32_t h=(uint32_t)xf->size, nz=0;
+    for(uint64_t i=100;i<(uint64_t)xf->size;i+=509){ h=h*31u+d[i]; nz|=d[i]; }
+    *negro=!nz; return h;
+}
 void gui_open_xscreen(int w,int h){ xs_w=w; xs_h=h; open_app(A_XSCR); dirty=1; }
 void gui_open_terminal(void){ open_app(A_TERM); dirty=1; }                    /* opcion de arranque 'terminal' (pruebas automaticas del modo grafico) */
 int  gui_screen_size(int *w,int *h){ if(!gw) return -1; *w=gw; *h=gh; return 0; }
@@ -1127,6 +1135,7 @@ static void draw_window(int wi,int focused){
             if(bpp==32&&pw>0&&ph>0&&pw<=4096&&ph<=4096&&off+(uint64_t)bpl*ph<=(uint64_t)xf->size){
                 int bw=(int)pw<cw?(int)pw:cw, bh=(int)ph<ch?(int)ph:ch;
                 blit32(cx,cy,(const uint32_t*)(const void*)(d+off),(int)(bpl/4),bw,bh);
+                if(w->xnegro){ text(cx+20,cy+20,"Abriendo el programa... los navegadores y oficina pueden tardar 1 a 3 minutos.",0xd6dbe8); text(cx+20,cy+44,"Si no aparece, mira la terminal: ahi sale el error.",C_DIM); }
             } else text(cx+20,cy+20,"El servidor X usa un formato que kng aun no muestra (se necesita 32 bits).",0xd6dbe8);
         } else { text(cx+20,cy+20,"Esperando al servidor X (Xvfb)...",0xd6dbe8); text(cx+20,cy+44,"Inicia: pantalla   (en la terminal)",C_DIM); }
         break; }
@@ -1525,7 +1534,7 @@ void gui_frame(void){
     { int top=win_top(); static int ph; if(top>=0){ Win *tw=&wins[top];
         if(tw->type==A_TERM||tw->type==A_NOTES||(tw->type==A_BROWSER&&tw->editing)){ int p=(t/50)&1; if(p!=ph){ ph=p; dwin(tw); } } } }
     { static uint32_t nm; if(t>=nm){ nm=t+100; for(int i=0;i<nord;i++) if(wins[order[i]].type==A_MONITOR) dwin(&wins[order[i]]); } }
-    { for(int i=0;i<nord;i++){ Win *xw=&wins[order[i]]; if(xw->type==A_XSCR&&(int)(t-xw->xnext)>=0){ xw->xnext=t+3; dwin(xw); } else if(xw->type==A_PROGS&&(int)(t-xw->xnext)>=0){ xw->xnext=t+100; dwin(xw); } } }       /* la pantalla X se redibuja ~30 veces por segundo */
+    { for(int i=0;i<nord;i++){ Win *xw=&wins[order[i]]; if(xw->type==A_XSCR&&(int)(t-xw->xnext)>=0){ xw->xnext=t+3; int ng; uint32_t h=xs_sum(&ng); if(h!=xw->xsum||ng!=xw->xnegro){ xw->xsum=h; xw->xnegro=ng; dmark(xw->x+1,xw->y+TB,xw->w-2,xw->h-TB); } } else if(xw->type==A_PROGS&&(int)(t-xw->xnext)>=0){ xw->xnext=t+100; dwin(xw); } } }       /* la pantalla X se redibuja ~30 veces por segundo */
     { static uint32_t lg, nxt; if((int)(t-nxt)>=0){ nxt=t+40; uint32_t g=fs_gen(); if(g!=lg){ lg=g; dsk_sync(); for(int i=0;i<nord;i++) if(wins[order[i]].type==A_FILES) dwin(&wins[order[i]]); } } }
     { static int pc; int on=w_files_editing(); if(on){ int p=(t/50)&1; if(p!=pc){ pc=p; if(dren>=0){ DObj *o=&dobj[dren]; dmark(o->x-40,o->y+TILE,o->w+80,30); } } } }
     snake_tick(t); kngfs_tick();
