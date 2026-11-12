@@ -748,7 +748,7 @@ static const char *type_name(const FsNode *f){
     if(f->link) return "Enlace";
     static const char *E[][2]={{"txt","Texto"},{"md","Markdown"},{"html","Pagina web"},{"htm","Pagina web"},{"sh","Script"},{"py","Python"},{"c","Codigo C"},{"h","Cabecera C"},
         {"json","JSON"},{"zip","Archivo ZIP"},{"png","Imagen PNG"},{"jpg","Imagen JPG"},{"jpeg","Imagen JPG"},{"gif","Imagen GIF"},{"bmp","Imagen BMP"},{"pdf","Documento PDF"},
-        {"deb","Paquete Debian"},{"css","Hoja de estilo"},{"js","JavaScript"},{"csv","Tabla CSV"},{"log","Registro"},{"conf","Configuracion"},{"cfg","Configuracion"},{"elf","Programa"}};
+        {"deb","Paquete Debian"},{"exe","Programa Windows"},{"bat","Script Windows"},{"rar","Archivo RAR"},{"7z","Archivo 7z"},{"mp3","Audio"},{"mp4","Video"},{"docx","Documento Word"},{"xlsx","Hoja Excel"},{"css","Hoja de estilo"},{"js","JavaScript"},{"csv","Tabla CSV"},{"log","Registro"},{"conf","Configuracion"},{"cfg","Configuracion"},{"elf","Programa"}};
     for(unsigned i=0;i<sizeof E/sizeof *E;i++) if(ext_is(f,E[i][0])) return E[i][1];
     if(f->size>=4&&f->data&&f->data[0]==0x7f&&f->data[1]=='E'&&f->data[2]=='L'&&f->data[3]=='F') return "Programa";
     return "Archivo";
@@ -797,11 +797,15 @@ static void fm_commit_rename(Win *w){
     fm_edit_done(w->ebuf,&w->elen,FS_NAME); FsNode *f=fs_resolve_nf(fs_root(),w->url); w->ebuf[w->elen]=0;
     if(!f||!w->elen||!k_strcmp(f->name,w->ebuf)) return;
     if(fs_find(f->parent,w->ebuf)){ fm_status(w,"Ya existe un elemento con ese nombre"); return; }
-    if(fs_rename(f,w->ebuf)) fm_status(w,"Nombre no valido (no puede tener /)"); else fm_status(w,"Nombre cambiado");
+    char ox[FS_NAME]; k_strcpy(ox,ext_of(f->name),sizeof ox);
+    if(fs_rename(f,w->ebuf)) fm_status(w,"Nombre no valido (no puede tener /)");
+    else if(k_strcmp(ox,ext_of(f->name))){ char m[48]="Extension cambiada: ahora es "; cat(m,48,type_name(f)); fm_status(w,m); }
+    else fm_status(w,"Nombre cambiado");
 }
 static void fm_edit_key(int c,char *buf,int *len,int *all,int max){   /* teclear en un campo de nombre (UTF-8) */
     if(c=='\b'){ if(*all){ *len=0; *all=0; ed_owner=0; } else if(*len>0) *len-=u8_last(buf,*len); buf[*len]=0; return; }
     char e[2]; int en=u8_enc(c,e); if(!en||c=='/') return;
+    if(c=='.'&&ed_owner==buf) ed_owner=0;                          /* escribir un punto: la extension la pones tu (.zip, .exe, .bat...) */
     if(*all){                                                       /* lo primero que se escribe reemplaza el nombre pero conserva la extension */
         const char *x=ext_of(buf); ed_suf[0]=0; ed_owner=0;
         if(*x){ ed_suf[0]='.'; k_strcpy(ed_suf+1,x,sizeof ed_suf-1); ed_owner=buf; }
@@ -813,7 +817,7 @@ static void fm_edit_done(char *buf,int *len,int max){                /* al confi
     ed_owner=0;
 }
 static const char *fm_edit_suffix(const char *buf){ return ed_owner==buf?ed_suf:""; }
-static const char *NEWN[]={"Nueva carpeta","Nuevo documento.txt","Nueva pagina.html","Nuevo documento.md","nuevo-script.sh","nuevo-programa.py","programa.c","datos.json","archivo nuevo"};
+static const char *NEWN[]={"Nueva carpeta","Nuevo documento.txt","Nueva pagina.html","Nuevo documento.md","nuevo-script.sh","nuevo-programa.py","programa.c","datos.json","Nuevo archivo"};
 static const char *NEWT[]={"","",
     "<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"><title>Nueva pagina</title></head>\n<body>\n<h1>Hola</h1>\n<p>Escribe aqui.</p>\n</body>\n</html>\n",
     "# Titulo\n\nEscribe aqui.\n",
@@ -910,9 +914,7 @@ static void mu_show(int x,int y,int wi,FsNode *dir,FsNode *t){
         if(t->parent!=desk_dir()) mu_add("Copiar al Escritorio",M_DESK);
         mu_add("-",0); mu_add(tr&&fm_inside(t,tr)?"Eliminar para siempre":"Eliminar       Supr",M_DELETE); mu_add("Propiedades",M_PROPS);
     } else {
-        mu_add("Nueva carpeta",M_NEWDIR); mu_add("Nuevo documento de texto (.txt)",M_NEWTXT); mu_add("Nueva pagina web (.html)",M_NEWHTML);
-        mu_add("Nuevo documento Markdown (.md)",M_NEWMD); mu_add("Nuevo script (.sh)",M_NEWSH); mu_add("Nuevo programa Python (.py)",M_NEWPY);
-        mu_add("Nuevo programa C (.c)",M_NEWC); mu_add("Nuevo archivo JSON (.json)",M_NEWJSON); mu_add("Archivo vacio (sin tipo)",M_NEWEMPTY);
+        mu_add("Nueva carpeta",M_NEWDIR); mu_add("Archivo en blanco (escribe nombre y extension)",M_NEWEMPTY); mu_add("Documento de texto (.txt)",M_NEWTXT);
         mu_add("-",0); if(clip_path[0]) mu_add("Pegar          Ctrl+V",M_PASTE);
         mu_add("Abrir terminal aqui",M_TERM); if(dir==tr) mu_add("Vaciar Papelera",M_EMPTYTRASH); mu_add("Actualizar",M_REFRESH);
     }
