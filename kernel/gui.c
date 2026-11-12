@@ -194,7 +194,8 @@ static void term_put(Win *w,char c){
     dwin(w);
 }
 static void tp(Win *w,const char *s){ while(*s) term_put(w,*s++); }
-static void term_prompt(Win *w){ char p[110]; fs_path(w->cwd,p,sizeof p); cat(p,sizeof p,"> "); tp(w,p); }
+void kserial_puts(const char *s);
+static void term_prompt(Win *w){ char p[110]; fs_path(w->cwd,p,sizeof p); cat(p,sizeof p,"> "); tp(w,p); kserial_puts("\n"); kserial_puts(p); }
 static void term_done(int pid,int code){                 /* un programa pegado a una terminal termino: mensaje y prompt otra vez */
     for(int i=0;i<MAXW;i++){ Win *w=&wins[i]; if(!w->used||w->type!=A_TERM||!w->busy||w->bpid!=pid) continue;
         w->busy=0; char b[64]="";

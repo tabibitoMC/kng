@@ -89,11 +89,13 @@ for c in cmds:
     t = 30
     if '|' in c and c.split('|', 1)[0].isdigit(): t, c = int(c.split('|', 1)[0]), c.split('|', 1)[1]
     if p.poll() is not None: break
-    with lock: buf.clear()
-    cmd_actual[0] = c
+    with lock: buf.clear(); log.write(('\n[ci_drive %s] > %s\n' % (time.strftime('%H:%M:%S'), c)).encode()); log.flush()
+    cmd_actual[0] = c; t0 = time.time()
     try: p.stdin.write(c.encode() + b'\r'); p.stdin.flush()
     except Exception: break
-    if not espera(t):
+    fin_ok = espera(t)
+    with lock: log.write(('\n[ci_drive %s] "%s" tardo %d s\n' % (time.strftime('%H:%M:%S'), c[:40], int(time.time()-t0))).encode()); log.flush()
+    if not fin_ok:
         with lock: log.write(('\n[ci_drive] TIEMPO AGOTADO esperando el fin de: %s\n' % c).encode()); log.flush()
         try:                                                  # Ctrl+] : el kernel lista los procesos y lo que espera cada uno
             with lock: log.write(b'\n[ci_drive] ---- procesos (Ctrl+]) ----\n'); log.flush()

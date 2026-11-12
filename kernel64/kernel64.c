@@ -378,6 +378,7 @@ static void run(char *l){
 }
 
 /* ---------- API para la interfaz grafica (kng.h) ---------- */
+void kserial_puts(const char *s){ while(*s){ if(*s=='\n') serial_put('\r'); serial_put(*s++); } }   /* solo al puerto serie (indicador de la terminal grafica, para las pruebas automaticas) */
 void k_write_console(const char *s,int n){ for(int i=0;i<n;i++) putc(s[i]); }
 uint32_t kticks(void){ return ticks; }
 int kgetc(void){ return getc_nb(); }

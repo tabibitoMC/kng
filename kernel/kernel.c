@@ -60,6 +60,7 @@ static void print_num(uint32_t v, unsigned base, int neg){
     if(neg) putc('-');
     while(i) putc(b[--i]);
 }
+void kserial_puts(const char *s){ while(*s){ if(*s=='\n') serial_put('\r'); serial_put(*s++); } }
 void kprintf(const char*f, ...){
     uint32_t fl=irq_save();
     va_list a; va_start(a,f);
