@@ -4,11 +4,13 @@
 
 int gw, gh; uint32_t *bb;
 static uint32_t *front; static int fpitch;               /* pitch del frontbuffer en pixeles */
+static int fbpp=32, fpitchb;                              /* tarjetas que solo dan 24 bits por pixel (algunos PC reales): se convierte al copiar */
+void gfx_set_bpp(int b){ fbpp=b; }
 static int cx0, cy0, cx1, cy1;
 static int bx0, by0, bx1, by1;                              /* recorte base (rectangulo sucio) */
 
 int gfx_init(uint32_t *f, int w, int h, int pitch_bytes){
-    front=f; gw=w; gh=h; fpitch=pitch_bytes/4;
+    front=f; gw=w; gh=h; fpitch=pitch_bytes/4; fpitchb=pitch_bytes;
     bb=kmalloc((size_t)w*h*4); if(!bb) return -1;
     memset(bb,0,(size_t)w*h*4); clip_base(0,0,w,h); return 0;
 }
@@ -17,9 +19,15 @@ void gfx_present_rect(int x,int y,int w,int h){
     if(y<0){ h+=y; y=0; }
     if(x+w>gw) w=gw-x;
     if(y+h>gh) h=gh-y;
+    if(fbpp==24){
+        for(int j=0;j<h;j++){ uint8_t *d=(uint8_t*)front+(size_t)(y+j)*fpitchb+(size_t)x*3; const uint32_t *s2=bb+(y+j)*gw+x;
+            for(int i=0;i<w;i++){ uint32_t c=s2[i]; d[0]=(uint8_t)c; d[1]=(uint8_t)(c>>8); d[2]=(uint8_t)(c>>16); d+=3; } }
+        return; }
     for(int j=0;j<h;j++) memcpy(front+(y+j)*fpitch+x, bb+(y+j)*gw+x, (size_t)w*4);
 }
-void gfx_front_px(int x,int y,uint32_t c){ if(x>=0&&x<gw&&y>=0&&y<gh) front[y*fpitch+x]=c; }
+void gfx_front_px(int x,int y,uint32_t c){ if(x<0||x>=gw||y<0||y>=gh) return;
+    if(fbpp==24){ uint8_t *d=(uint8_t*)front+(size_t)y*fpitchb+(size_t)x*3; d[0]=(uint8_t)c; d[1]=(uint8_t)(c>>8); d[2]=(uint8_t)(c>>16); return; }
+    front[y*fpitch+x]=c; }
 void gfx_present(void){ gfx_present_rect(0,0,gw,gh); }
 void clip_base(int x,int y,int w,int h){ bx0=k_max(x,0); by0=k_max(y,0); bx1=k_min(x+w,gw); by1=k_min(y+h,gh); clip_reset(); }
 void clip_set(int x,int y,int w,int h){ cx0=k_max(k_max(x,0),bx0); cy0=k_max(k_max(y,0),by0); cx1=k_min(k_min(x+w,gw),bx1); cy1=k_min(k_min(y+h,gh),by1); }

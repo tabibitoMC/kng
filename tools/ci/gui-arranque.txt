@@ -1,0 +1,7 @@
+captura 01-escritorio
+raton 600 500
+clic
+raton 347 724
+clic
+esperar 1
+captura 02-archivos

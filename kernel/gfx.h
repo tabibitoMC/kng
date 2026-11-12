@@ -4,6 +4,7 @@
 extern int gw, gh;                 /* tamano de pantalla */
 extern uint32_t *bb;               /* backbuffer gw*gh, formato 0x00RRGGBB */
 int  gfx_init(uint32_t *front, int w, int h, int pitch_bytes);   /* 0 ok */
+void gfx_set_bpp(int bpp);                                         /* 32 (normal) o 24 */
 void gfx_present(void);
 void gfx_front_px(int x, int y, uint32_t c);                     /* escribe directo al frontbuffer (cursor) */
 void gfx_present_rect(int x, int y, int w, int h);

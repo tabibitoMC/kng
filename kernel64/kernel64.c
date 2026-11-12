@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include "kng.h"
+void gfx_set_bpp(int bpp);
 #include "kbd.h"
 #include "gui.h"
 #include "net.h"
@@ -424,7 +425,8 @@ static void idle64(void){ net_poll(); if(gui_mode) gui_frame(); }
 void kmain64(uint32_t magic, struct mb_info *mi){
     serial_init(); clear();
     uint32_t fb_addr=0,fb_pitch=0,fb_w=0,fb_h=0,fb_ok=0;
-    if(magic==0x2BADB002 && (mi->flags&(1u<<12)) && mi->fb_type==1 && mi->fb_bpp==32 && mi->fb_hi==0 && mi->fb_w>=640 && mi->fb_h>=480){
+    if(magic==0x2BADB002 && (mi->flags&(1u<<12)) && mi->fb_type==1 && (mi->fb_bpp==32||mi->fb_bpp==24) && mi->fb_hi==0 && mi->fb_w>=640 && mi->fb_h>=480){
+        gfx_set_bpp(mi->fb_bpp);
         fb_addr=mi->fb_lo; fb_pitch=mi->fb_pitch; fb_w=mi->fb_w; fb_h=mi->fb_h; fb_ok=1; }
     kprintf("== kng-kernel %s (%s) :: Konigreich OS ==\n",KNG_VERSION,KNG_ARCH);
     if(magic!=0x2BADB002){ kprintf("Arranque no Multiboot (magic=0x%x). Detenido.\n",magic); for(;;) __asm__ volatile("hlt"); }

@@ -6,7 +6,7 @@ faltan=""
 for c in gcc make grub-mkrescue xorriso mformat objcopy python3; do command -v "$c" >/dev/null || faltan="$faltan $c"; done
 if [ -n "$faltan" ] || [ ! -d /usr/lib/grub/i386-pc ]; then
   echo "Faltan herramientas:$faltan"
-  echo "Instala con:  sudo apt update && sudo apt install -y build-essential gcc-multilib grub-pc-bin xorriso mtools python3"
+  echo "Instala con:  sudo apt update && sudo apt install -y build-essential gcc-multilib grub-pc-bin grub-efi-amd64-bin xorriso mtools python3"
   exit 1
 fi
 make -C kernel clean >/dev/null; make -C kernel64 clean >/dev/null
@@ -30,12 +30,12 @@ set default=1
 insmod all_video
 insmod gzio
 menuentry "Königreich OS - 32 bits (grafico)" {
-    set gfxpayload=1024x768x32
+    set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24
     multiboot /boot/kng-kernel.elf
     boot
 }
 menuentry "Königreich OS - 64 bits (grafico)" {
-    set gfxpayload=1024x768x32
+    set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24
     multiboot /boot/kng-kernel64.elf
     module /boot/rootfs.cpio
     boot
@@ -60,7 +60,7 @@ set default=0
 insmod all_video
 insmod gzio
 menuentry "Königreich OS - 64 bits con Debian (grafico)" {
-    set gfxpayload=1024x768x32
+    set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24
     multiboot /boot/kng-kernel64.elf
     module /boot/debian.cpio.gz
     module /boot/kng-extra.cpio
@@ -74,21 +74,28 @@ menuentry "Königreich OS - 64 bits con Debian (modo texto)" {
     boot
 }
 menuentry "Königreich OS - 64 bits (grafico, sin Debian)" {
-    set gfxpayload=1024x768x32
+    set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24
     multiboot /boot/kng-kernel64.elf
     module /boot/rootfs.cpio
     boot
 }
 menuentry "Königreich OS - 32 bits (grafico)" {
-    set gfxpayload=1024x768x32
+    set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24
     multiboot /boot/kng-kernel.elf
     boot
 }
 CFG
 fi
-# -d fuerza la plataforma BIOS (i386-pc): el kernel usa Multiboot 1, que GRUB UEFI no carga.
-grub-mkrescue -d /usr/lib/grub/i386-pc -o out/KonigreichOS-kng.iso build/iso 2>&1 | tail -3
+# ISO hibrida: arranca con BIOS/Legacy y, si esta instalado grub-efi-amd64-bin, tambien en PCs solo UEFI.
+# (En UEFI sin "CSM/Legacy" algunos PC no emulan teclado/raton PS/2: si no responden, activa Legacy/CSM en la BIOS.)
+if [ -d /usr/lib/grub/x86_64-efi ]; then
+  grub-mkrescue -o out/KonigreichOS-kng.iso build/iso 2>&1 | tail -3
+else
+  echo "[aviso] sin grub-efi-amd64-bin: el ISO solo arrancara en modo BIOS/Legacy (sudo apt install grub-efi-amd64-bin)"
+  grub-mkrescue -d /usr/lib/grub/i386-pc -o out/KonigreichOS-kng.iso build/iso 2>&1 | tail -3
+fi
 ( cd out && sha256sum KonigreichOS-kng.iso > KonigreichOS-kng.iso.sha256 )
 ls -la out/KonigreichOS-kng.iso
 echo "Listo: out/KonigreichOS-kng.iso"
-echo "Maquina virtual: BIOS/Legacy (no UEFI), 256 MB de RAM o mas (con Debian: 4 GB o mas), tarjeta de red Intel e1000 (o RTL8139) en NAT, raton PS/2."
+echo "PC real o VM: mejor en BIOS/Legacy (CSM). RAM: 256 MB o mas (con Debian: 4 GB o mas). Red: solo tarjetas Intel e1000/RTL8139 (en PC real puede no haber red)."
+echo "USB booteable: Rufus en modo \"imagen DD\" o balenaEtcher."

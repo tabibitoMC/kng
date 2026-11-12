@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       guion: { description: "guion de la prueba", default: "tools/ci/gui-archivos.txt" }
+      maquina: { description: "pc | q35-sin-red (PC moderno sin tarjeta compatible) | uefi", default: "pc" }
 jobs:
   gui:
     runs-on: ubuntu-latest
@@ -11,15 +12,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Herramientas
-        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 gcc gcc-multilib binutils python3 grub-pc-bin xorriso mtools cpio
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 gcc gcc-multilib binutils python3 grub-pc-bin grub-efi-amd64-bin ovmf xorriso mtools cpio
       - name: Compilar
         run: make -C kernel64 && python3 tools/mkrootfs.py --debian kng-extra.cpio 2>/dev/null
       - name: Probar el escritorio
         run: |
           mkdir -p g/boot/grub; cp kernel64/kng-kernel64.elf kng-extra.cpio g/boot/
           printf 'set timeout=0\nmenuentry "kng" {\n  multiboot /boot/kng-kernel64.elf\n  module /boot/kng-extra.cpio\n  boot\n}\n' > g/boot/grub/grub.cfg
-          grub-mkrescue -d /usr/lib/grub/i386-pc -o g.iso g 2>&1 | tail -1
-          python3 tools/ci_gui.py "${{ inputs.guion }}" -- qemu-system-x86_64 -monitor unix:/tmp/gmon.sock,server,nowait -cdrom g.iso -boot d -vga std -display none -serial stdio -m 2G > gui.log 2>&1 || true
+          sed -i 's/multiboot \/boot/set gfxpayload=1024x768x32,800x600x32,1024x768x24,auto\n  multiboot \/boot/' g/boot/grub/grub.cfg
+          grub-mkrescue -o g.iso g 2>&1 | tail -1
+          case "${{ inputs.maquina }}" in
+            q35-sin-red) EXTRA="-machine q35 -nic none -m 8G" ;;
+            uefi) EXTRA="-bios /usr/share/ovmf/OVMF.fd -m 2G" ;;
+            *) EXTRA="-m 2G" ;;
+          esac
+          python3 tools/ci_gui.py "${{ inputs.guion }}" -- qemu-system-x86_64 -monitor unix:/tmp/gmon.sock,server,nowait -cdrom g.iso -boot d -vga std -display none -serial stdio $EXTRA > gui.log 2>&1 || true
           tail -60 gui.log
       - uses: actions/upload-artifact@v4
         if: always()
