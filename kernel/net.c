@@ -144,7 +144,7 @@ static int e_init(u32 bar0){
     for(int i=0;i<E_NRX;i++){ e_rxd[i].addr=(uint64_t)(uintptr_t)e_rxb[i]; e_rxd[i].status=0; e_rxd[i].errors=0; e_rxd[i].length=0; }
     ew(0x2800,(u32)(uintptr_t)e_rxd); ew(0x2804,0); ew(0x2808,E_NRX*16); ew(0x2810,0); ew(0x2818,E_NRX-1);
     e_rx_cur=0;
-    if(e_igb){ ew(0xC00C,0x02000000u|2);              /* SRRCTL: descriptores heredados, buffer de 2 KB */
+    if(e_igb){ ew(0xC00C,2);                          /* SRRCTL: descriptores heredados (tipo 000), buffer de 2 KB */
                ew(0xC000,(u32)(uintptr_t)e_rxd); ew(0xC004,0); ew(0xC008,E_NRX*16); ew(0xC010,0); ew(0xC018,E_NRX-1);
                ew(0xC028,er(0xC028)|(1u<<25)); for(int t=0;t<1000&&!(er(0xC028)&(1u<<25));t++) msleep(1); ew(0xC018,E_NRX-1); }
     ew(0x100,(1u<<1)|(1u<<15)|(1u<<26));           /* RCTL: EN | BAM | SECRC, buffer de 2048 */

@@ -15,7 +15,7 @@ jobs:
         run: |
           for m in e1000 e1000e igb rtl8139 virtio-net-pci pcnet; do
             QMON=/tmp/qmon.sock KELF=kernel64/kng-kernel64-text.elf python3 tools/ci_drive.py tools/ci/red.txt red-$m.log -- qemu-system-x86_64 -monitor unix:/tmp/qmon.sock,server,nowait -kernel kernel64/kng-kernel64-text.elf -display none -serial stdio -m 1G -nic user,model=$m > /dev/null 2>&1 || true
-            if grep -aqiE "bytes from|respuesta|tiempo=|ms" red-$m.log && grep -aqE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" red-$m.log; then r=OK; else r=FALLO; fi
+            if grep -aq "respuesta de 10.0.2.2" red-$m.log; then r=OK; else r=FALLO; fi
             echo "PRUEBA red $m: $r   ($(grep -a -m1 -E 'Red:|tarjeta' red-$m.log | tr -d '\r' | cut -c1-90))"
           done
           for m in e1000e igb; do echo "----- $m"; grep -a -E "Red|ping|dns|IP|ms|tarjeta" red-$m.log | head -12; done
