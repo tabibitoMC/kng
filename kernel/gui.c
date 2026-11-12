@@ -210,6 +210,7 @@ static Win *open_app(int type);
 static void open_file(FsNode *n);
 static int xs_w=1024, xs_h=640;
 void gui_open_xscreen(int w,int h){ xs_w=w; xs_h=h; open_app(A_XSCR); dirty=1; }
+void gui_open_terminal(void){ open_app(A_TERM); dirty=1; }                    /* opcion de arranque 'terminal' (pruebas automaticas del modo grafico) */
 int  gui_screen_size(int *w,int *h){ if(!gw) return -1; *w=gw; *h=gh; return 0; }
 
 static Win *term_target;

@@ -60,7 +60,8 @@ static inline int slab_cap(int idx){ return idx<4?64:256; }
 #define MAXFD 512
 #define MAXT  512
 #define KSTK  32768
-struct Pipe { u8 buf[4096]; int r,w,count,readers,writers; };
+#define PIPESZ 65536                                                 /* como Linux: 64 KB; con 4 KB un archivo de 300 MB daba 80 000 bloqueos */
+struct Pipe { u8 buf[PIPESZ]; int r,w,count,readers,writers; };
 /* Objetos del kernel que se ven como descriptores (eventfd, epoll, timerfd, archivos generados como /proc) */
 #define EP_MAX 256
 typedef struct KObj {
@@ -206,7 +207,7 @@ static void fd_dup_into(FD *d,const FD *s){ *d=*s; d->cloexec=0; if(s->type==3) 
 #include "sys_tty.inc"
 static int pipe_ready(Task *t){
     FD *f=&t->pr->fd[t->pipe_fd]; if(f->type!=3&&f->type!=4) return 1; struct Pipe *p=f->pipe;
-    return f->type==3 ? (p->count>0||p->writers<=0) : (p->count<4096||p->readers<=0);
+    return f->type==3 ? (p->count>0||p->writers<=0) : (p->count<PIPESZ||p->readers<=0);
 }
 static void poll_wakeups(void){
     u32 now=kticks(); int any_read=0, any_fg=0;
@@ -260,6 +261,7 @@ static int block_fn(int (*fn)(Task*),u32 tmo){
     return INTR()?1:0;
 }
 void proc_pump(void){ if(!proc_ready) return; poll_wakeups(); if(any_ready_user()) schedule(); }
+int proc_has_ready(void){ return proc_ready && any_ready_user(); }   /* el bucle del escritorio no debe dormir (hlt) si hay procesos listos */
 
 /* ---------- salida de procesos ---------- */
 static void futex_wake(Proc *pr,u64 addr,int n,int *woken){
@@ -517,9 +519,11 @@ static u64 fd_read(u64 fdn,u64 buf,u64 n){
     case 3: {
         struct Pipe *p=f->pipe;
         for(;;){
-            if(p->count>0){ u64 k=0; u8 tmp[512]; while(k<n&&p->count>0){ u64 c=n-k; if(c>sizeof tmp) c=sizeof tmp; u64 j=0; while(j<c&&p->count>0){ tmp[j++]=p->buf[p->r]; p->r=(p->r+1)%4096; p->count--; }
-                    if(ucopy_to(CP,buf+k,tmp,j)){ return RET_ERR(EFAULT); }
-                    k+=j; } return k; }
+            if(p->count>0){ u64 k=0;
+                while(k<n&&p->count>0){ u64 c=n-k; if(c>(u64)p->count) c=(u64)p->count; if(c>(u64)(PIPESZ-p->r)) c=(u64)(PIPESZ-p->r);   /* trozo contiguo del anillo */
+                    if(ucopy_to(CP,buf+k,p->buf+p->r,c)){ return k?k:RET_ERR(EFAULT); }
+                    p->r=(p->r+(int)c)%PIPESZ; p->count-=(int)c; k+=c; }
+                return k; }
             if(p->writers<=0) return 0;
             if(f->flags&0x800) return RET_ERR(EAGAIN);
             if(INTR()) return RET_ERR(EINTR);
@@ -578,10 +582,10 @@ static u64 fd_write(u64 fdn,u64 buf,u64 n){
         struct Pipe *p=f->pipe;
         while(done<n){
             if(p->readers<=0){ sig_self(13); return done?done:RET_ERR(EPIPE); }
-            if(p->count>=4096){ if(f->flags&0x800) return done?done:RET_ERR(EAGAIN); if(INTR()) return done?done:RET_ERR(EINTR); cur->pipe_fd=(int)fdn; block(T_PIPE); continue; }
-            u64 c=n-done; if(c>sizeof tmp) c=sizeof tmp; if(c>(u64)(4096-p->count)) c=(u64)(4096-p->count);
-            if(ucopy_from(CP,tmp,buf+done,c)) return done?done:RET_ERR(EFAULT);
-            for(u64 j=0;j<c;j++){ p->buf[p->w]=tmp[j]; p->w=(p->w+1)%4096; p->count++; } done+=c;
+            if(p->count>=PIPESZ){ if(f->flags&0x800) return done?done:RET_ERR(EAGAIN); if(INTR()) return done?done:RET_ERR(EINTR); cur->pipe_fd=(int)fdn; block(T_PIPE); continue; }
+            u64 c=n-done; if(c>(u64)(PIPESZ-p->count)) c=(u64)(PIPESZ-p->count); if(c>(u64)(PIPESZ-p->w)) c=(u64)(PIPESZ-p->w);   /* trozo contiguo del anillo */
+            if(ucopy_from(CP,p->buf+p->w,buf+done,c)) return done?done:RET_ERR(EFAULT);
+            p->w=(p->w+(int)c)%PIPESZ; p->count+=(int)c; done+=c;
         }
         return n; }
     case 5: return sock_send_fd(fdn,buf,n,0,0,0,0,0,0);

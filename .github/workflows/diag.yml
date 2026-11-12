@@ -5,6 +5,7 @@ on:
     inputs:
       lista: { description: "archivo de comandos", default: "tools/ci/diag.txt" }
       ram: { description: "RAM de la VM", default: "3G" }
+      grafico: { description: "modo grafico (ISO con GRUB, escritorio y terminal grafica)", default: "no" }
 jobs:
   diag:
     runs-on: ubuntu-latest
@@ -12,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Herramientas
-        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 gcc gcc-multilib binutils python3 debootstrap debian-archive-keyring cpio gzip
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 gcc gcc-multilib binutils python3 debootstrap debian-archive-keyring cpio gzip grub-pc-bin xorriso mtools
       - name: Compilar kernel de 64 bits
         run: make -C kernel64
       - name: Debian real (cache)
@@ -29,7 +30,15 @@ jobs:
           ( cd www && python3 -m http.server 18090 > ../http.log 2>&1 & )
           ( python3 tools/ci_upload.py 18091 > upload.log 2>&1 & )
           sleep 1
-          QMON=/tmp/qmon.sock KELF=kernel64/kng-kernel64-text.elf python3 tools/ci_drive.py "${{ inputs.lista }}" diag.log -- qemu-system-x86_64 -monitor unix:/tmp/qmon.sock,server,nowait -kernel kernel64/kng-kernel64-text.elf -initrd debian.cpio,kng-extra.cpio -display none -serial stdio -m ${{ inputs.ram }} -netdev user,id=n0 -object filter-dump,id=f1,netdev=n0,file=net.pcap -device e1000,netdev=n0 || true
+          if [ "${{ inputs.grafico }}" = "si" ]; then
+            # ISO minima con GRUB: GRUB pone el modo de video (igual que en la VM del usuario) y la opcion 'terminal' abre la terminal grafica
+            mkdir -p gui/boot/grub; cp kernel64/kng-kernel64.elf debian.cpio kng-extra.cpio gui/boot/
+            printf 'set timeout=0\nmenuentry "kng" {\n  multiboot /boot/kng-kernel64.elf terminal\n  module /boot/debian.cpio\n  module /boot/kng-extra.cpio\n  boot\n}\n' > gui/boot/grub/grub.cfg
+            grub-mkrescue -d /usr/lib/grub/i386-pc -o gui.iso gui 2>&1 | tail -1
+            KNG_PROMPT='/> ' QMON=/tmp/qmon.sock KELF=kernel64/kng-kernel64.elf python3 tools/ci_drive.py "${{ inputs.lista }}" diag.log -- qemu-system-x86_64 -monitor unix:/tmp/qmon.sock,server,nowait -cdrom gui.iso -boot d -vga std -display none -serial stdio -m ${{ inputs.ram }} -netdev user,id=n0 -object filter-dump,id=f1,netdev=n0,file=net.pcap -device e1000,netdev=n0 || true
+          else
+            QMON=/tmp/qmon.sock KELF=kernel64/kng-kernel64-text.elf python3 tools/ci_drive.py "${{ inputs.lista }}" diag.log -- qemu-system-x86_64 -monitor unix:/tmp/qmon.sock,server,nowait -kernel kernel64/kng-kernel64-text.elf -initrd debian.cpio,kng-extra.cpio -display none -serial stdio -m ${{ inputs.ram }} -netdev user,id=n0 -object filter-dump,id=f1,netdev=n0,file=net.pcap -device e1000,netdev=n0 || true
+          fi
           echo "=== diag ==="; cat diag.log
           for f in subidas/*.xwd; do [ -f "$f" ] && python3 tools/xwd2png.py "$f" "${f%.xwd}.png" || true; done
           sudo apt-get install -y tcpdump > /dev/null 2>&1 || true

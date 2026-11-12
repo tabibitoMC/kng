@@ -101,6 +101,8 @@ void proc_list(void);
 void proc_ps(void);
 int  proc_kill(int pid,int sig);
 void proc_pump(void);
+void gui_open_terminal(void);
+int proc_has_ready(void);
 void proc_set_idle(void (*f)(void));
 void rootfs_load(uint32_t n,uint32_t addr);
 void isr_handler64(struct regs *r){
@@ -184,6 +186,7 @@ static void reg_cut(u64 rs,u64 re){
         else hreg[i].e=rs;
     }
 }
+static int cmd_has(const char *s,const char *w){ for(;*s;s++) if(k_startswith(s,w)) return 1; return 0; }
 static void mem_init(struct mb_info *mi){
     u64 kend=((u64)(uintptr_t)&_kend+0xFFF)&~0xFFFull;
     nhreg=0;
@@ -445,12 +448,13 @@ void kmain64(uint32_t magic, struct mb_info *mi){
         if(gui_init((uint32_t*)(uintptr_t)fb_addr,(int)fb_w,(int)fb_h,(int)fb_pitch)==0){
             gui_mode=1;
             if((mi->flags&8) && mi->mods_n) rootfs_load(mi->mods_n,mi->mods_addr);
+            if((mi->flags&4)&&mi->cmdline&&cmd_has((const char*)(uintptr_t)mi->cmdline,"terminal")) gui_open_terminal();   /* linea de GRUB con 'terminal': abre la terminal sola */
             for(;;){
                 { int rb; while((rb=rk_pop())>=0) gui_rawkey(rb); }
                 int c; while((c=getc_nb())>=0) gui_key(c);
                 struct mev e; while(mouse_pop(&e)) gui_mouse_event(e.dx,e.dy,e.b);
                 net_poll(); proc_pump(); gui_frame();
-                __asm__ volatile("sti;hlt");
+                if(!proc_has_ready()) __asm__ volatile("sti;hlt"); else __asm__ volatile("sti");   /* dormir solo si no hay procesos listos: si no, cada bloqueo costaba un tic de 10 ms */
             }
         }
         kprintf("[!] no se pudo iniciar la interfaz grafica (memoria). Modo texto.\n");

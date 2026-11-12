@@ -4,7 +4,7 @@ Uso: ci_drive.py <archivo-de-comandos> <registro.log> -- <comando de qemu...>
 Cada linea del archivo:  [segundos|]comando     (segundos = tiempo maximo de espera, por omision 30). Las lineas con # se ignoran.
 Linea especial:  @esperar N   (espera N segundos sin mandar nada)
 Si hay un monitor de QEMU (variable QMON = ruta del socket) y la VM se cuelga, se vuelcan los registros y la pila con simbolos (variable KELF = kernel .elf)."""
-import subprocess, sys, time, threading, os, socket, re, bisect
+import os, subprocess, sys, time, threading, os, socket, re, bisect
 cmds_file, logf = sys.argv[1], sys.argv[2]
 qemu = sys.argv[sys.argv.index('--') + 1:]
 hang_vuelcos = []
@@ -65,14 +65,15 @@ def reader():
         log.write(b); log.flush()
 threading.Thread(target=reader, daemon=True).start()
 cmd_actual = ['']
+PROMPT = os.environ.get('KNG_PROMPT', 'kng> ').encode()   # en modo grafico la terminal muestra '/> '
 def listo():
     with lock:
         b = bytes(buf)
         q = time.time() - last[0]
-        if b[-5:] == b'kng> ' and q > 0.7: return True
+        if b.endswith(PROMPT) and q > 0.7: return True
         if cmd_actual[0].rstrip().endswith('&'):          # programa en segundo plano: basta con que vuelva el indicador
             i = b.find(cmd_actual[0].encode())
-            return i >= 0 and b.find(b'kng> ', i) >= 0 and q > 0.2
+            return i >= 0 and b.find(PROMPT, i) >= 0 and q > 0.2
         return False
 def espera(t):
     fin = time.time() + t
@@ -81,7 +82,7 @@ def espera(t):
         if listo(): return True
         time.sleep(0.2)
     return False
-ok = espera(180)
+ok = espera(420)   # en modo grafico GRUB tarda en cargar los 143 MB de Debian
 if not ok: sys.stderr.write('[ci_drive] no aparecio el indicador inicial\n')
 for c in cmds:
     if c.startswith('@esperar'): time.sleep(float(c.split()[1])); continue
