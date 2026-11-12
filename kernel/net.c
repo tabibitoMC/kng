@@ -89,6 +89,7 @@ static struct edesc e_txd[E_NTX] __attribute__((aligned(128)));
 static u8 e_rxb[E_NRX][2048] __attribute__((aligned(16)));
 static u8 e_txb[E_NTX][2048] __attribute__((aligned(16)));
 static volatile u8 *e_mmio; static int e_rx_cur, e_tx_cur;
+static int e_igb;                                    /* 82576/I210/I211/I350: hay que encender cada cola */
 uint32_t net_mmio_addr(void){ return (uint32_t)(uintptr_t)e_mmio; }
 static u32 er(u32 r){ return *(volatile u32*)(e_mmio+r); }
 static void ew(u32 r,u32 v){ *(volatile u32*)(e_mmio+r)=v; }
@@ -102,7 +103,7 @@ static int e_send(const u8 *f,int n){
     d->addr=(uint64_t)(uintptr_t)e_txb[e_tx_cur]; d->length=(u16)n; d->cmd=0x0B; d->status=0;   /* EOP|IFCS|RS */
     e_tx_cur=(e_tx_cur+1)%E_NTX;
     __asm__ volatile("" ::: "memory");
-    ew(0x3818,(u32)e_tx_cur);
+    ew(e_igb?0xE018:0x3818,(u32)e_tx_cur);
     return 0;
 }
 static int e_recv(u8 *buf,int max){
@@ -110,13 +111,20 @@ static int e_recv(u8 *buf,int max){
     if(!(d->status&1)) return 0;
     int n=d->length, bad=d->errors!=0 || n>max || n<14;
     if(!bad) memcpy(buf,e_rxb[e_rx_cur],(size_t)n);
-    d->status=0; ew(0x2818,(u32)e_rx_cur); e_rx_cur=(e_rx_cur+1)%E_NRX;
+    d->status=0; ew(e_igb?0xC018:0x2818,(u32)e_rx_cur); e_rx_cur=(e_rx_cur+1)%E_NRX;
     return bad?-1:n;
 }
 static int e_link(void){ return (er(0x8)&2)!=0; }
-static const struct nicdrv e_drv={"Intel e1000",e_send,e_recv,e_link};
+static const struct nicdrv e_drv={"Intel e1000/e1000e/igb",e_send,e_recv,e_link};
 static const u16 e_ids[]={0x1000,0x1001,0x1004,0x1008,0x1009,0x100C,0x100D,0x100E,0x100F,0x1010,0x1011,0x1012,0x1013,
-    0x1015,0x1016,0x1017,0x1018,0x1019,0x101A,0x101D,0x1026,0x1027,0x1028,0x1075,0x1076,0x1077,0x1078,0x1079,0x107A,0x107B,0x107C,0x10B5,0x10D3};
+    0x1015,0x1016,0x1017,0x1018,0x1019,0x101A,0x101D,0x1026,0x1027,0x1028,0x1075,0x1076,0x1077,0x1078,0x1079,0x107A,0x107B,0x107C,0x10B5,0x10D3,
+    /* e1000e: 82571-82574, 82583 y los de PC/laptop Intel (I217, I218, I219) */
+    0x105E,0x105F,0x1060,0x107D,0x107E,0x107F,0x108B,0x108C,0x109A,0x10A4,0x10BC,0x10B9,0x10D5,0x10F6,0x150C,0x10EA,0x10EB,0x10EF,0x10F0,
+    0x153A,0x153B,0x155A,0x1559,0x15A0,0x15A1,0x15A2,0x15A3,0x156F,0x1570,0x15B7,0x15B8,0x15B9,0x15BB,0x15BC,0x15BD,0x15BE,0x15D6,0x15D7,0x15D8,
+    0x15DF,0x15E0,0x15E1,0x15E2,0x15E3,0x0D4C,0x0D4D,0x0D4E,0x0D4F,0x0D53,0x0D55,0x15F4,0x15F5,0x15F9,0x15FA,0x15FB,0x15FC,0x1A1C,0x1A1D,0x1A1E,0x1A1F,
+    0x550A,0x550B,0x550C,0x550D,0x550E,0x550F,0x5510,0x5511,0x57A0,0x57A1};
+static const u16 igb_ids[]={0x10C9,0x10E6,0x10E7,0x10E8,0x1526,0x150A,0x1518,0x150D,0x1533,0x1536,0x1537,0x1538,0x1539,0x157B,0x157C,0x15F6,0x1521,0x1522,0x1523,0x1524};
+
 static int e_init(u32 bar0){
     e_mmio=(volatile u8*)(uintptr_t)bar0;
     ew(0x0D8,0xFFFFFFFFu);                         /* IMC: sin interrupciones (se atiende por sondeo) */
@@ -136,12 +144,75 @@ static int e_init(u32 bar0){
     for(int i=0;i<E_NRX;i++){ e_rxd[i].addr=(uint64_t)(uintptr_t)e_rxb[i]; e_rxd[i].status=0; e_rxd[i].errors=0; e_rxd[i].length=0; }
     ew(0x2800,(u32)(uintptr_t)e_rxd); ew(0x2804,0); ew(0x2808,E_NRX*16); ew(0x2810,0); ew(0x2818,E_NRX-1);
     e_rx_cur=0;
+    if(e_igb){ ew(0xC00C,0x02000000u|2);              /* SRRCTL: descriptores heredados, buffer de 2 KB */
+               ew(0xC000,(u32)(uintptr_t)e_rxd); ew(0xC004,0); ew(0xC008,E_NRX*16); ew(0xC010,0); ew(0xC018,E_NRX-1);
+               ew(0xC028,er(0xC028)|(1u<<25)); for(int t=0;t<1000&&!(er(0xC028)&(1u<<25));t++) msleep(1); ew(0xC018,E_NRX-1); }
     ew(0x100,(1u<<1)|(1u<<15)|(1u<<26));           /* RCTL: EN | BAM | SECRC, buffer de 2048 */
     for(int i=0;i<E_NTX;i++){ e_txd[i].status=1; e_txd[i].cmd=0; e_txd[i].length=0; }
     ew(0x3800,(u32)(uintptr_t)e_txd); ew(0x3804,0); ew(0x3808,E_NTX*16); ew(0x3810,0); ew(0x3818,0);
     e_tx_cur=0;
+    if(e_igb){ ew(0xE000,(u32)(uintptr_t)e_txd); ew(0xE004,0); ew(0xE008,E_NTX*16); ew(0xE010,0); ew(0xE018,0);
+               ew(0xE028,er(0xE028)|(1u<<25)); for(int t=0;t<1000&&!(er(0xE028)&(1u<<25));t++) msleep(1); }
     ew(0x410,0x0060200Au);                          /* TIPG */
     ew(0x400,(1u<<1)|(1u<<3)|(0x0Fu<<4)|(0x40u<<12));   /* TCTL: EN | PSP | CT | COLD */
+    return 0;
+}
+
+/* ===== Realtek RTL8111/8168/8169/8101 (gigabit "r8169"): la tarjeta de casi todas las placas de escritorio ===== */
+struct gdesc { u32 cmd, vlan, lo, hi; };
+#define G_NRX 32
+#define G_NTX 8
+static struct gdesc g_rxd[G_NRX] __attribute__((aligned(256)));
+static struct gdesc g_txd[G_NTX] __attribute__((aligned(256)));
+static u8 g_rxb[G_NRX][2048] __attribute__((aligned(16)));
+static u8 g_txb[G_NTX][2048] __attribute__((aligned(16)));
+static u16 g_io; static int g_rx_cur, g_tx_cur;
+static int g_send(const u8 *f,int n){
+    volatile struct gdesc *d=&g_txd[g_tx_cur];
+    int t=200000; while((d->cmd&0x80000000u) && --t) __asm__ volatile("" ::: "memory");
+    if(!t||n>1792) return -1;
+    memcpy(g_txb[g_tx_cur],f,(size_t)n);
+    if(n<60){ memset(g_txb[g_tx_cur]+n,0,(size_t)(60-n)); n=60; }
+    d->lo=(u32)(uintptr_t)g_txb[g_tx_cur]; d->hi=0; d->vlan=0;
+    __asm__ volatile("" ::: "memory");
+    d->cmd=0x80000000u|0x20000000u|0x10000000u|(g_tx_cur==G_NTX-1?0x40000000u:0)|(u32)n;   /* OWN | FS | LS | (EOR) | largo */
+    g_tx_cur=(g_tx_cur+1)%G_NTX;
+    io_o8((u16)(g_io+0x38),0x40);                                 /* TPPoll: hay algo para enviar */
+    return 0;
+}
+static int g_recv(u8 *buf,int max){
+    volatile struct gdesc *d=&g_rxd[g_rx_cur];
+    if(d->cmd&0x80000000u) return 0;                              /* aun es de la tarjeta */
+    u32 c=d->cmd; int n=(int)(c&0x3FFF)-4, bad=((c&0x30000000u)!=0x30000000u)||(c&0x00200000u)||n<14||n>max;
+    if(!bad) memcpy(buf,g_rxb[g_rx_cur],(size_t)n);
+    d->vlan=0; d->lo=(u32)(uintptr_t)g_rxb[g_rx_cur]; d->hi=0;
+    __asm__ volatile("" ::: "memory");
+    d->cmd=0x80000000u|(g_rx_cur==G_NRX-1?0x40000000u:0)|2048u;
+    g_rx_cur=(g_rx_cur+1)%G_NRX;
+    return bad?-1:n;
+}
+static int g_link(void){ return (io_i8((u16)(g_io+0x6C))&2)!=0; }
+static const struct nicdrv g_drv={"Realtek RTL8111/8168",g_send,g_recv,g_link};
+static int g_init(u16 io){
+    g_io=io;
+    io_o8((u16)(io+0x37),0x10); int t=200000; while((io_i8((u16)(io+0x37))&0x10) && --t);
+    if(!t) return -1;
+    for(int i=0;i<6;i++) mac[i]=io_i8((u16)(io+i));
+    io_o8((u16)(io+0x50),0xC0);                                   /* desbloquear la configuracion */
+    for(int i=0;i<G_NRX;i++){ g_rxd[i].vlan=0; g_rxd[i].lo=(u32)(uintptr_t)g_rxb[i]; g_rxd[i].hi=0; g_rxd[i].cmd=0x80000000u|(i==G_NRX-1?0x40000000u:0)|2048u; }
+    for(int i=0;i<G_NTX;i++){ g_txd[i].cmd=(i==G_NTX-1?0x40000000u:0); g_txd[i].vlan=0; g_txd[i].lo=0; g_txd[i].hi=0; }
+    g_rx_cur=g_tx_cur=0;
+    io_o16((u16)(io+0xE0),(u16)(io_i16((u16)(io+0xE0))|0x0008));   /* C+: lectura/escritura multiple por PCI */
+    io_o32((u16)(io+0x44),0x0000E70Eu);                           /* RxConfig: propia, multidifusion, difusion; DMA sin limite */
+    io_o8((u16)(io+0x37),0x04);                                   /* encender el transmisor antes de TxConfig */
+    io_o32((u16)(io+0x40),0x03000700u);                           /* TxConfig */
+    io_o16((u16)(io+0xDA),2047);                                  /* paquete maximo de recepcion */
+    io_o8((u16)(io+0xEC),0x3B);
+    io_o32((u16)(io+0x20),(u32)(uintptr_t)g_txd); io_o32((u16)(io+0x24),0);
+    io_o32((u16)(io+0xE4),(u32)(uintptr_t)g_rxd); io_o32((u16)(io+0xE8),0);
+    io_o16((u16)(io+0x3C),0);                                     /* sin interrupciones: se atiende por sondeo */
+    io_o8((u16)(io+0x37),0x0C);                                   /* recibir y transmitir */
+    io_o8((u16)(io+0x50),0x00);
     return 0;
 }
 
@@ -694,7 +765,8 @@ int net_init(void){
         u32 id=pci_rd(b,d,f,0);
         if((id&0xFFFF)==0xFFFF){ if(f==0) break; continue; }
         u16 ven=(u16)id, dev=(u16)(id>>16);
-        int is_e=0; if(ven==0x8086) for(unsigned i=0;i<sizeof e_ids/sizeof e_ids[0];i++) if(e_ids[i]==dev) is_e=1;
+        int is_e=0, is_igb=0; if(ven==0x8086){ for(unsigned i=0;i<sizeof e_ids/sizeof e_ids[0];i++) if(e_ids[i]==dev) is_e=1; for(unsigned i=0;i<sizeof igb_ids/sizeof igb_ids[0];i++) if(igb_ids[i]==dev) is_e=is_igb=1; }
+        int is_g=(ven==0x10EC&&(dev==0x8168||dev==0x8169||dev==0x8161||dev==0x8136||dev==0x8167||dev==0x2502||dev==0x2600))||(ven==0x1186&&dev==0x4300)||(ven==0x16EC&&dev==0x0116);
         int is_r=(ven==0x10EC && dev==0x8139);
         int is_p=(ven==0x1022 && (dev==0x2000||dev==0x2001));
         int is_v=(ven==0x1AF4 && dev==0x1000);
@@ -704,6 +776,12 @@ int net_init(void){
             for(int sh=12;sh>=0;sh-=4) h[k++]=hx[(dev>>sh)&15];
             h[k++]=' '; h[k]=0;
             if(k_strlen(pci_seen)+k<(int)sizeof pci_seen-1) scat(pci_seen,sizeof pci_seen,h); }
+        if(is_g){                                                         /* Realtek gigabit: por puertos de E/S (BAR0) */
+            u32 cmd=pci_rd(b,d,f,4); pci_wr(b,d,f,4,cmd|7);
+            u32 bar0=pci_rd(b,d,f,0x10); if(!(bar0&1)) continue;
+            if(g_init((u16)(bar0&~3u))) continue;
+            nic=&g_drv; nic_desc[0]=0; scat(nic_desc,sizeof nic_desc,nic->name); net_start(); return 0;
+        }
         if(is_p||is_v){
             u32 cmd=pci_rd(b,d,f,4); pci_wr(b,d,f,4,cmd|7);
             u32 bar0=pci_rd(b,d,f,0x10); if(!(bar0&1)) continue;
@@ -716,7 +794,7 @@ int net_init(void){
             u32 bar0=pci_rd(b,d,f,0x10);
             if(is_e && (bar0&1)) continue;
             if(is_r && !(bar0&1)) continue;
-            if(is_e){ if(e_init(bar0&~0xFu)) continue; nic=&e_drv; }
+            if(is_e){ e_igb=is_igb; if(e_init(bar0&~0xFu)) continue; nic=&e_drv; }
             else { if(r_init((u16)(bar0&~3u))) continue; nic=&r_drv; }
             nic_desc[0]=0; scat(nic_desc,sizeof nic_desc,nic->name);
             net_start(); return 0;
@@ -748,7 +826,7 @@ void net_poll(void){
 static void macstr(char *o){ static const char *hx="0123456789abcdef"; int k=0; for(int i=0;i<6;i++){ o[k++]=hx[mac[i]>>4]; o[k++]=hx[mac[i]&15]; if(i<5) o[k++]=':'; } o[k]=0; }
 void net_info(char *out,int max){
     out[0]=0;
-    if(!nic){ k_strcpy(out,"Red: sin tarjeta compatible (e1000, RTL8139, PCnet, virtio)",max);
+    if(!nic){ k_strcpy(out,"Red: sin tarjeta compatible (Intel e1000/e1000e/igb, Realtek 8139/8111/8168, PCnet, virtio)",max);
         if(pci_seen[0]){ scat(out,max,". Vista en PCI: "); scat(out,max,pci_seen); } else scat(out,max,". No hay ninguna tarjeta de red PCI en la VM.");
         return; }
     scat(out,max,"Red: "); scat(out,max,nic_desc);

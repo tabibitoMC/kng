@@ -1,0 +1,4 @@
+@esperar 6
+20|red
+40|ping 10.0.2.2
+40|dns example.com
