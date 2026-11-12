@@ -825,6 +825,13 @@ static u64 sys_dispatch(struct regs *r){
     case 35: case 230: { u64 ts=nr==35?a1:a3; u64 t[2]; if(ucopy_from(CP,t,ts,16)) return RET_ERR(EFAULT); u32 tk=(u32)(t[0]*100+t[1]/10000000ull); cur->wake_at=(u64)(kticks()+(tk?tk:1)); if(INTR()) return RET_ERR(EINTR); block(T_SLEEP); if(INTR()) return RET_ERR(EINTR); return 0; }
     case 39: return (u64)cur->pid;
     case 56: return sys_clone(r,a1,a2,a3,a4,a5);
+    case 435: {                                                     /* clone3(struct clone_args *, size): la via nueva de glibc para fork/vfork/pthread_create */
+        struct { u64 flags,pidfd,child_tid,parent_tid,exit_signal,stack,stack_size,tls,set_tid,set_tid_size,cgroup; } ca;
+        memset(&ca,0,sizeof ca); if(a2<64||a2>sizeof ca) return RET_ERR(a2<64?EINVAL:7);
+        if(ucopy_from(CP,&ca,a1,a2)) return RET_ERR(EFAULT);
+        if((ca.flags&0x1000)||ca.set_tid_size||ca.cgroup) return RET_ERR(EINVAL);   /* CLONE_PIDFD, set_tid, cgroup: no hay (glibc vuelve a clone) */
+        if(ca.exit_signal>64||ca.stack_size>(1ull<<40)) return RET_ERR(EINVAL);
+        return sys_clone(r,(ca.flags&0xFFFFFFFFull)|ca.exit_signal,ca.stack?ca.stack+ca.stack_size:0,ca.parent_tid,ca.child_tid,ca.tls); }
     case 57: return sys_clone(r,0x11,0,0,0,0);                 /* fork */
     case 58: return sys_clone(r,0x4111,0,0,0,0);               /* vfork: se trata como fork (copia) */
     case 59: { exec_quiet=1; u64 xr=sys_execve(r,a1,a2,a3); exec_quiet=0; return xr; }
@@ -894,8 +901,10 @@ static u64 sys_dispatch(struct regs *r){
     case 188: case 189: case 190: return RET_ERR(95);               /* setxattr: no soportado */
     case 191: case 192: case 193: case 197: case 198: case 199: return RET_ERR(61);   /* getxattr/removexattr: no existe */
     case 194: case 195: case 196: return 0;                         /* listxattr: ninguno */
-    default:
-        kprintf("[syscall] numero %lu aun no implementado -> ENOSYS\n",nr); return RET_ERR(ENOSYS);
+    default: {
+        static u8 avisado[512];                                     /* cada numero se avisa una sola vez: si no, parece un bucle en la pantalla */
+        if(nr<512&&!avisado[nr]){ avisado[nr]=1; kprintf("[syscall] numero %lu aun no implementado -> ENOSYS (se avisa una sola vez)\n",nr); }
+        return RET_ERR(ENOSYS); }
     }
 }
 
