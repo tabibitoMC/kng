@@ -1,0 +1,22 @@
+raton 600 500
+clic
+raton 677 724
+clic
+esperar 1
+captura 01-general
+raton 316 106
+clic
+captura 02-pantalla
+raton 440 106
+clic
+esperar 1
+captura 03-almacenamiento
+raton 564 106
+clic
+captura 04-sistema
+raton 316 106
+clic
+raton 536 216
+clic
+esperar 2
+captura 05-cambiada-a-1280x720
