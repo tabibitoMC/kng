@@ -104,6 +104,7 @@ void proc_ps(void);
 int  proc_kill(int pid,int sig);
 void proc_pump(void);
 void gui_open_terminal(void);
+void gui_open_installer(void);
 int proc_has_ready(void);
 void proc_set_idle(void (*f)(void));
 void rootfs_load(uint32_t n,uint32_t addr);
@@ -187,6 +188,12 @@ static void reg_cut(u64 rs,u64 re){
         else if(rs<=s) hreg[i].s=re;
         else hreg[i].e=rs;
     }
+}
+static const uint8_t *disk_image_mod(uint32_t *len){                    /* modulo que GRUB cargo con la imagen del instalador (MBR con particion EFI) */
+    for(uint32_t i=0;i<mbi_copy.mods_n&&i<16;i++){
+        const uint8_t *p=(const uint8_t*)(uintptr_t)mods_copy[i].s; uint32_t n=mods_copy[i].e-mods_copy[i].s;
+        if(n>=(1u<<20)&&p[510]==0x55&&p[511]==0xAA&&p[446+4]==0xEF){ if(len) *len=n; return p; } }
+    return 0;
 }
 static int cmd_has(const char *s,const char *w){ for(;*s;s++) if(k_startswith(s,w)) return 1; return 0; }
 static void mem_init(struct mb_info *mi){
@@ -457,7 +464,9 @@ void kmain64(uint32_t magic, struct mb_info *mi){
         if(gui_init((uint32_t*)(uintptr_t)fb_addr,(int)fb_w,(int)fb_h,(int)fb_pitch)==0){
             gui_mode=1;
             if((mi->flags&8) && mi->mods_n) rootfs_load(mi->mods_n,mi->mods_addr);
+            kng_disk_image=disk_image_mod;
             gui_storage_ready();
+            if((mi->flags&4)&&mi->cmdline&&cmd_has((const char*)(uintptr_t)mi->cmdline,"instalador")) gui_open_installer();   /* arranque del USB en modo instalador */
             if((mi->flags&4)&&mi->cmdline&&cmd_has((const char*)(uintptr_t)mi->cmdline,"terminal")) gui_open_terminal();   /* linea de GRUB con 'terminal': abre la terminal sola */
             for(;;){
                 { int rb; while((rb=rk_pop())>=0) gui_rawkey(rb); }

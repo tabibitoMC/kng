@@ -1,0 +1,7 @@
+40|instalar-sistema
+600|instalar-sistema SI
+20|mkdir Guardado
+20|cd Guardado
+20|write nota.txt hola desde el disco instalado
+20|cd /
+60|guardar

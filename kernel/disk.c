@@ -147,19 +147,99 @@ static int ahci_rw(uint64_t lba,void *buf,int n,int write){
     if(write&&a_cmd(0xEA,0,0,0,512)) return -1;                          /* vaciar la cache del disco */
     return 0;
 }
+
+/* ===== NVMe (SSD M.2): el disco de casi todas las PC nuevas. Una cola de E/S, sin interrupciones. ===== */
+static volatile uint8_t *nvr; static uint32_t nv_dstrd, nv_lbsz=512; static uint64_t nv_nlb;
+static uint8_t nv_asq[4096] __attribute__((aligned(4096))), nv_acq[4096] __attribute__((aligned(4096)));
+static uint8_t nv_iosq[4096] __attribute__((aligned(4096))), nv_iocq[4096] __attribute__((aligned(4096)));
+static uint8_t nv_prp[4096] __attribute__((aligned(4096)));
+static uint8_t nv_buf[65536] __attribute__((aligned(4096)));
+static uint8_t nv_id[4096] __attribute__((aligned(4096)));
+static int nv_ah, nv_at, nv_aph=1, nv_ih, nv_it, nv_iph=1; static uint16_t nv_cid;
+#define NVQ 64
+static inline uint32_t nv32(int o){ return *(volatile uint32_t*)(nvr+o); }
+static inline void nvw32(int o,uint32_t v){ *(volatile uint32_t*)(nvr+o)=v; }
+static inline void nvw64(int o,uint64_t v){ nvw32(o,(uint32_t)v); nvw32(o+4,(uint32_t)(v>>32)); }
+static int nv_cmd(int io,uint8_t opc,uint32_t nsid,uint64_t prp1,uint64_t prp2,uint32_t c10,uint32_t c11,uint32_t c12){
+    uint8_t *sq=io?nv_iosq:nv_asq, *cq=io?nv_iocq:nv_acq; int *tl=io?&nv_it:&nv_at, *hd=io?&nv_ih:&nv_ah, *ph=io?&nv_iph:&nv_aph;
+    uint32_t *e=(uint32_t*)(sq+*tl*64); memset(e,0,64);
+    e[0]=opc|((uint32_t)(++nv_cid)<<16); e[1]=nsid; e[6]=(uint32_t)prp1; e[7]=(uint32_t)(prp1>>32); e[8]=(uint32_t)prp2; e[9]=(uint32_t)(prp2>>32); e[10]=c10; e[11]=c11; e[12]=c12;
+    *tl=(*tl+1)%NVQ;
+    __asm__ volatile("mfence":::"memory");
+    nvw32(0x1000+(2*io)*(4<<nv_dstrd),(uint32_t)*tl);                   /* timbre de la cola de envio */
+    volatile uint32_t *c=(volatile uint32_t*)(cq+*hd*16);
+    for(long t=0;t<400000000L;t++){
+        if(((c[3]>>16)&1)==(uint32_t)*ph){
+            uint32_t st=(c[3]>>17)&0x7FFF;
+            *hd=(*hd+1)%NVQ; if(!*hd) *ph^=1;
+            nvw32(0x1000+(2*io+1)*(4<<nv_dstrd),(uint32_t)*hd);            /* timbre de la cola de respuestas */
+            return st?-1:0; }
+    }
+    return -1;
+}
+static int nvme_init(void){
+    for(int b=0;b<256;b++) for(int d=0;d<32;d++){
+        if((pcir(b,d,0,0)&0xFFFF)==0xFFFF) continue;
+        int nf=(pcir(b,d,0,0x0C)&0x00800000u)?8:1;
+        for(int fn=0;fn<nf;fn++){
+            if((pcir(b,d,fn,0)&0xFFFF)==0xFFFF||(pcir(b,d,fn,0x08)>>8)!=0x010802) continue;   /* almacenamiento masivo, NVM, NVMe */
+            uint32_t lo=pcir(b,d,fn,0x10), hi=(lo&4)?pcir(b,d,fn,0x14):0;
+            uint64_t bar=((uint64_t)hi<<32)|(lo&~0xFu);
+            if(sizeof(void*)==4&&hi) continue;                                 /* el kernel de 32 bits no llega por encima de 4 GB */
+            if(bar>=(16ull<<30)) continue;                                     /* fuera del mapa de identidad del kernel de 64 bits */
+            pciw(b,d,fn,0x04,pcir(b,d,fn,0x04)|0x06);
+            nvr=(volatile uint8_t*)(uintptr_t)bar;
+            uint64_t cap=(uint64_t)nv32(0)|((uint64_t)nv32(4)<<32); nv_dstrd=(uint32_t)((cap>>32)&0xF);
+            nvw32(0x14,0); for(long t=0;t<200000000L&&(nv32(0x1C)&1);t++);       /* apagar el controlador */
+            memset(nv_asq,0,4096); memset(nv_acq,0,4096); nv_ah=nv_at=0; nv_aph=1; nv_ih=nv_it=0; nv_iph=1;
+            nvw32(0x24,((NVQ-1)<<16)|(NVQ-1)); nvw64(0x28,(uint64_t)(uintptr_t)nv_asq); nvw64(0x30,(uint64_t)(uintptr_t)nv_acq);
+            nvw32(0x14,0x00460001u);                                           /* EN, entradas de 64/16 bytes, paginas de 4 KB */
+            long t=0; for(;t<400000000L&&!(nv32(0x1C)&1);t++); if(!(nv32(0x1C)&1)||(nv32(0x1C)&2)) continue;
+            memset(nv_id,0,4096);
+            if(nv_cmd(0,0x06,1,(uint64_t)(uintptr_t)nv_id,0,0,0,0)) continue;  /* identificar el espacio de nombres 1 */
+            nv_nlb=*(uint64_t*)nv_id; int f=nv_id[26]&0xF; uint32_t lbads=(*(uint32_t*)(nv_id+128+4*f)>>16)&0xFF;
+            nv_lbsz=1u<<lbads; if(!nv_nlb||(nv_lbsz!=512&&nv_lbsz!=4096)) continue;
+            memset(nv_iosq,0,4096); memset(nv_iocq,0,4096);
+            if(nv_cmd(0,0x05,0,(uint64_t)(uintptr_t)nv_iocq,0,((NVQ-1)<<16)|1,1,0)) continue;      /* crear cola de respuestas de E/S */
+            if(nv_cmd(0,0x01,0,(uint64_t)(uintptr_t)nv_iosq,0,((NVQ-1)<<16)|1,(1u<<16)|1,0)) continue;   /* crear cola de envio de E/S */
+            return 0;
+        }
+    }
+    return -1;
+}
+static int nv_io(uint64_t lba,int nblk,int write){                           /* nblk bloques del disco <-> nv_buf */
+    uint64_t p1=(uint64_t)(uintptr_t)nv_buf, p2=0; int bytes=nblk*(int)nv_lbsz;
+    if(bytes>4096){ uint64_t *l=(uint64_t*)nv_prp; int np=(bytes+4095)/4096; for(int i=1;i<np;i++) l[i-1]=p1+(uint64_t)i*4096; p2=np==2?l[0]:(uint64_t)(uintptr_t)nv_prp; }
+    return nv_cmd(1,write?0x01:0x02,1,p1,p2,(uint32_t)lba,(uint32_t)(lba>>32),(uint32_t)(nblk-1));
+}
+static int nvme_rw(uint64_t lba,void *buf,int n,int write){                  /* lba y n en sectores de 512 */
+    uint8_t *p=buf;
+    if(nv_lbsz==512){
+        while(n>0){ int c=n>128?128:n; if(write) memcpy(nv_buf,p,(size_t)c*512); if(nv_io(lba,c,write)) return -1; if(!write) memcpy(p,nv_buf,(size_t)c*512); p+=c*512; lba+=c; n-=c; }
+    } else {                                                                  /* discos de 4 KB por bloque: leer-modificar-escribir */
+        while(n>0){ uint64_t blk=lba/8; int off=(int)(lba%8), c=8-off; if(c>n) c=n;
+            if(nv_io(blk,1,0)) return -1;
+            if(write){ memcpy(nv_buf+off*512,p,(size_t)c*512); if(nv_io(blk,1,1)) return -1; } else memcpy(p,nv_buf+off*512,(size_t)c*512);
+            p+=c*512; lba+=c; n-=c; }
+    }
+    if(write&&nv_cmd(1,0x00,1,0,0,0,0,0)) return -1;                       /* vaciar la cache */
+    return 0;
+}
 /* ===== disco elegido ===== */
-static int drv;                                                           /* 0 ninguno, 1 ATA (IDE), 2 AHCI (SATA) */
+static int drv;                                                           /* 0 ninguno, 1 ATA (IDE), 2 AHCI (SATA), 3 NVMe */
 int disk_init(void){
     if(drv) return 0;
     if(ata_init()==0){ drv=1; return 0; }
     if(ahci_init()==0){ drv=2; return 0; }
+    if(nvme_init()==0){ drv=3; return 0; }
     return -1;
 }
-uint32_t disk_sectors(void){ if(drv==1) return nsect; if(drv==2) return a_nsect>0xFFFFFFFFull?0xFFFFFFFFu:(uint32_t)a_nsect; return 0; }
-const char *disk_model(void){ if(drv==1) return model; if(drv==2) return a_model[0]?a_model:"disco SATA"; return "(sin disco)"; }
-const char *disk_kind(void){ return drv==1?"IDE":drv==2?"SATA (AHCI)":"ninguno"; }
-int disk_read(uint32_t lba,void *buf,int n){ if(lba+(uint32_t)n>disk_sectors()) return -1; return drv==1?ata_read(lba,buf,n):drv==2?ahci_rw(lba,buf,n,0):-1; }
-int disk_write(uint32_t lba,const void *buf,int n){ if(lba+(uint32_t)n>disk_sectors()) return -1; return drv==1?ata_write(lba,buf,n):drv==2?ahci_rw(lba,(void*)buf,n,1):-1; }
+uint32_t disk_sectors(void){ if(drv==1) return nsect; if(drv==2) return a_nsect>0xFFFFFFFFull?0xFFFFFFFFu:(uint32_t)a_nsect;
+    if(drv==3){ uint64_t s2=nv_nlb*(nv_lbsz/512); return s2>0xFFFFFFFFull?0xFFFFFFFFu:(uint32_t)s2; } return 0; }
+const char *disk_model(void){ if(drv==1) return model; if(drv==2) return a_model[0]?a_model:"disco SATA"; if(drv==3) return "SSD NVMe"; return "(sin disco)"; }
+const char *disk_kind(void){ return drv==1?"IDE":drv==2?"SATA (AHCI)":drv==3?"NVMe":"ninguno"; }
+int disk_read(uint32_t lba,void *buf,int n){ if(lba+(uint32_t)n>disk_sectors()) return -1; return drv==1?ata_read(lba,buf,n):drv==2?ahci_rw(lba,buf,n,0):drv==3?nvme_rw(lba,buf,n,0):-1; }
+int disk_write(uint32_t lba,const void *buf,int n){ if(lba+(uint32_t)n>disk_sectors()) return -1; return drv==1?ata_write(lba,buf,n):drv==2?ahci_rw(lba,(void*)buf,n,1):drv==3?nvme_rw(lba,(void*)buf,n,1):-1; }
 #endif
 
 /* ---- KNGFS: sector 0 = firma + tamano + suma; sectores 1.. = arbol serializado ---- */
@@ -171,33 +251,66 @@ static uint32_t sum(const uint8_t *p,uint32_t n){                         /* Adl
     return (b<<16)|a;
 }
 static uint32_t last_size;
+static uint32_t kbase, kcap;                                                 /* zona de KNGFS: la particion de tipo 0xDA si existe; si no, el disco entero */
+static uint32_t le32(const uint8_t *p){ return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24; }
+static void kngfs_area(void){
+    kbase=0; kcap=disk_sectors();
+    uint8_t m[512]; if(disk_read(0,m,1)||m[510]!=0x55||m[511]!=0xAA) return;
+    for(int i=0;i<4;i++){ const uint8_t *e=m+446+i*16; if(e[4]==0xDA){ uint32_t st=le32(e+8), sz=le32(e+12); if(st&&sz>8&&st+sz<=disk_sectors()){ kbase=st; kcap=sz; } return; } }
+}
 int kngfs_active(void){ return mounted; }
 uint32_t kngfs_last_size(void){ return last_size; }
 int kngfs_save(void){
     if(!mounted) return -1;
     int need=fs_serialize(0,0); if(need<0||(uint32_t)need>KNGFS_MAXB) return -2;
-    uint32_t secs=((uint32_t)need+511)/512; if(1+secs>disk_sectors()) return -2;
+    uint32_t secs=((uint32_t)need+511)/512; if(1+secs>kcap) return -2;
     uint8_t *buf=kmalloc((size_t)secs*512+512); if(!buf) return -3;           /* sin memoria para armar la copia */
     int n=fs_serialize(buf+512,(int)(secs*512));
     if(n<0){ kfree(buf); return -2; }
     memset(buf,0,512); memcpy(buf,KNGFS_MAGIC,8);
     uint32_t v[2]={(uint32_t)n,sum(buf+512,(uint32_t)n)}; memcpy(buf+8,v,8);
-    int r=0; for(uint32_t i=0;i<secs&&!r;i+=2048){ uint32_t c=secs-i>2048?2048:secs-i; r=disk_write(1+i,buf+512+(size_t)i*512,(int)c); }
-    if(!r) r=disk_write(0,buf,1);                                            /* la cabecera va al final: si se corta, queda la copia anterior */
+    int r=0; for(uint32_t i=0;i<secs&&!r;i+=2048){ uint32_t c=secs-i>2048?2048:secs-i; r=disk_write(kbase+1+i,buf+512+(size_t)i*512,(int)c); }
+    if(!r) r=disk_write(kbase,buf,1);                                            /* la cabecera va al final: si se corta, queda la copia anterior */
     kfree(buf); if(!r){ saved_gen=fs_gen(); last_size=(uint32_t)n; } return r;
 }
 int kngfs_mount(void){
     if(mounted) return 0;
     if(disk_init()) return -1;
-    uint8_t hd[512]; if(disk_read(0,hd,1)||bcmp_(hd,KNGFS_MAGIC,8)) return -2;
+    kngfs_area();
+    uint8_t hd[512]; if(disk_read(kbase,hd,1)||bcmp_(hd,KNGFS_MAGIC,8)) return -2;
     uint32_t v[2]; memcpy(v,hd+8,8); if(v[0]==0||v[0]>KNGFS_MAXB) return -3;
-    uint32_t secs=(v[0]+511)/512; if(1+secs>disk_sectors()) return -3;
+    uint32_t secs=(v[0]+511)/512; if(1+secs>kcap) return -3;
     uint8_t *buf=kmalloc((size_t)secs*512); if(!buf) return -4;
-    int r=0; for(uint32_t i=0;i<secs&&!r;i+=2048){ uint32_t c=secs-i>2048?2048:secs-i; r=disk_read(1+i,buf+(size_t)i*512,(int)c); }
+    int r=0; for(uint32_t i=0;i<secs&&!r;i+=2048){ uint32_t c=secs-i>2048?2048:secs-i; r=disk_read(kbase+1+i,buf+(size_t)i*512,(int)c); }
     if(r||sum(buf,v[0])!=v[1]||fs_overlay(buf,(int)v[0])){ kfree(buf); return -5; }
     kfree(buf); mounted=1; saved_gen=fs_gen(); last_size=v[0]; return 0;
 }
-int kngfs_format(void){ if(disk_init()) return -1; mounted=1; int r=kngfs_save(); if(r) mounted=0; return r; }
+int kngfs_format(void){ if(disk_init()) return -1; kngfs_area(); mounted=1; int r=kngfs_save(); if(r) mounted=0; return r; }
+/* ===== instalador: copia al disco la imagen arrancable (MBR + GRUB BIOS/UEFI + FAT32) que GRUB cargo desde el USB,
+ *       y crea despues una particion de tipo 0xDA con el resto del disco para los datos (KNGFS) ===== */
+const uint8_t *(*kng_disk_image)(uint32_t *len);
+int kng_install(void){
+    uint32_t n=0; const uint8_t *img=kng_disk_image?kng_disk_image(&n):0;
+    if(!img||n<(1u<<20)) return -1;                                          /* no se arranco con el instalador */
+    if(disk_init()) return -2;                                               /* no hay disco */
+    uint32_t isec=(n+511)/512, total=disk_sectors(), pstart=(isec+2047)&~2047u;
+    if(total<pstart+65536) return -3;                                        /* disco demasiado chico */
+    static uint8_t tmp[512];
+    for(uint32_t i=1;i<isec;i+=2048){
+        uint32_t c=isec-i>2048?2048:isec-i;
+        if((uint64_t)(i+c)*512>n){ c--; if(c&&disk_write(i,img+(size_t)i*512,(int)c)) return -4;
+            memset(tmp,0,512); memcpy(tmp,img+(size_t)(i+c)*512,n-(i+c)*512); if(disk_write(i+c,tmp,1)) return -4; break; }
+        if(disk_write(i,img+(size_t)i*512,(int)c)) return -4;
+    }
+    uint8_t mbr[512]; memcpy(mbr,img,512);
+    uint8_t *e=mbr+446+16; memset(e,0,16); e[1]=0xFE; e[2]=0xFF; e[3]=0xFF; e[4]=0xDA; e[5]=0xFE; e[6]=0xFF; e[7]=0xFF;   /* particion 2: datos de Konigreich OS */
+    uint32_t sz=total-pstart; e[8]=(uint8_t)pstart; e[9]=(uint8_t)(pstart>>8); e[10]=(uint8_t)(pstart>>16); e[11]=(uint8_t)(pstart>>24);
+    e[12]=(uint8_t)sz; e[13]=(uint8_t)(sz>>8); e[14]=(uint8_t)(sz>>16); e[15]=(uint8_t)(sz>>24);
+    memset(tmp,0,512); if(disk_write(pstart,tmp,1)) return -4;              /* sin copia vieja de datos en esa zona */
+    if(disk_write(0,mbr,1)) return -4;                                       /* el MBR al final: si algo fallo antes, el disco no queda a medias */
+    kbase=pstart; kcap=sz; mounted=1; if(kngfs_save()) return -5;
+    return 0;
+}
 void kngfs_tick(void){                                                       /* guarda solo si hubo cambios: cada 5 s si es poco, cada 3 min si es mucho */
     if(!mounted||fs_gen()==saved_gen) return;
     uint32_t t=kticks(); if((int)(t-next_try)<0) return;

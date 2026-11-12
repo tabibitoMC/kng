@@ -1,0 +1,3 @@
+@byte 14
+20|disco
+20|cat Guardado/nota.txt

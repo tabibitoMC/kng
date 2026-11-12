@@ -1,0 +1,41 @@
+name: instalacion
+# Construye la ISO como en WSL, arranca el instalador con un disco vacio, instala, y despues arranca SOLO desde el disco (sin USB/CD)
+# con BIOS y con UEFI, comprobando que el escritorio arranca y que lo guardado sigue ahi.
+on:
+  workflow_dispatch:
+    inputs:
+      disco: { description: "sata | nvme | ide", default: "sata" }
+jobs:
+  instalar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Herramientas
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 ovmf gcc gcc-multilib binutils python3 libc6-dev grub-pc-bin grub-efi-amd64-bin xorriso mtools dosfstools fdisk cpio
+      - name: Construir la ISO (con instalador)
+        run: bash tools/build-iso.sh 2>&1 | tail -15; ls -la out/ build/iso/boot/; head -12 build/iso/boot/grub/grub.cfg
+      - name: Instalar y arrancar desde el disco
+        run: |
+          qemu-img create -f raw disco.img 2G
+          case "${{ inputs.disco }}" in
+            nvme) D="-drive file=disco.img,format=raw,if=none,id=d0 -device nvme,serial=kng1,drive=d0,bootindex=0" ;;
+            ide)  D="-drive file=disco.img,format=raw,if=ide,index=0" ;;
+            *)    D="-machine q35 -drive file=disco.img,format=raw,if=none,id=d0 -device ide-hd,drive=d0,bus=ide.1,bootindex=0" ;;
+          esac
+          M="-monitor unix:/tmp/qmon.sock,server,nowait -vga std -display none -serial stdio -m 3G $D"
+          echo "=== 1) arrancar el USB (CD) en modo instalador e instalar ==="
+          KNG_PROMPT='> ' QMON=/tmp/qmon.sock timeout 1500 python3 tools/ci_drive.py tools/ci/instalar1.txt i1.log -- qemu-system-x86_64 $M -cdrom out/KonigreichOS-kng.iso -boot order=dc || true
+          echo "=== 2) arrancar SOLO desde el disco (BIOS) ==="
+          KNG_INICIO='Iniciando escritorio' KNG_PROMPT='> ' QMON=/tmp/qmon.sock timeout 600 python3 tools/ci_drive.py tools/ci/instalar2.txt i2.log -- qemu-system-x86_64 $M || true
+          echo "=== 3) arrancar SOLO desde el disco (UEFI) ==="
+          cp /usr/share/OVMF/OVMF_VARS_4M.fd vars.fd 2>/dev/null || cp /usr/share/OVMF/OVMF_VARS.fd vars.fd
+          CODE=$(ls /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd 2>/dev/null | head -1)
+          KNG_INICIO='Iniciando escritorio' KNG_PROMPT='> ' QMON=/tmp/qmon.sock timeout 600 python3 tools/ci_drive.py tools/ci/instalar2.txt i3.log -- qemu-system-x86_64 $M -drive if=pflash,format=raw,readonly=on,file=$CODE -drive if=pflash,format=raw,file=vars.fd || true
+          for f in i1 i2 i3; do echo "----- $f"; grep -a -E "Disco:|LISTO|No se pudo|Instalando|framebuffer|Iniciando|hola desde|guardado|NVMe|SATA|IDE" $f.log | head -10; done
+          grep -aq "LISTO" i1.log && echo "PRUEBA instalacion: OK" || echo "PRUEBA instalacion: FALLO"
+          grep -aq "Iniciando escritorio" i2.log && grep -aq "hola desde el disco" i2.log && echo "PRUEBA arranque BIOS desde el disco + datos: OK" || echo "PRUEBA arranque BIOS desde el disco + datos: FALLO"
+          grep -aq "Iniciando escritorio" i3.log && grep -aq "hola desde el disco" i3.log && echo "PRUEBA arranque UEFI desde el disco + datos: OK" || echo "PRUEBA arranque UEFI desde el disco + datos: FALLO"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: instalacion, path: "i*.log" }

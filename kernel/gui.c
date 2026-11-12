@@ -234,7 +234,9 @@ static const PApp PAPPS[]={
 };
 #define NPAPPS ((int)(sizeof PAPPS/sizeof *PAPPS))
 static int papp_installed(int i){ FsNode *f=fs_resolve(fs_root(),PAPPS[i].path); return f&&!f->dir; }
+static void render(void);
 static void run_in_terminal(const char *cmd){ Win *t=open_app(A_TERM); if(!t||t->busy) return; for(const char *q=cmd;*q;q++) gui_key((unsigned char)*q); gui_key('\n'); }
+void gui_open_installer(void){ run_in_terminal("instalar-sistema"); }
 static void run_quiet(const char *cmd){ char l[160]; k_strcpy(l,cmd,sizeof l); term_target=0; kcon_hook=0; kshell_exec(l); }
 static Win *open_app(int type){
     if(!open_new) for(int i=0;i<nord;i++){ Win *e=&wins[order[i]]; if(e->type==type && type!=A_VIEWER){ focus(order[i]); return e; } }
@@ -311,6 +313,20 @@ static void term_cmd(Win *w,char *line){
             if(!dd||!dd->dir){ char pth[100]; k_strcpy(pth,b2,sizeof pth); int q=k_strlen(pth); while(q>0&&pth[q-1]!='/') q--; nm=b2+q; pth[q]=0; dir=q?fs_resolve(w->cwd,pth):w->cwd; if(q==1) dir=fs_root(); }
             if(!dir||!dir->dir||(cmd[0]=='c'?!fs_copy(src,dir,nm):fs_move(src,dir,nm))) tp(w,"no se pudo (destino invalido, ya existe o es una subcarpeta)\n"); } }
     else if(!k_strcmp(cmd,"df")){ int f,d2,by; fs_usage(&f,&d2,&by); char b[100]=""; cat_int(b,100,f); cat(b,100," archivos, "); cat_int(b,100,d2); cat(b,100," carpetas, "); cat_int(b,100,by); cat(b,100," bytes\n"); tp(w,b); }
+    else if(!k_strcmp(cmd,"instalar-sistema")){
+        uint32_t n=0;
+        if(!kng_disk_image||!kng_disk_image(&n)){ tp(w,"Para instalar: arranca desde el USB y elige \"INSTALAR Konigreich OS en el disco duro\".\n"); }
+        else if(disk_init()){ tp(w,"No se encontro un disco duro (IDE, SATA o NVMe).\n"); }
+        else {
+            char b[140]="Disco: "; cat(b,140,disk_kind()); cat(b,140," "); cat(b,140,disk_model()); cat(b,140,", "); cat_int(b,140,(int)(disk_sectors()/2048)); cat(b,140," MB\n"); tp(w,b);
+            if(k_strcmp(arg,"SI")){ tp(w,"Se BORRARA todo lo que tenga ese disco y se instalara Konigreich OS.\nPara instalar escribe:   instalar-sistema SI\n"); }
+            else {
+                tp(w,"Instalando... no apagues la PC (de 1 a 3 minutos).\n"); dirty=1; render();
+                int r=kng_install();
+                if(r==0) tp(w,"LISTO: Konigreich OS quedo instalado en el disco.\nRetira el USB y reinicia (escribe: reiniciar).\n");
+                else { char e2[80]="No se pudo instalar (error "; cat_int(e2,80,r); cat(e2,80,r==-3?": disco demasiado chico)\n":r==-4?": error al escribir el disco)\n":")\n"); tp(w,e2); }
+            }
+        } }
     else if(!k_strcmp(cmd,"guardar")){ int r=kngfs_save(); tp(w,r==0?"guardado en disco\n":kngfs_active()?"no se pudo guardar (disco lleno o error)\n":"no hay disco KNGFS montado (usa: disco formatear si)\n"); }
     else if(!k_strcmp(cmd,"disco")){
         if(!k_strcmp(arg,"formatear si")){ int r=kngfs_format(); tp(w,r==0?"disco listo: los archivos se guardan solos\n":"no se pudo (no hay disco IDE/SATA o error de escritura)\n"); }
@@ -1722,6 +1738,7 @@ static void scroll_by(int *s,int d,int max){ *s+=d; if(*s<0) *s=0; if(*s>max) *s
 void gui_key(int c){
     if(dren>=0){ if(c=='\n') dren_commit(); else if(c==27){ dren=-1; dirty=1; } else if(c<0x400){ fm_edit_key(c,dren_buf,&dren_len,&dren_all,FS_NAME); DObj *o=&dobj[dren]; dmark(o->x-60,o->y+TILE,o->w+120,30); } return; }
     if(mu_open&&c==27){ mu_open=0; dirty=1; return; }
+    if(c==0x414||c==0x14){ open_app(A_TERM); dirty=1; return; }                   /* Ctrl+T: abrir la terminal */
     int top=win_top();
     if(top<0){                                                      /* sin ventanas: las teclas son para el icono elegido del escritorio */
         if(dsel>=0&&dobj[dsel].kind==200){ FsNode *dk=desk_dir(); FsNode *f=dk?fs_find(dk,dobj[dsel].name):0;

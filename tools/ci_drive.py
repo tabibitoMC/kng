@@ -82,9 +82,19 @@ def espera(t):
         if listo(): return True
         time.sleep(0.2)
     return False
-ok = espera(420)   # en modo grafico GRUB tarda en cargar los 143 MB de Debian
+INICIO = os.environ.get('KNG_INICIO', '').encode()                   # si se da, se espera este texto en vez del indicador (escritorio sin terminal)
+if INICIO:
+    fin0 = time.time() + 420
+    while time.time() < fin0 and INICIO not in bytes(buf) and p.poll() is None: time.sleep(0.5)
+    ok = INICIO in bytes(buf); time.sleep(5)
+else:
+    ok = espera(420)   # en modo grafico GRUB tarda en cargar los 143 MB de Debian
 if not ok: sys.stderr.write('[ci_drive] no aparecio el indicador inicial\n')
 for c in cmds:
+    if c.startswith('@byte'):
+        try: p.stdin.write(bytes([int(c.split()[1],16)])); p.stdin.flush()
+        except Exception: pass
+        time.sleep(2); continue
     if c.startswith('@esperar'): time.sleep(float(c.split()[1])); continue
     t = 30
     if '|' in c and c.split('|', 1)[0].isdigit(): t, c = int(c.split('|', 1)[0]), c.split('|', 1)[1]

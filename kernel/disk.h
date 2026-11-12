@@ -15,4 +15,6 @@ int      kngfs_format(void);              /* escribe firma y arbol actual (BORRA
 int      kngfs_active(void);              /* 1 si hay un disco montado y se guarda solo */
 void     kngfs_tick(void);                /* guardado automatico: llamar seguido */
 uint32_t kngfs_last_size(void);           /* bytes de la ultima copia guardada */
+extern const uint8_t *(*kng_disk_image)(uint32_t *len);   /* imagen del instalador (la pone el kernel de 64 bits) */
+int      kng_install(void);               /* instala el sistema en el disco: 0 ok, <0 error */
 #endif
