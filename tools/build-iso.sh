@@ -17,7 +17,18 @@ cp kernel/kng-kernel.elf kernel/kng-kernel-text.elf kernel64/kng-kernel64.elf ke
 # rootfs (programas Linux + enlazador dinamico + libc del PC) como modulo de arranque; solo lo usa el kernel de 64 bits
 if python3 tools/mkrootfs.py build/iso/boot/rootfs.cpio; then ROOTFS=1; else ROOTFS=0; echo "[aviso] sin rootfs (falta libc estatica: sudo apt install libc6-dev). El ISO igual arranca, sin programas Linux."; fi
 # Debian real (opcional): se usa si ya existe build/debian.cpio.gz, o si se pide con  KNG_DEBIAN=1 bash tools/build-iso.sh
-if [ "$KNG_DEBIAN" = 1 ] && [ ! -f build/debian.cpio.gz ]; then bash tools/mkdebian.sh; fi
+# Se reutiliza un Debian ya creado antes (copia guardada en WSL o en otra carpeta de kng en Descargas) para no volver a bajarlo.
+CACHE_DEB="$HOME/.cache/kng/debian.cpio.gz"
+if [ "$KNG_DEBIAN" = 1 ] && [ ! -f build/debian.cpio.gz ]; then
+  mkdir -p build
+  if [ -f "$CACHE_DEB" ]; then cp "$CACHE_DEB" build/debian.cpio.gz; echo "[debian] reutilizando el Debian guardado"
+  else
+    VIEJO=$(ls -t /mnt/c/Users/*/Downloads/*/build/debian.cpio.gz /mnt/c/Users/*/Downloads/*/*/build/debian.cpio.gz /mnt/c/Users/*/Desktop/*/build/debian.cpio.gz /mnt/c/Users/*/Desktop/*/*/build/debian.cpio.gz 2>/dev/null | head -1)
+    if [ -n "$VIEJO" ] && gzip -t "$VIEJO" 2>/dev/null; then cp "$VIEJO" build/debian.cpio.gz; echo "[debian] reutilizando $VIEJO"
+    else bash tools/mkdebian.sh; fi
+  fi
+fi
+if [ -f build/debian.cpio.gz ] && [ ! -f "$CACHE_DEB" ]; then mkdir -p "$(dirname "$CACHE_DEB")" && cp build/debian.cpio.gz "$CACHE_DEB"; fi
 if [ -f build/debian.cpio.gz ]; then
   cp build/debian.cpio.gz build/iso/boot/debian.cpio.gz
   python3 tools/mkrootfs.py --debian build/iso/boot/kng-extra.cpio
