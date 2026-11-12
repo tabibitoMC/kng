@@ -30,12 +30,12 @@ set default=1
 insmod all_video
 insmod gzio
 menuentry "Königreich OS - 32 bits (grafico)" {
-    set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24
+    if [ "$grub_platform" = efi ]; then set gfxpayload=keep; else set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24; fi
     multiboot /boot/kng-kernel.elf
     boot
 }
 menuentry "Königreich OS - 64 bits (grafico)" {
-    set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24
+    if [ "$grub_platform" = efi ]; then set gfxpayload=keep; else set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24; fi
     multiboot /boot/kng-kernel64.elf
     module /boot/rootfs.cpio
     boot
@@ -60,7 +60,7 @@ set default=0
 insmod all_video
 insmod gzio
 menuentry "Königreich OS - 64 bits con Debian (grafico)" {
-    set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24
+    if [ "$grub_platform" = efi ]; then set gfxpayload=keep; else set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24; fi
     multiboot /boot/kng-kernel64.elf
     module /boot/debian.cpio.gz
     module /boot/kng-extra.cpio
@@ -74,13 +74,13 @@ menuentry "Königreich OS - 64 bits con Debian (modo texto)" {
     boot
 }
 menuentry "Königreich OS - 64 bits (grafico, sin Debian)" {
-    set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24
+    if [ "$grub_platform" = efi ]; then set gfxpayload=keep; else set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24; fi
     multiboot /boot/kng-kernel64.elf
     module /boot/rootfs.cpio
     boot
 }
 menuentry "Königreich OS - 32 bits (grafico)" {
-    set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24
+    if [ "$grub_platform" = efi ]; then set gfxpayload=keep; else set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24; fi
     multiboot /boot/kng-kernel.elf
     boot
 }
