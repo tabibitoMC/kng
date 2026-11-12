@@ -1,0 +1,89 @@
+# Prueba del escritorio: calculadora y gestor de archivos (posiciones para pantalla 1024x768)
+captura 01-inicio
+# --- calculadora (ventana en x=120 y=52): 12 + 3.5 = 15.5 con clics en sus botones
+raton 545 724
+clic
+esperar 1
+captura 02-calculadora
+raton 163 318
+clic
+raton 225 318
+clic
+raton 349 318
+clic
+raton 287 318
+clic
+raton 287 364
+clic
+raton 225 272
+clic
+raton 349 364
+clic
+captura 03-calc-resultado
+# mover la ventana 400 a la derecha y 183 abajo: los botones deben ir con ella. C y luego 9 en la nueva posicion
+raton 200 67
+arrastrar 600 250
+raton 563 363
+clic
+raton 687 409
+clic
+captura 04-calc-movida-9
+# cerrar la calculadora
+raton 772 250
+clic
+# --- gestor de archivos
+raton 347 724
+clic
+esperar 1
+captura 05-archivos
+# boton Nuevo de la barra de herramientas -> Nueva carpeta
+raton 193 100
+clic
+captura 06-menu-nuevo
+raton 230 129
+clic
+escribir Prueba
+tecla ret
+tecla ret
+captura 07-dentro-de-prueba
+# clic derecho en el espacio vacio -> Nueva carpeta "Fotos"
+raton 400 300
+der
+captura 08-menu-vacio
+raton 440 316
+clic
+escribir Fotos
+tecla ret
+# clic derecho -> Nuevo documento de texto "notas"
+raton 400 350
+der
+raton 440 390
+clic
+escribir notas
+tecla ret
+captura 09-carpeta-y-texto
+# copiar notas.txt y pegarlo dentro de Fotos
+raton 300 209
+clic
+tecla ctrl-c
+raton 300 183
+doble
+esperar 1
+tecla ctrl-v
+captura 10-pegado-en-fotos
+tecla backspace
+esperar 1
+# comprimir Fotos (queda seleccionada al volver)
+raton 572 100
+clic
+esperar 1
+captura 11-comprimido
+# arrastrar Fotos.zip al escritorio
+raton 300 209
+arrastrar 900 560
+esperar 1
+captura 12-zip-en-escritorio
+raton 900 580
+der
+captura 13-menu-escritorio
+tecla esc
