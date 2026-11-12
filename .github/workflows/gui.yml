@@ -18,7 +18,7 @@ jobs:
       - name: Probar el escritorio
         run: |
           mkdir -p g/boot/grub; cp kernel64/kng-kernel64.elf kng-extra.cpio g/boot/
-          printf 'set timeout=0\nmenuentry "kng" {\n  multiboot /boot/kng-kernel64.elf\n  module /boot/kng-extra.cpio\n  boot\n}\n' > g/boot/grub/grub.cfg
+          printf 'set timeout=0\ninsmod all_video\nmenuentry "kng" {\n  multiboot /boot/kng-kernel64.elf\n  module /boot/kng-extra.cpio\n  boot\n}\n' > g/boot/grub/grub.cfg
           sed -i 's/multiboot \/boot/set gfxpayload=1024x768x32,800x600x32,1024x768x24,auto\n  multiboot \/boot/' g/boot/grub/grub.cfg
           grub-mkrescue -o g.iso g 2>&1 | tail -1
           case "${{ inputs.maquina }}" in
