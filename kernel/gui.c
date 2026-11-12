@@ -36,6 +36,7 @@ typedef struct {
     unsigned char sx[SGW*SGH], sy[SGW*SGH]; int slen, sdir, sndir, fx, fy, score, sover, sstart; uint32_t snext, seed;   /* snake */
 } Win;
 
+void kserial_puts(const char *s);
 static Win wins[MAXW];
 static int open_new;                                               /* open_app: crear otra ventana aunque ya haya una del mismo tipo */
 static int order[MAXW], nord;
@@ -196,7 +197,6 @@ static void term_put(Win *w,char c){
     dwin(w);
 }
 static void tp(Win *w,const char *s){ while(*s) term_put(w,*s++); }
-void kserial_puts(const char *s);
 static void term_prompt(Win *w){ char p[110]; fs_path(w->cwd,p,sizeof p); cat(p,sizeof p,"> "); tp(w,p); kserial_puts("\n"); kserial_puts(p); }
 static void term_done(int pid,int code){                 /* un programa pegado a una terminal termino: mensaje y prompt otra vez */
     for(int i=0;i<MAXW;i++){ Win *w=&wins[i]; if(!w->used||w->type!=A_TERM||!w->busy||w->bpid!=pid) continue;
@@ -1553,6 +1553,7 @@ static void mouse_set(int x,int y,int b){
         if(released){ if(fd_on) fm_drop(); fd_cand=0; fd_on=0; fd_gx=-1000; dirty=1; }
     }
     if(mu_open){ int h=mu_item_at(mx,my); if(h!=mu_hover){ mu_hover=h; dmark(mu_x-6,mu_y-6,mu_w+12,mu_h+12); } }
+    if(pressed||rpressed){ char d[48]="[raton] "; cat_int(d,48,mx); cat(d,48,","); cat_int(d,48,my); cat(d,48,pressed?" izq\n":" der\n"); kserial_puts(d); }   /* para las pruebas automaticas */
     if(pressed) on_press();
     if(rpressed) on_rpress();
 }

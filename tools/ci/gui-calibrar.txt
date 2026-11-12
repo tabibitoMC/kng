@@ -1,0 +1,9 @@
+raton 0 0
+clic
+raton 100 100
+clic
+raton 500 400
+clic
+raton 1000 700
+clic
+captura cal
