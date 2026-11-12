@@ -5,6 +5,7 @@ on:
     inputs:
       guion: { description: "guion de la prueba", default: "tools/ci/gui-archivos.txt" }
       maquina: { description: "pc | q35-sin-red (PC moderno sin tarjeta compatible) | uefi", default: "pc" }
+      kernel: { description: "64 | 32", default: "64" }
 jobs:
   gui:
     runs-on: ubuntu-latest
@@ -14,10 +15,11 @@ jobs:
       - name: Herramientas
         run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 gcc gcc-multilib binutils python3 grub-pc-bin grub-efi-amd64-bin ovmf xorriso mtools cpio
       - name: Compilar
-        run: make -C kernel64 && python3 tools/mkrootfs.py --debian kng-extra.cpio 2>/dev/null
+        run: make -C kernel64 && make -C kernel && python3 tools/mkrootfs.py --debian kng-extra.cpio 2>/dev/null
       - name: Probar el escritorio
         run: |
           mkdir -p g/boot/grub; cp kernel64/kng-kernel64.elf kng-extra.cpio g/boot/
+          if [ "${{ inputs.kernel }}" = 32 ]; then cp kernel/kng-kernel.elf g/boot/kng-kernel64.elf; : > g/boot/kng-extra.cpio; fi
           printf 'set timeout=0\ninsmod all_video\nmenuentry "kng" {\n  multiboot /boot/kng-kernel64.elf\n  module /boot/kng-extra.cpio\n  boot\n}\n' > g/boot/grub/grub.cfg
           sed -i 's/multiboot \/boot/if [ "$grub_platform" = efi ]; then set gfxpayload=keep; else set gfxpayload=1024x768x32,800x600x32,1024x768x24; fi\n  multiboot \/boot/' g/boot/grub/grub.cfg; cat g/boot/grub/grub.cfg
           grub-mkrescue -o g.iso g 2>&1 | tail -1
