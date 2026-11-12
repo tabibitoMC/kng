@@ -96,6 +96,10 @@ for c in cmds:
         except Exception: pass
         time.sleep(2); continue
     if c.startswith('@esperar'): time.sleep(float(c.split()[1])); continue
+    if c.startswith('@captura'):
+        n=c.split()[1]; r=monitor('screendump %s.ppm' % os.path.abspath(n), 2.0)
+        with lock: log.write(('\n[ci_drive] captura %s.ppm %s\n' % (n, r.strip()[-80:])).encode()); log.flush()
+        continue
     t = 30
     if '|' in c and c.split('|', 1)[0].isdigit(): t, c = int(c.split('|', 1)[0]), c.split('|', 1)[1]
     if p.poll() is not None: break
