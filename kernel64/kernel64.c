@@ -255,7 +255,9 @@ void *kmalloc(size_t n){
         }
         b->used=1; r=(uint8_t*)b+HDR; break;
     }
-    irq_restore(f); return r;
+    irq_restore(f);
+    if(r&&n<=(2u<<20)) memset(r,0,n);                              /* los bloques pequenos salen a cero: hay estructuras que lo suponen (la RAM ya usada trae restos) */
+    return r;
 }
 void kfree(void *p){
     if(!p) return;
