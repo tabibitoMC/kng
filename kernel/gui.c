@@ -984,6 +984,9 @@ static void win_set_max(Win *w,int x,int y,int ww,int hh){
 static void win_toggle_max(Win *w){ if(w->maxed) win_restore(w); else win_set_max(w,0,BARH,gw,gh-BARH-86); }
 static int text_w_big(const char *s){ return text_w(s)*3/2; }
 /* ---------------- ajustes: almacenamiento y pantalla ---------------- */
+typedef struct { int x, y, w, h, kind; char name[FS_NAME]; } DObj;   /* kind 0..7 = icono de la app del dock; 100 reloj; 101 sistema; 200 archivo de /Escritorio */
+#define NDO 64
+static DObj dobj[NDO];
 static void hsize(uint64_t b,char *o,int max){                    /* 1.5 GB, 320 MB, 12 KB (sin divisiones de 64 bits) */
     o[0]=0;
     if(b<1024){ cat_int(o,max,(int)b); cat(o,max," B"); return; }
@@ -1051,6 +1054,11 @@ static int set_resolution(int w,int h){
         if(v->y+v->h>h) v->y=h-v->h;
         if(v->y<BARH) v->y=BARH;
         if(v->x<0) v->x=0; }
+    for(int i=0;i<NDO;i++){ DObj *o=&dobj[i]; if(o->kind<0) continue;
+        if(o->kind==100||o->kind==101) o->x+=w-ow;                      /* los widgets siguen pegados al borde derecho */
+        if(o->x+o->w>w) o->x=w-o->w;
+        if(o->y+o->h>h-80) o->y=k_max(BARH,h-80-o->h);
+        if(o->x<0) o->x=0; }
     if(mx>=w) mx=w-1;
     if(my>=h) my=h-1;
     char r[16]=""; cat_int(r,16,w); cat(r,16,"x"); cat_int(r,16,h); cfg_set("resolucion",r);
@@ -1363,9 +1371,7 @@ static void draw_dock(void){
 }
 
 /* ---------------- escritorio modular: iconos y widgets que se arrastran ---------------- */
-typedef struct { int x, y, w, h, kind; char name[FS_NAME]; } DObj;   /* kind 0..7 = icono de la app del dock; 100 reloj; 101 sistema; 200 archivo de /Escritorio */
-#define NDO 64
-static DObj dobj[NDO];
+
 static int ddrag=-1, ddx, ddy, dmoved, dlast=-1; static uint32_t dlastt;
 static void dobj_init(void){
     static const int ik[4]={1,2,4,6};
