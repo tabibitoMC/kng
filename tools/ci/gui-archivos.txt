@@ -1,5 +1,8 @@
 # Prueba del escritorio: calculadora y gestor de archivos (posiciones para pantalla 1024x768)
 captura 01-inicio
+# el primer clic de cada arranque lo absorbe el controlador PS/2: uno en el vacio
+raton 600 500
+clic
 # --- calculadora (ventana en x=120 y=52): 12 + 3.5 = 15.5 con clics en sus botones
 raton 545 724
 clic
@@ -87,3 +90,13 @@ raton 900 580
 der
 captura 13-menu-escritorio
 tecla esc
+# arrastrar notas.txt sobre la carpeta Fotos: se mueve adentro
+raton 300 209
+arrastrar 300 183
+esperar 1
+captura 14-movido-a-fotos
+# doble clic en el .zip del escritorio: se extrae y se abre la carpeta
+raton 900 560
+doble
+esperar 2
+captura 15-zip-abierto

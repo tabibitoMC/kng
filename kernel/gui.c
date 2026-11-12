@@ -38,6 +38,8 @@ typedef struct {
 
 void kserial_puts(const char *s);
 static Win wins[MAXW];
+static char ed_suf[96]; static const char *ed_owner;                   /* extension que se conserva al reescribir un nombre (se muestra y se agrega al final) */
+static void fm_edit_done(char *buf,int *len,int max);
 static int open_new;                                               /* open_app: crear otra ventana aunque ya haya una del mismo tipo */
 static int order[MAXW], nord;
 static int mx, my, mb, drag=-1, dragdx, dragdy, hover=-1;
@@ -784,7 +786,7 @@ static Win *fm_open_dir(FsNode *d,int neww){
     if(w){ w->dir=d; w->sel=0; w->scroll=0; w->editing=0; w->nstat[0]=0; } dirty=1; return w;
 }
 static void fm_start_rename(Win *w,FsNode *f){
-    w->sel=f; w->editing=1; k_strcpy(w->ebuf,f->name,sizeof w->ebuf); w->elen=k_strlen(w->ebuf); w->selall=1; fs_path(f,w->url,sizeof w->url);
+    w->sel=f; w->editing=1; ed_owner=0; k_strcpy(w->ebuf,f->name,sizeof w->ebuf); w->elen=k_strlen(w->ebuf); w->selall=1; fs_path(f,w->url,sizeof w->url);
     FsNode **l=fl; int n=fs_list(w->dir,l,FLMAX), rows=fm_rows(w);
     for(int i=0;i<n;i++) if(l[i]==f){ if(i<w->scroll) w->scroll=i; if(i>=w->scroll+rows) w->scroll=i-rows+1; }
     dwin(w);
@@ -792,21 +794,25 @@ static void fm_start_rename(Win *w,FsNode *f){
 static void fm_commit_rename(Win *w){
     if(!w->editing) return;
     w->editing=0; dwin(w);
-    FsNode *f=fs_resolve_nf(fs_root(),w->url); w->ebuf[w->elen]=0;
+    fm_edit_done(w->ebuf,&w->elen,FS_NAME); FsNode *f=fs_resolve_nf(fs_root(),w->url); w->ebuf[w->elen]=0;
     if(!f||!w->elen||!k_strcmp(f->name,w->ebuf)) return;
     if(fs_find(f->parent,w->ebuf)){ fm_status(w,"Ya existe un elemento con ese nombre"); return; }
     if(fs_rename(f,w->ebuf)) fm_status(w,"Nombre no valido (no puede tener /)"); else fm_status(w,"Nombre cambiado");
 }
 static void fm_edit_key(int c,char *buf,int *len,int *all,int max){   /* teclear en un campo de nombre (UTF-8) */
-    if(c=='\b'){ if(*all){ *len=0; *all=0; } else if(*len>0) *len-=u8_last(buf,*len); buf[*len]=0; return; }
+    if(c=='\b'){ if(*all){ *len=0; *all=0; ed_owner=0; } else if(*len>0) *len-=u8_last(buf,*len); buf[*len]=0; return; }
     char e[2]; int en=u8_enc(c,e); if(!en||c=='/') return;
-    if(*all){ const char *x=ext_of(buf); int keep=*x?k_strlen(x)+1:0;           /* lo primero que se escribe reemplaza el nombre pero conserva la extension */
-        char ext[FS_NAME]; k_strcpy(ext,buf+*len-keep,sizeof ext); *len=0; *all=0;
-        for(int i=0;i<en&&*len<max-1;i++) buf[(*len)++]=e[i];
-        buf[*len]=0; if(keep&&*len+keep<max){ k_strcpy(buf+*len,ext,max-*len); }
-        return; }
-    if(*len+en<max-1){ for(int i=0;i<en;i++) buf[(*len)++]=e[i]; buf[*len]=0; }
+    if(*all){                                                       /* lo primero que se escribe reemplaza el nombre pero conserva la extension */
+        const char *x=ext_of(buf); ed_suf[0]=0; ed_owner=0;
+        if(*x){ ed_suf[0]='.'; k_strcpy(ed_suf+1,x,sizeof ed_suf-1); ed_owner=buf; }
+        *len=0; *all=0; }
+    if(*len+en+k_strlen(ed_owner==buf?ed_suf:"")<max-1){ for(int i=0;i<en;i++) buf[(*len)++]=e[i]; buf[*len]=0; }
 }
+static void fm_edit_done(char *buf,int *len,int max){                /* al confirmar: pegar la extension conservada */
+    if(ed_owner==buf&&ed_suf[0]&&*len+k_strlen(ed_suf)<max){ k_strcpy(buf+*len,ed_suf,max-*len); *len=k_strlen(buf); }
+    ed_owner=0;
+}
+static const char *fm_edit_suffix(const char *buf){ return ed_owner==buf?ed_suf:""; }
 static const char *NEWN[]={"Nueva carpeta","Nuevo documento.txt","Nueva pagina.html","Nuevo documento.md","nuevo-script.sh","nuevo-programa.py","programa.c","datos.json","archivo nuevo"};
 static const char *NEWT[]={"","",
     "<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"><title>Nueva pagina</title></head>\n<body>\n<h1>Hola</h1>\n<p>Escribe aqui.</p>\n</body>\n</html>\n",
@@ -1043,7 +1049,7 @@ static void draw_window(int wi,int focused){
                 rrect(cx+42,ry+1,tx-cx-50,23,4,ACCENT,255); rrect(cx+43,ry+2,tx-cx-52,21,3,0x05060c,255);
                 clip_set(cx+44,ry,tx-cx-56,26);
                 if(w->selall){ const char *e=ext_of(w->ebuf); int bl=*e?(int)(e-1-w->ebuf):w->elen; char b2[FS_NAME]; memcpy(b2,w->ebuf,(size_t)bl); b2[bl]=0; fill(cx+47,ry+4,text_w(b2)+2,18,ACCENT,150); }
-                text(cx+48,ry+4,w->ebuf,0xffffff);
+                text(cx+48,ry+4,w->ebuf,0xffffff); text(cx+48+text_w(w->ebuf),ry+4,fm_edit_suffix(w->ebuf),C_DIM);
                 if((kticks()/50)&1) fill(cx+48+text_w(w->ebuf),ry+4,2,17,0xffffff,255);
                 clip_set(cx,cy,cw,ch);
             } else { clip_set(cx+44,ry,tx-cx-52,26); text(cx+46,ry+4,f->name,f->link?0x8ab4ff:C_TXT); clip_set(cx,cy,cw,ch); }
@@ -1255,9 +1261,9 @@ static void draw_dobj(const DObj *o){
         if(i==dsel) rrect(o->x,o->y,o->w,o->h,10,ACCENT,70);
         draw_bigicon(o->x+12,o->y+2,f);
         if(i==dren){
-            int lw=k_max(text_w(dren_buf)+12,o->w); int lx=o->x+o->w/2-lw/2;
+            int lw=k_max(text_w(dren_buf)+text_w(fm_edit_suffix(dren_buf))+12,o->w); int lx=o->x+o->w/2-lw/2;
             rrect(lx,o->y+TILE+4,lw,22,5,ACCENT,255); rrect(lx+1,o->y+TILE+5,lw-2,20,4,0x05060c,255);
-            text(lx+6,o->y+TILE+7,dren_buf,0xffffff); if((kticks()/50)&1) fill(lx+6+text_w(dren_buf),o->y+TILE+7,2,16,0xffffff,255);
+            text(lx+6,o->y+TILE+7,dren_buf,0xffffff); text(lx+6+text_w(dren_buf),o->y+TILE+7,fm_edit_suffix(dren_buf),C_DIM); if((kticks()/50)&1) fill(lx+6+text_w(dren_buf),o->y+TILE+7,2,16,0xffffff,255);
         } else {
             char lb[FS_NAME]; k_strcpy(lb,o->name,sizeof lb); int maxw=o->w+10;
             if(text_w(lb)>maxw){ int l=k_strlen(lb); while(l>1&&text_w(lb)>maxw-text_w("...")){ lb[--l]=0; } cat(lb,sizeof lb,"..."); }
@@ -1308,9 +1314,10 @@ static void dsk_sync(void){                                         /* los icono
     }
     dsk_nx=-1;
 }
-static void dren_start(int i){ dren=i; dsel=i; k_strcpy(dren_buf,dobj[i].name,sizeof dren_buf); dren_len=k_strlen(dren_buf); dren_all=1; dirty=1; }
+static void dren_start(int i){ dren=i; dsel=i; ed_owner=0; k_strcpy(dren_buf,dobj[i].name,sizeof dren_buf); dren_len=k_strlen(dren_buf); dren_all=1; dirty=1; }
 static void dren_commit(void){
     if(dren<0) return;
+    fm_edit_done(dren_buf,&dren_len,FS_NAME);
     int i=dren; dren=-1; dirty=1;
     FsNode *dk=desk_dir(); FsNode *f=dk?fs_find(dk,dobj[i].name):0;
     if(!f||!dren_len||!k_strcmp(dren_buf,dobj[i].name)) return;
@@ -1417,7 +1424,7 @@ static void files_click(Win *w,int lx,int ly,int cw,int ch){
         int th=ch-88-22, rows=fm_rows(w); if(ly-88<th/2) w->scroll=k_max(0,w->scroll-rows/2); else w->scroll=k_min(n-rows,w->scroll+rows/2); dirty=1; return; }
     if(!f){ w->sel=0; dirty=1; return; }
     uint32_t t=kticks();
-    if(w->sel==f && w->last==f && t-w->lastclick<40){ fm_do(M_OPEN,w,w->dir,f); w->last=0; dirty=1; return; }
+    if(w->sel==f && w->last==f && t-w->lastclick<50){ fm_do(M_OPEN,w,w->dir,f); w->last=0; dirty=1; return; }
     w->sel=f; w->last=f; w->lastclick=t; dirty=1;
     fd_cand=1; fd_on=0; fd_sx=mx; fd_sy=my; fd_win=wi; fs_path(f,fd_path,sizeof fd_path); k_strcpy(fd_name,f->name,sizeof fd_name);
 }
@@ -1542,7 +1549,7 @@ static void mouse_set(int x,int y,int b){
         if(released){ int i=ddrag; ddrag=-1;
             if(dmoved && o->kind==200) dsk_drop(i);
             if(!dmoved && ((o->kind>=0 && o->kind<8)||o->kind==200)){ uint32_t t=kticks();
-                if(dlast==i && t-dlastt<40){ if(o->kind==200) dsk_open(i); else open_app(DOCK_APP[o->kind]); dirty=1; dlast=-1; } else { dlast=i; dlastt=t; } } }
+                if(dlast==i && t-dlastt<50){ if(o->kind==200) dsk_open(i); else open_app(DOCK_APP[o->kind]); dirty=1; dlast=-1; } else { dlast=i; dlastt=t; } } }
     }
     if(fd_cand){                                                    /* arrastrar un archivo desde el gestor */
         if(b&1){

@@ -56,7 +56,7 @@ for linea in open(guion):
     if o == 'esperar': time.sleep(float(a))
     elif o == 'raton': x, y = map(int, a.split()); ir(x, y); cur = [x, y]
     elif o == 'clic': clic(1)
-    elif o == 'doble': mon('mouse_button 1'); time.sleep(0.15); mon('mouse_button 0'); time.sleep(0.15); mon('mouse_button 1'); time.sleep(0.15); mon('mouse_button 0'); time.sleep(0.5)
+    elif o == 'doble': mon('mouse_button 1'); time.sleep(0.07); mon('mouse_button 0'); time.sleep(0.07); mon('mouse_button 1'); time.sleep(0.07); mon('mouse_button 0'); time.sleep(0.6)
     elif o == 'der': clic(2)
     elif o == 'arrastrar':
         x, y = map(int, a.split()); boton(1)
