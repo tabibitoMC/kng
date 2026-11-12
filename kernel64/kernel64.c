@@ -209,6 +209,8 @@ static void mem_init(struct mb_info *mi){
         struct { uint32_t s,e,c,pad; } *md=(void*)(uintptr_t)mi->mods_addr;
         for(uint32_t i=0;i<mi->mods_n;i++) reg_cut(md[i].s&~0xFFFull,((u64)md[i].e+0xFFF)&~0xFFFull);
     }
+    if(mi->flags&(1u<<3)){ struct { uint32_t s,e,c,pad; } *md=(void*)(uintptr_t)mi->mods_addr; for(uint32_t i=0;i<mi->mods_n;i++) kprintf("[i] modulo %u: 0x%x-0x%x\n",i,md[i].s,md[i].e); }
+    kprintf("[i] kernel hasta 0x%lx; regiones del heap:",kend); for(int i=0;i<nhreg;i++) if(hreg[i].e>hreg[i].s) kprintf(" 0x%lx-0x%lx",hreg[i].s,hreg[i].e); kprintf("\n");
     /* A partir de 2 GB las paginas de 2 MB arrancan sin cache (por si son MMIO): a la RAM de verdad se le devuelve la cache */
     for(int i=0;i<nhreg;i++){
         u64 s=hreg[i].s, e=hreg[i].e; if(e<=s) continue;

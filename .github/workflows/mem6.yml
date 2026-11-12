@@ -13,7 +13,7 @@ jobs:
           run(){ ( sleep 8; for c in "$@"; do echo "$c"; sleep 40; done; echo procesos; sleep 2 ) | timeout 200 qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd rootfs.cpio -display none -serial stdio -m 6G 2>&1 || true; }
           run "ejecutar /bin/memtest" > a.log; echo "A (sin probar-ram): $(grep -a 'memtest resultado' a.log) $(grep -a excepcion a.log)"
           run "probar-ram" "ejecutar /bin/memtest" > b.log; echo "B (con probar-ram): $(grep -a 'memtest resultado' b.log) $(grep -a excepcion b.log)"
-          run "probar-ram" "probar-ram" > c.log; echo "C: $(grep -a 'probar-ram:' c.log | tail -1 | cut -c1-120)"
+          grep -a "modulo\|regiones" b.log
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: m, path: "*.log" }
