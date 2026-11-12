@@ -9,6 +9,8 @@
 #include "kng.h"
 void gfx_set_bpp(int bpp);
 #include "gui.h"
+#include "disk.h"
+void gui_open_terminal(void);
 #include "kbd.h"
 #include "net.h"
 
@@ -879,9 +881,9 @@ int kattach_pid; char kshell_cwd[96]; void (*kproc_done)(int pid,int code); void
 void kinput_event(int type,int code,int value){ (void)type; (void)code; (void)value; }
 uint32_t kram_kb(void){ return ram_usable_kb; }
 static inline void outw(uint16_t p,uint16_t v){ __asm__ volatile("outw %0,%1"::"a"(v),"Nd"(p)); }
-void kreboot(void){ outb(0x64,0xFE); for(;;) __asm__ volatile("hlt"); }
+void kreboot(void){ if(kngfs_active()) (void)kngfs_save(); outb(0x64,0xFE); for(;;) __asm__ volatile("hlt"); }
 void khalt(void){
-    kprintf("Apagando...\n");
+    kprintf("Apagando...\n"); if(kngfs_active()) (void)kngfs_save();
     outw(0x604,0x2000); outw(0xB004,0x2000); outw(0x4004,0x3400);   /* apagado por ACPI en QEMU, Bochs y VirtualBox */
     for(;;) __asm__ volatile("cli;hlt");
 }
@@ -915,7 +917,8 @@ void kmain(uint32_t magic, struct mb_info *mi){
         kprintf("[ok] framebuffer %ux%u 32 bpp en 0x%x. Iniciando escritorio...\n",fb_w,fb_h,fb_addr);
         fb_wc(fb_addr,fb_pitch*fb_h);
         if(gui_init((uint32_t*)fb_addr,(int)fb_w,(int)fb_h,(int)fb_pitch)==0){
-            gui_mode=1;
+            gui_mode=1; gui_storage_ready();
+            if((mi->flags&4)&&mi->cmdline){ const char *c=(const char*)mi->cmdline; for(;*c;c++) if(k_startswith(c,"terminal")){ gui_open_terminal(); break; } }   /* 'terminal' en la linea de GRUB */
             for(;;){
                 int c; while((c=getc_nb())>=0) gui_key(c);
                 struct mev e; while(mouse_pop(&e)) gui_mouse_event(e.dx,e.dy,e.b);

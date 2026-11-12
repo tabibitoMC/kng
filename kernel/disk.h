@@ -2,9 +2,10 @@
 #ifndef DISK_H
 #define DISK_H
 #include "kng.h"
-int      disk_init(void);                 /* busca el primer disco ATA; 0 si lo hay */
+int      disk_init(void);                 /* busca el primer disco IDE o SATA (AHCI); 0 si lo hay */
 uint32_t disk_sectors(void);              /* tamano en sectores de 512 B */
 const char *disk_model(void);
+const char *disk_kind(void);              /* "IDE", "SATA (AHCI)" o "ninguno" */
 int      disk_read(uint32_t lba, void *buf, int n);
 int      disk_write(uint32_t lba, const void *buf, int n);
 /* persistencia: el disco solo se usa si ya tiene la firma KNGFS o si el usuario ejecuta "disco formatear si" */
@@ -13,4 +14,5 @@ int      kngfs_save(void);                /* 0 ok */
 int      kngfs_format(void);              /* escribe firma y arbol actual (BORRA el inicio del disco) */
 int      kngfs_active(void);              /* 1 si hay un disco montado y se guarda solo */
 void     kngfs_tick(void);                /* guardado automatico: llamar seguido */
+uint32_t kngfs_last_size(void);           /* bytes de la ultima copia guardada */
 #endif

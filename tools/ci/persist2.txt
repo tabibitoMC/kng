@@ -1,0 +1,3 @@
+20|disco
+20|ls Guardado
+20|cat Guardado/nota.txt

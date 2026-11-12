@@ -1,0 +1,37 @@
+name: persistencia
+# Arranca kng con un disco SATA (AHCI) o IDE, guarda archivos, apaga, vuelve a arrancar con el mismo disco y comprueba que siguen.
+on:
+  workflow_dispatch:
+    inputs:
+      bus: { description: "sata | ide", default: "sata" }
+jobs:
+  persist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Herramientas
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 gcc gcc-multilib binutils python3 grub-pc-bin xorriso mtools cpio
+      - name: Compilar
+        run: make -C kernel64 && make -C kernel && python3 tools/mkrootfs.py --debian kng-extra.cpio 2>/dev/null
+      - name: Dos arranques con el mismo disco
+        run: |
+          for k in 64 32; do
+            mkdir -p g$k/boot/grub
+            if [ $k = 64 ]; then cp kernel64/kng-kernel64.elf g$k/boot/k.elf; MOD="  module /boot/kng-extra.cpio"; cp kng-extra.cpio g$k/boot/; else cp kernel/kng-kernel.elf g$k/boot/k.elf; MOD=""; fi
+            printf 'set timeout=0\ninsmod all_video\nmenuentry "kng" {\n  set gfxpayload=1024x768x32\n  multiboot /boot/k.elf terminal\n%s\n  boot\n}\n' "$MOD" > g$k/boot/grub/grub.cfg
+            grub-mkrescue -d /usr/lib/grub/i386-pc -o g$k.iso g$k 2>&1 | tail -1
+          done
+          qemu-img create -f raw disco.img 256M
+          if [ "${{ inputs.bus }}" = ide ]; then DISK="-drive file=disco.img,format=raw,if=ide,index=0"; else DISK="-machine q35 -drive file=disco.img,format=raw,if=none,id=d0 -device ide-hd,drive=d0,bus=ide.1"; fi
+          Q="qemu-system-x86_64 -monitor unix:/tmp/qmon.sock,server,nowait -cdrom g64.iso -boot d -vga std -display none -serial stdio -m 2G $DISK"
+          echo "=== arranque 1 (64 bits): formatear y guardar ===";  KNG_PROMPT='/> ' QMON=/tmp/qmon.sock python3 tools/ci_drive.py tools/ci/persist1.txt p1.log -- $Q || true
+          echo "=== arranque 2 (64 bits): leer lo guardado ===";     KNG_PROMPT='/> ' QMON=/tmp/qmon.sock python3 tools/ci_drive.py tools/ci/persist2.txt p2.log -- $Q || true
+          Q32="${Q/g64.iso/g32.iso}"
+          echo "=== arranque 3 (32 bits): leer lo guardado ===";     KNG_PROMPT='/> ' QMON=/tmp/qmon.sock python3 tools/ci_drive.py tools/ci/persist2.txt p3.log -- $Q32 || true
+          for f in p1 p2 p3; do echo "----- $f"; grep -a -E "disco|SATA|IDE|hola persistente|nota.txt|guardado|no se" $f.log | head -12; done
+          grep -aq "hola persistente" p2.log && echo "PRUEBA persistencia 64 bits: OK" || echo "PRUEBA persistencia 64 bits: FALLO"
+          grep -aq "hola persistente" p3.log && echo "PRUEBA persistencia 32 bits: OK" || echo "PRUEBA persistencia 32 bits: FALLO"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: persist, path: "p*.log" }

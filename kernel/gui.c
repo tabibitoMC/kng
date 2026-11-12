@@ -312,9 +312,9 @@ static void term_cmd(Win *w,char *line){
     else if(!k_strcmp(cmd,"df")){ int f,d2,by; fs_usage(&f,&d2,&by); char b[100]=""; cat_int(b,100,f); cat(b,100," archivos, "); cat_int(b,100,d2); cat(b,100," carpetas, "); cat_int(b,100,by); cat(b,100," bytes\n"); tp(w,b); }
     else if(!k_strcmp(cmd,"guardar")){ int r=kngfs_save(); tp(w,r==0?"guardado en disco\n":kngfs_active()?"no se pudo guardar (disco lleno o error)\n":"no hay disco KNGFS montado (usa: disco formatear si)\n"); }
     else if(!k_strcmp(cmd,"disco")){
-        if(!k_strcmp(arg,"formatear si")){ int r=kngfs_format(); tp(w,r==0?"disco listo: los archivos se guardan solos\n":"no se pudo (no hay disco ATA o error de escritura)\n"); }
-        else { char b[120]=""; if(disk_init()==0){ cat(b,120,disk_model()); cat(b,120,", "); cat_int(b,120,(int)(disk_sectors()/2048)); cat(b,120," MB, "); cat(b,120,kngfs_active()?"montado (guardado automatico)":"SIN formato kng"); }
-            else cat(b,120,"no hay disco duro ATA (agrega un disco IDE a la VM)");
+        if(!k_strcmp(arg,"formatear si")){ int r=kngfs_format(); tp(w,r==0?"disco listo: los archivos se guardan solos\n":"no se pudo (no hay disco IDE/SATA o error de escritura)\n"); }
+        else { char b[120]=""; if(disk_init()==0){ cat(b,120,disk_kind()); cat(b,120,": "); cat(b,120,disk_model()); cat(b,120,", "); cat_int(b,120,(int)(disk_sectors()/2048)); cat(b,120," MB, "); cat(b,120,kngfs_active()?"montado (guardado automatico)":"SIN formato kng"); }
+            else cat(b,120,"no se encontro disco duro IDE ni SATA");
             tp(w,b); tp(w,"\n"); if(disk_init()==0 && !kngfs_active()) tp(w,"Para usarlo: disco formatear si   (ATENCION: borra el inicio de ese disco)\n"); } }
     else if(!k_strcmp(cmd,"write")){
         char *t=arg; while(*t&&*t!=' ') t++; char nm[32]; int l=(int)(t-arg); if(l>31) l=31; memcpy(nm,arg,(size_t)l); nm[l]=0; while(*t==' ') t++;
@@ -1662,13 +1662,18 @@ void gui_key(int c){
     }
 }
 
+/* despues de cargar el sistema base: se lee lo guardado en el disco (encima) y se aplican los ajustes guardados */
+void gui_storage_ready(void){
+    (void)kngfs_mount(); fs_track=1;
+    { char kv[16]; if(cfg_get("teclado",kv,sizeof kv)){ int l=layout_from_name(kv); if(l>=0) kbd_set_layout(l); } }
+    build_wall(); dsk_sync(); dirty=1;
+}
 int gui_init(uint32_t *fb,int w,int h,int pitch_bytes){
     if(gfx_init(fb,w,h,pitch_bytes)) return -1;
     wall=kmalloc((size_t)w*h*4); if(!wall) return -1;
     if(!fs_root()){ fs_init(); }
-    (void)kngfs_mount(); build_wall();
-    { char kv[16]; if(cfg_get("teclado",kv,sizeof kv)){ int l=layout_from_name(kv); if(l>=0) kbd_set_layout(l); } }
-    dobj_init(); dsk_sync(); mx=w/2; my=h/2; dirty=1; cursor_dirty=1; clk_next=0;
+    build_wall();
+    dobj_init(); mx=w/2; my=h/2; dirty=1; cursor_dirty=1; clk_next=0;
     kproc_done=term_done;
     return 0;
 }

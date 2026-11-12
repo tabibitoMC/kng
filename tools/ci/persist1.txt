@@ -1,0 +1,8 @@
+20|disco
+60|disco formatear si
+20|mkdir Guardado
+20|cd Guardado
+20|write nota.txt hola persistente desde kng
+20|cd /
+60|guardar
+20|disco

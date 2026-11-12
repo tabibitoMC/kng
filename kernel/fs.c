@@ -5,7 +5,9 @@ static FsNode *root;
 static uint32_t gen;
 void (*fs_shm_hook)(void *shm);
 uint32_t (*fs_now)(void);
-static void touch(FsNode *n){ if(fs_now) n->mtime=fs_now(); }
+int fs_track;
+static void touch(FsNode *n){ if(fs_now) n->mtime=fs_now(); if(fs_track) n->chg=1; }
+static void chg_rec(FsNode *n){ if(!fs_track) return; n->chg=1; for(FsNode *c=n->child;c;c=c->next) chg_rec(c); }
 static void drop_data(FsNode *n);
 /* enlaces duros: los nombres de un mismo archivo forman un anillo y despues de cada cambio los demas reciben una copia del contenido */
 static void hl_sync(FsNode *n){
@@ -127,7 +129,7 @@ FsNode *fs_link(FsNode *src,FsNode *dir,const char *name){
 int fs_rename(FsNode *n,const char *name){
     if(!n||!n->parent||!valid_name(name)) return -1;
     FsNode *e=fs_find(n->parent,name); if(e&&e!=n) return -1;
-    k_strcpy(n->name,name,sizeof n->name); gen++; return 0;
+    k_strcpy(n->name,name,sizeof n->name); chg_rec(n); gen++; return 0;
 }
 static int is_inside(FsNode *n,FsNode *anc){ for(;n;n=n->parent) if(n==anc) return 1; return 0; }
 static FsNode *copy_rec(FsNode *src,FsNode *dir,const char *name){
@@ -145,26 +147,41 @@ int fs_move(FsNode *n,FsNode *dir,const char *name){
     if(!n||!n->parent||!dir||!dir->dir||!valid_name(name)||fs_find(dir,name)||is_inside(dir,n)) return -1;
     FsNode **pp=&n->parent->child; while(*pp&&*pp!=n) pp=&(*pp)->next; if(*pp) *pp=n->next;
     n->next=0; n->parent=dir; k_strcpy(n->name,name,sizeof n->name);
-    pp=&dir->child; while(*pp) pp=&(*pp)->next; *pp=n; gen++; return 0;
+    pp=&dir->child; while(*pp) pp=&(*pp)->next; *pp=n; chg_rec(n); gen++; return 0;
 }
 static void usage_rec(FsNode *d,int *f,int *dr,int *b){ for(FsNode *c=d->child;c;c=c->next){ if(c->dir){ (*dr)++; usage_rec(c,f,dr,b); } else { (*f)++; *b+=c->size; } } }
 void fs_usage(int *files,int *dirs,int *bytes){ *files=*dirs=*bytes=0; usage_rec(root,files,dirs,bytes); }
 
 /* ---- serializacion (formato KNGFS): por cada nodo: tipo(1=archivo,2=carpeta,0=fin de carpeta) largo-nombre nombre [tamano(4) datos] ---- */
-static int ser_rec(FsNode *d,uint8_t *o,int max,int k){
+/* Se guarda: lo que no es del sistema y lo que cambio desde el arranque (aunque sea del sistema: lo instalado con apt).
+ * Las carpetas del sistema sin nada guardable dentro no se escriben. Con out=0 solo se cuenta el tamano. */
+static void sput(uint8_t *o,int k,const void *s,int n){ if(o) memcpy(o+k,s,(size_t)n); }
+static void sput1(uint8_t *o,int k,int v){ if(o) o[k]=(uint8_t)v; }
+static int ser_rec(FsNode *d,uint8_t *o,int max,int k,int *any){
     for(FsNode *c=d->child;c;c=c->next){
-        if(c->sys) continue;                       /* archivos del sistema Linux (rootfs): se recargan al arrancar, no se guardan en el disco */
-        int nl=k_strlen(c->name);
-        if(k+2+nl+(c->dir?0:4+c->size)+1>max) return -1;
-        if(c->link){ int tl=k_strlen(c->link); if(k+2+nl+2+tl+1>max) return -1; o[k++]=3; o[k++]=(uint8_t)nl; memcpy(o+k,c->name,(size_t)nl); k+=nl; o[k++]=(uint8_t)tl; o[k++]=(uint8_t)(tl>>8); memcpy(o+k,c->link,(size_t)tl); k+=tl; continue; }
-        o[k++]=c->dir?2:1; o[k++]=(uint8_t)nl; memcpy(o+k,c->name,(size_t)nl); k+=nl;
-        if(c->dir){ k=ser_rec(c,o,max,k); if(k<0) return -1; }
-        else { o[k++]=(uint8_t)c->size; o[k++]=(uint8_t)(c->size>>8); o[k++]=(uint8_t)(c->size>>16); o[k++]=(uint8_t)(c->size>>24); if(c->size) memcpy(o+k,c->data,(size_t)c->size); k+=c->size; }
+        if(c->dev) continue;
+        int keep=!c->sys||c->chg, nl=k_strlen(c->name);
+        if(c->link){ if(!keep) continue;
+            int tl=k_strlen(c->link); if(o&&k+2+nl+2+tl+1>max) return -1;
+            sput1(o,k++,3); sput1(o,k++,nl); sput(o,k,c->name,nl); k+=nl; sput1(o,k++,tl); sput1(o,k++,tl>>8); sput(o,k,c->link,tl); k+=tl; *any=1; continue; }
+        if(c->dir){
+            if(o&&k+2+nl+1>max) return -1;
+            int k0=k, sub=0; sput1(o,k++,2); sput1(o,k++,nl); sput(o,k,c->name,nl); k+=nl;
+            k=ser_rec(c,o,max,k,&sub); if(k<0) return -1;
+            if(!sub&&!keep) k=k0; else *any=1;
+            continue; }
+        if(!keep) continue;
+        if(o&&k+2+nl+4+c->size+1>max) return -1;
+        sput1(o,k++,1); sput1(o,k++,nl); sput(o,k,c->name,nl); k+=nl;
+        sput1(o,k++,c->size); sput1(o,k++,c->size>>8); sput1(o,k++,c->size>>16); sput1(o,k++,c->size>>24);
+        if(c->size) sput(o,k,c->data,c->size);
+        k+=c->size; *any=1;
+        if(k<0) return -1;
     }
-    if(k+1>max) return -1;
-    o[k++]=0; return k;
+    if(o&&k+1>max) return -1;
+    sput1(o,k++,0); return k;
 }
-int fs_serialize(uint8_t *out,int max){ return ser_rec(root,out,max,0); }
+int fs_serialize(uint8_t *out,int max){ int any=0; return ser_rec(root,out,max,0,&any); }   /* out=0: devuelve el tamano necesario */
 static int de_rec(FsNode *d,const uint8_t *in,int len,int k){
     for(;;){
         if(k>=len) return -1;
@@ -185,6 +202,33 @@ static int de_rec(FsNode *d,const uint8_t *in,int len,int k){
         } else return -1;
     }
 }
+static int ov_rec(FsNode *d,const uint8_t *in,int len,int k){
+    for(;;){
+        if(k>=len) return -1;
+        int t=in[k++]; if(t==0) return k;
+        if(k>=len) return -1;
+        int nl=in[k++]; if(k+nl>len||nl>=FS_NAME||nl==0) return -1;
+        char nm[FS_NAME]; memcpy(nm,in+k,(size_t)nl); nm[nl]=0; k+=nl;
+        FsNode *e=fs_find(d,nm);
+        if(t==2){ if(e&&!e->dir){ fs_remove(e); e=0; } if(!e){ e=newnode(d,nm,1); if(!e) return -1; } e->chg=1; k=ov_rec(e,in,len,k); if(k<0) return -1; }
+        else if(t==3){
+            if(k+2>len) return -1;
+            int tl=in[k]|(in[k+1]<<8); k+=2; if(k+tl>len) return -1;
+            char tg[300]; if(tl>=(int)sizeof tg) return -1; memcpy(tg,in+k,(size_t)tl); tg[tl]=0; k+=tl;
+            if(e) fs_remove(e);
+            FsNode *l=fs_symlink(d,nm,tg); if(!l) return -1; l->chg=1;
+        } else if(t==1){
+            if(k+4>len) return -1;
+            int sz=in[k]|(in[k+1]<<8)|(in[k+2]<<16)|(in[k+3]<<24); k+=4;
+            if(sz<0||k+sz>len) return -1;
+            if(e&&(e->dir||e->link)){ fs_remove(e); e=0; }
+            if(!e){ e=newnode(d,nm,0); if(!e) return -1; }
+            if(fs_write(e,(const char*)in+k,sz)) return -1;
+            e->chg=1; k+=sz;
+        } else return -1;
+    }
+}
+int fs_overlay(const uint8_t *in,int len){ int r=ov_rec(root,in,len,0); gen++; return r<0?-1:0; }
 int fs_deserialize(const uint8_t *in,int len){          /* reemplaza TODO el arbol; solo antes de abrir ventanas */
     FsNode *old=root; root=newnode(0,"",1); if(!root){ root=old; return -1; }
     if(de_rec(root,in,len,0)<0){ while(root->child) fs_remove(root->child); kfree(root); root=old; return -1; }

@@ -12,6 +12,7 @@ void gfx_set_bpp(int bpp);
 #include "gui.h"
 #include "net.h"
 #include "fs.h"
+#include "disk.h"
 
 typedef uint64_t u64;
 
@@ -398,8 +399,8 @@ static void fb_wc(uint32_t addr,uint32_t bytes){      /* framebuffer en write-co
     for(uint32_t i=i0;i<=i1 && i<2048;i++) pd[i]=(pd[i]&~0x10ull)|0x08ull;
     uint64_t cr3; __asm__ volatile("mov %%cr3,%0":"=r"(cr3)); __asm__ volatile("mov %0,%%cr3"::"r"(cr3):"memory");
 }
-void kreboot(void){ outb(0x64,0xFE); for(;;) __asm__ volatile("hlt"); }
-void khalt(void){ kprintf("Apagando...\n"); outw(0x604,0x2000); outw(0xB004,0x2000); outw(0x4004,0x3400); for(;;) __asm__ volatile("cli;hlt"); }
+void kreboot(void){ if(kngfs_active()) (void)kngfs_save(); outb(0x64,0xFE); for(;;) __asm__ volatile("hlt"); }
+void khalt(void){ kprintf("Apagando...\n"); if(kngfs_active()) (void)kngfs_save(); outw(0x604,0x2000); outw(0xB004,0x2000); outw(0x4004,0x3400); for(;;) __asm__ volatile("cli;hlt"); }
 static uint8_t cmos(uint8_t r){ outb(0x70,r); return inb(0x71); }
 /* fecha y hora completas del reloj de la placa (se supone UTC), en segundos desde 1970 */
 static uint64_t days_from_civil(int y,int m,int d){ y-=m<=2; int era=(y>=0?y:y-399)/400; unsigned yoe=(unsigned)(y-era*400); unsigned doy=(153u*(unsigned)(m+(m>2?-3:9))+2)/5+(unsigned)d-1; unsigned doe=yoe*365+yoe/4-yoe/100+doy; return (uint64_t)((long)era*146097+(long)doe-719468); }
@@ -444,6 +445,7 @@ void kmain64(uint32_t magic, struct mb_info *mi){
     if(!fs_root()) fs_init();
     proc_set_idle(idle64);
     if(!fb_ok && (mi->flags&8) && mi->mods_n) rootfs_load(mi->mods_n,mi->mods_addr);
+    if(!fb_ok){ int r=kngfs_mount(); fs_track=1; if(r==0) kprintf("[ok] datos guardados cargados desde el disco (%s)\n",disk_kind()); }
     if(net_init()==0){ char nb[90]; net_info(nb,sizeof nb); kprintf("[ok] %s\n",nb); } else kprintf("[i] sin tarjeta de red compatible (e1000 / RTL8139)\n");
     if(fb_ok){
         kprintf("[ok] framebuffer %ux%u 32 bpp en 0x%x. Iniciando escritorio...\n",fb_w,fb_h,fb_addr);
@@ -451,6 +453,7 @@ void kmain64(uint32_t magic, struct mb_info *mi){
         if(gui_init((uint32_t*)(uintptr_t)fb_addr,(int)fb_w,(int)fb_h,(int)fb_pitch)==0){
             gui_mode=1;
             if((mi->flags&8) && mi->mods_n) rootfs_load(mi->mods_n,mi->mods_addr);
+            gui_storage_ready();
             if((mi->flags&4)&&mi->cmdline&&cmd_has((const char*)(uintptr_t)mi->cmdline,"terminal")) gui_open_terminal();   /* linea de GRUB con 'terminal': abre la terminal sola */
             for(;;){
                 { int rb; while((rb=rk_pop())>=0) gui_rawkey(rb); }

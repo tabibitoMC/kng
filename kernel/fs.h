@@ -10,8 +10,11 @@ typedef struct FsNode {
     char *link;       /* si no es 0: enlace simbolico a esta ruta */
     uint32_t mtime;   /* segundos desde 1970 de la ultima modificacion (0 = desconocida) */
     struct FsNode *hl; /* enlaces duros: anillo con los demas nombres del mismo archivo (0 = nombre unico) */
+    int chg;          /* cambiado desde el arranque (se guarda en el disco aunque sea del sistema: p. ej. lo que instala apt) */
     int opens, dead;  /* abierto por programas de usuario; borrado pero aun abierto (se libera al cerrar el ultimo) */
 } FsNode;
+extern int fs_track;                                                   /* 1 = ya arranco: lo que cambie desde ahora se marca 'chg' */
+int fs_overlay(const uint8_t *in,int len);                             /* carga lo guardado ENCIMA del arbol actual (no lo reemplaza) */
 extern uint32_t (*fs_now)(void);                                        /* reloj de pared (lo pone el kernel de 64 bits) */
 extern void (*fs_shm_hook)(void *shm);                                  /* libera la referencia al objeto compartido */
 int     fs_write_at(FsNode *n, int off, const char *src, int len);     /* escribe en una posicion, creciendo con reserva; 0 ok */

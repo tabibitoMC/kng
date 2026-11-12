@@ -18,4 +18,5 @@ int  gui_screen_size(int *w,int *h);                           /* tamano de la p
 void gui_force_redraw(void);
 int  gui_ready(void);
 void gui_panic(const char *name,const char *ipname,uint64_t ip,uint64_t err,uint64_t cr2,int has_cr2);   /* pantalla de error fatal */
+void gui_storage_ready(void);   /* llamar cuando ya esta cargado el sistema base: monta el disco KNGFS */
 #endif

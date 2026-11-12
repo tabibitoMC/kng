@@ -24,68 +24,35 @@ if [ -f build/debian.cpio.gz ]; then
   DEBIAN=1
 else DEBIAN=0; echo "[aviso] sin Debian (para incluirlo:  KNG_DEBIAN=1 bash tools/build-iso.sh )."; fi
 python3 tools/check-mb.py build/iso/boot/*.elf
-cat > build/iso/boot/grub/grub.cfg <<'CFG'
-set timeout=6
-set default=1
-insmod all_video
-insmod gzio
-menuentry "Königreich OS - 32 bits (grafico)" {
-    if [ "$grub_platform" = efi ]; then set gfxpayload=keep; else set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24; fi
-    multiboot /boot/kng-kernel.elf
-    boot
-}
-menuentry "Königreich OS - 64 bits (grafico)" {
-    if [ "$grub_platform" = efi ]; then set gfxpayload=keep; else set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24; fi
-    multiboot /boot/kng-kernel64.elf
-    module /boot/rootfs.cpio
-    boot
-}
-menuentry "Königreich OS - 32 bits (modo texto)" {
-    set gfxpayload=text
-    multiboot /boot/kng-kernel-text.elf
-    boot
-}
-menuentry "Königreich OS - 64 bits (modo texto)" {
-    set gfxpayload=text
-    multiboot /boot/kng-kernel64-text.elf
-    module /boot/rootfs.cpio
-    boot
-}
-CFG
-[ "$ROOTFS" = 1 ] || sed -i '/rootfs.cpio/d' build/iso/boot/grub/grub.cfg
-if [ "$DEBIAN" = 1 ]; then      # con Debian: sus archivos primero y los programas de kng encima (sin la libc del PC, que no es la de Debian)
-  cat > build/iso/boot/grub/grub.cfg <<'CFG'
-set timeout=6
-set default=0
-insmod all_video
-insmod gzio
-menuentry "Königreich OS - 64 bits con Debian (grafico)" {
-    if [ "$grub_platform" = efi ]; then set gfxpayload=keep; else set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24; fi
-    multiboot /boot/kng-kernel64.elf
-    module /boot/debian.cpio.gz
-    module /boot/kng-extra.cpio
-    boot
-}
-menuentry "Königreich OS - 64 bits con Debian (modo texto)" {
-    set gfxpayload=text
-    multiboot /boot/kng-kernel64-text.elf
-    module /boot/debian.cpio.gz
-    module /boot/kng-extra.cpio
-    boot
-}
-menuentry "Königreich OS - 64 bits (grafico, sin Debian)" {
-    if [ "$grub_platform" = efi ]; then set gfxpayload=keep; else set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24; fi
-    multiboot /boot/kng-kernel64.elf
-    module /boot/rootfs.cpio
-    boot
-}
-menuentry "Königreich OS - 32 bits (grafico)" {
-    if [ "$grub_platform" = efi ]; then set gfxpayload=keep; else set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,1280x720x32,1920x1080x32,800x600x32,1024x768x24,1280x1024x24,800x600x24; fi
-    multiboot /boot/kng-kernel.elf
-    boot
-}
-CFG
-fi
+# Menu de arranque: los 4 modos (64/32 bits, grafico/texto) siempre; con Debian, ademas las entradas con Debian.
+# Resolucion: primero 1920x1080 y, si la tarjeta no la tiene, la siguiente de la lista. En UEFI se usa la del firmware.
+VIDEO='if [ "$grub_platform" = efi ]; then set gfxpayload=keep; elif [ -n "$kng_res" ]; then set gfxpayload=$kng_res; else set gfxpayload=1920x1080x32,1600x900x32,1366x768x32,1280x1024x32,1280x720x32,1024x768x32,800x600x32,1920x1080x24,1366x768x24,1280x1024x24,1024x768x24,800x600x24; fi'
+TEXTO='set gfxpayload=text'
+R64=""; [ "$ROOTFS" = 1 ] && R64="    module /boot/rootfs.cpio"
+DEB="    module /boot/debian.cpio.gz
+    module /boot/kng-extra.cpio"
+entrada(){ # titulo kernel modulos video
+  printf 'menuentry "%s" {\n    %s\n    multiboot /boot/%s\n%s\n    boot\n}\n' "$1" "$4" "$2" "$3"; }
+{
+  echo 'set timeout=8'
+  echo 'set default=0'
+  echo 'insmod all_video'
+  echo 'insmod gzio'
+  if [ "$DEBIAN" = 1 ]; then
+    entrada "Königreich OS - 64 bits con Debian (grafico)" kng-kernel64.elf "$DEB" "$VIDEO"
+    entrada "Königreich OS - 64 bits con Debian (modo texto)" kng-kernel64-text.elf "$DEB" "$TEXTO"
+  fi
+  entrada "Königreich OS - 64 bits (grafico)" kng-kernel64.elf "$R64" "$VIDEO"
+  entrada "Königreich OS - 32 bits (grafico)" kng-kernel.elf "" "$VIDEO"
+  entrada "Königreich OS - 64 bits (modo texto)" kng-kernel64-text.elf "$R64" "$TEXTO"
+  entrada "Königreich OS - 32 bits (modo texto)" kng-kernel-text.elf "" "$TEXTO"
+  echo 'submenu "Resolucion de pantalla (elige una y vuelve al menu)" {'
+  for r in 1920x1080x32 1600x900x32 1366x768x32 1280x1024x32 1280x720x32 1024x768x32 800x600x32; do
+    printf '  menuentry "%s" { set kng_res=%s; export kng_res; configfile /boot/grub/grub.cfg }\n' "$r" "$r"
+  done
+  echo '}'
+  echo 'menuentry "Apagar" { halt }'
+} > build/iso/boot/grub/grub.cfg
 # ISO hibrida: arranca con BIOS/Legacy y, si esta instalado grub-efi-amd64-bin, tambien en PCs solo UEFI.
 # (En UEFI sin "CSM/Legacy" algunos PC no emulan teclado/raton PS/2: si no responden, activa Legacy/CSM en la BIOS.)
 if [ -d /usr/lib/grub/x86_64-efi ]; then
