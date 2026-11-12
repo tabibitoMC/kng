@@ -821,6 +821,7 @@ static const char *NEWT[]={"","",
     "print(\"Hola desde Konigreich OS\")\n",
     "#include <stdio.h>\n\nint main(void){\n    printf(\"Hola desde Konigreich OS\\n\");\n    return 0;\n}\n",
     "{\n  \"nombre\": \"valor\"\n}\n",""};
+static FsNode *fm_unz;                                              /* ultima carpeta extraida de un .zip */
 static void fm_do(int act,Win *w,FsNode *dir,FsNode *t){
     if(!dir) return;
     char nm[FS_NAME+16];
@@ -828,7 +829,7 @@ static void fm_do(int act,Win *w,FsNode *dir,FsNode *t){
     case M_OPEN:
         if(!t) break;
         if(t->dir){ if(w){ w->dir=t; w->sel=0; w->scroll=0; w->nstat[0]=0; } else fm_open_dir(t,1); }
-        else if(ext_is(t,"zip")){ fm_do(M_UNZIP,w,t->parent,t); }
+        else if(ext_is(t,"zip")){ fm_unz=0; fm_do(M_UNZIP,w,t->parent,t); if(fm_unz){ if(w){ w->dir=fm_unz; w->sel=0; w->scroll=0; } else fm_open_dir(fm_unz,1); } }   /* abrir un .zip: se extrae y se muestra */
         else open_file(t);
         break;
     case M_OPENNEW: if(t&&t->dir) fm_open_dir(t,1); break;
@@ -875,7 +876,7 @@ static void fm_do(int act,Win *w,FsNode *dir,FsNode *t){
         char b[FS_NAME]; base_name(t->name,b,sizeof b); if(!b[0]) k_strcpy(b,"extraido",sizeof b);
         unique_name(dir,b,nm,sizeof nm); FsNode *d=fs_mkdir(dir,nm); int c=d?zip_extract(t,d):-1;
         if(c<0){ if(d) fs_remove(d); fm_status(w,"No es un archivo .zip valido"); break; }
-        if(w){ w->sel=d; } char m[48]="Extraidos "; cat_int(m,48,c); cat(m,48," archivos"); fm_status(w,m); break; }
+        fm_unz=d; if(w){ w->sel=d; } char m[48]="Extraidos "; cat_int(m,48,c); cat(m,48," archivos"); fm_status(w,m); break; }
     case M_DESK: { FsNode *dk=desk_dir(); if(!t||!dk||t->parent==dk) break; unique_name(dk,t->name,nm,sizeof nm); fm_status(w,fs_copy(t,dk,nm)?"Copiado al Escritorio":"No se pudo copiar"); break; }
     case M_PROPS: {
         if(!t) break;
@@ -966,7 +967,7 @@ static void fm_drop(void){                                          /* se solto 
     if(s->parent==dst){ if(dst==dk&&!onwin){ int i=dsk_find(s->name); if(i>=0) dsk_moveto(i,mx-38,my-30); } dsk_nx=-1; return; }
     if(s->dir&&fm_inside(dst,s)){ if(tw) fm_status(tw,"No se puede mover una carpeta dentro de si misma"); dsk_nx=-1; return; }
     char nm[FS_NAME+16]; unique_name(dst,s->name,nm,sizeof nm);
-    if(fs_move(s,dst,nm)==0){ if(fd_win>=0&&wins[fd_win].used&&wins[fd_win].sel==s) wins[fd_win].sel=0; if(tw){ tw->sel=s; fm_status(tw,"Movido aqui"); } }
+    if(fs_move(s,dst,nm)==0){ if(fd_win>=0&&wins[fd_win].used&&wins[fd_win].sel==s) wins[fd_win].sel=0; if(tw){ if(dst==tw->dir) tw->sel=s; fm_status(tw,dst==tw->dir?"Movido aqui":"Movido a la carpeta"); } }
     else if(tw) fm_status(tw,"No se pudo mover");
     dsk_sync(); dirty=1;
 }
@@ -1334,7 +1335,7 @@ static int dsk_drop(int i){                                         /* se solto 
     if(!dst||dst==dk) return 0;
     if(s->dir&&fm_inside(dst,s)) return 0;
     char nm[FS_NAME+16]; unique_name(dst,s->name,nm,sizeof nm);
-    if(fs_move(s,dst,nm)==0){ if(tw){ tw->sel=s; fm_status(tw,"Movido aqui"); } dsk_sync(); dirty=1; return 1; }
+    if(fs_move(s,dst,nm)==0){ if(tw){ if(dst==tw->dir) tw->sel=s; fm_status(tw,dst==tw->dir?"Movido aqui":"Movido a la carpeta"); } dsk_sync(); dirty=1; return 1; }
     return 0;
 }
 
