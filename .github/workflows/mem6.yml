@@ -10,7 +10,9 @@ jobs:
       - run: make -C kernel64 && python3 tools/mkrootfs.py rootfs.cpio
       - name: variantes
         run: |
-          run(){ ( sleep 8; for c in "$@"; do echo "$c"; sleep 40; done; echo procesos; sleep 2 ) | timeout 200 qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd rootfs.cpio -display none -serial stdio -m 6G 2>&1 || true; }
+          run(){ ( sleep 8; for c in "$@"; do echo "$c"; sleep 40; done; echo procesos; sleep 2 ) | timeout 200 qemu-system-x86_64 -kernel kernel64/kng-kernel64-text.elf -initrd rootfs.cpio -display none -serial stdio -m 6G $NIC 2>&1 || true; }
+          NIC="" run "mem" "ejecutar /bin/memtest" > d.log; echo "D (esperar 40 s, sin probar-ram): $(grep -a 'memtest resultado' d.log) $(grep -a excepcion d.log)"
+          NIC="-nic none" run "probar-ram" "ejecutar /bin/memtest" > e.log; echo "E (probar-ram, SIN red): $(grep -a 'memtest resultado' e.log) $(grep -a excepcion e.log)"
           run "ejecutar /bin/memtest" > a.log; echo "A (sin probar-ram): $(grep -a 'memtest resultado' a.log) $(grep -a excepcion a.log)"
           run "probar-ram" "rastro 2" "ejecutar /bin/memtest" > b.log; echo "B (con probar-ram): $(grep -a 'memtest resultado' b.log) $(grep -a excepcion b.log)"
           echo "--- mmap/openat de memtest:"; grep -a -E "\] (9|257|2) " b.log | head -30
