@@ -14,6 +14,11 @@ Estado honesto. "VERIFICADO" = lo ejecuto GitHub Actions arrancando kng en QEMU 
 - **Modo grafico probado en CI** (ISO con GRUB, opcion de arranque `terminal`, `diag.yml` con `grafico=si`): `instalar brave` completo en 6 min 16 s con 8 GB. Causa del cuelgue de 30+ min que se veia en la VM: el bucle del escritorio dormia (`hlt`, un tic de 10 ms) tras cada bloqueo de proceso aunque hubiera procesos listos; con tuberias de 4 KB un binario de 335 MB generaba 80 000 bloqueos. Arreglado (no dormir si hay procesos listos; tuberias de 64 KB). `clone3` implementado (ya no sale el aviso 435).
 - Repositorios de Brave, Chrome y Opera y la descarga de OpenOffice (SourceForge): URLs y llaves verificadas (responden 200).
 
+- **Persistencia en disco (probado en CI, `persist.yml`)**: controlador SATA (AHCI) ademas de IDE. Se guarda lo que cambio desde el arranque (incluido lo instalado con apt), sin el antiguo tope de 2 MB, se carga encima del sistema base y se guarda al apagar o reiniciar. Probado: guardar en un arranque y leer en otro, con 64 y 32 bits, en SATA e IDE. Activar: Ajustes > Almacenamiento > "Usar este disco" (BORRA ese disco) o `disco formatear si` en la terminal.
+- **Red (probado en CI, `red.yml`)**: Intel e1000, e1000e (82574 probado; I217/I218/I219 agregados sin probar en hardware), RTL8139, virtio, PCnet con DHCP y ping. Nuevo controlador Realtek RTL8111/8168/8169/8101 (QEMU no lo emula: SIN PROBAR). Intel igb (I210/I211/82576): agregado pero FALLA en QEMU.
+- **Arranque**: menu con los 4 modos siempre (64/32 bits, grafico/texto) y submenu de resolucion; por defecto la mayor hasta 1920x1080. ISO hibrida BIOS+UEFI (UEFI probado en QEMU/OVMF). Pantallas de 24 bits soportadas.
+- **Ajustes con pestanas**: General, Pantalla (cambio de resolucion en caliente en VirtualBox/QEMU), Almacenamiento (barra de colores por categorias y disco), Sistema.
+
 ## Pendiente / SIN PROBAR
 - **Navegador (Chromium/Brave/Chrome/Opera)**: ver "Estado del navegador" mas abajo.
 - LibreOffice con ventana (modo X) y Apache OpenOffice (la URL de SourceForge no esta verificada).
