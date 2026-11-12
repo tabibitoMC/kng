@@ -20,6 +20,7 @@ Estado honesto. "VERIFICADO" = lo ejecuto GitHub Actions arrancando kng en QEMU 
 - **Ajustes con pestanas**: General, Pantalla (cambio de resolucion en caliente en VirtualBox/QEMU), Almacenamiento (barra de colores por categorias y disco), Sistema.
 
 ## Pendiente / SIN PROBAR
+- **Bug conocido (memoria)**: con 6 GB, si se ejecuta `probar-ram` (comando de diagnostico que reserva y marca TODA la RAM) y despues un programa dinamico, ese programa muere con 'excepcion 6' en `memcpy` de la libc (pagina de codigo distinta a la del archivo). Sin `probar-ram` todo pasa (memtest 77/77). Diagnostico en `.github/workflows/mem6.yml`. Descartado: modulos dentro del heap, red, tiempo, bloques de kmalloc sin poner a cero. Aparecio cuando la imagen del kernel crecio 82 KB.
 - **Navegador (Chromium/Brave/Chrome/Opera)**: ver "Estado del navegador" mas abajo.
 - LibreOffice con ventana (modo X) y Apache OpenOffice (la URL de SourceForge no esta verificada).
 - Chrome, Opera y OpenOffice: los repositorios responden, pero la instalacion completa de esos tres no se ha ejecutado aun en kng (Brave, Chromium y LibreOffice si).
