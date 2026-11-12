@@ -11,14 +11,17 @@ Estado honesto. "VERIFICADO" = lo ejecuto GitHub Actions arrancando kng en QEMU 
 - **Servidor X real (Xvfb)** corriendo, con clientes X reales (`xlogo`, `xev`, `xwininfo`) y **entrada de teclado/raton**: `kng-xinput` lee `/dev/input/event0` y la entrega por XTEST; `xev` recibe MotionNotify, ButtonPress/Release y KeyPress/Release con la tecla correcta.
 - **LibreOffice 7.4.7 real (Writer + Calc)**: se instala con apt y `soffice --headless --convert-to pdf` convierte un .txt a un PDF valido (`%PDF-1.6`).
 
+- **Modo grafico probado en CI** (ISO con GRUB, opcion de arranque `terminal`, `diag.yml` con `grafico=si`): `instalar brave` completo en 6 min 16 s con 8 GB. Causa del cuelgue de 30+ min que se veia en la VM: el bucle del escritorio dormia (`hlt`, un tic de 10 ms) tras cada bloqueo de proceso aunque hubiera procesos listos; con tuberias de 4 KB un binario de 335 MB generaba 80 000 bloqueos. Arreglado (no dormir si hay procesos listos; tuberias de 64 KB). `clone3` implementado (ya no sale el aviso 435).
+- Repositorios de Brave, Chrome y Opera y la descarga de OpenOffice (SourceForge): URLs y llaves verificadas (responden 200).
+
 ## Pendiente / SIN PROBAR
 - **Navegador (Chromium/Brave/Chrome/Opera)**: ver "Estado del navegador" mas abajo.
 - LibreOffice con ventana (modo X) y Apache OpenOffice (la URL de SourceForge no esta verificada).
-- Repositorios de terceros (Brave, Chrome, Opera): URLs y llaves sin verificar desde kng.
+- Chrome, Opera y OpenOffice: los repositorios responden, pero la instalacion completa de esos tres no se ha ejecutado aun en kng (Brave, Chromium y LibreOffice si).
 - Ventana "Pantalla X" del escritorio grafico, ventana "Programas" y `abrir`: el CI solo arranca en modo texto, **nunca se vio en una VM con pantalla**.
 - Persistencia: lo instalado vive en RAM y se pierde al reiniciar (hace falta disco o cache en KNGFS).
 - Permisos y propietarios de archivos son simulados (todo root, 0755).
-- fork sin copia-al-escribir (copia completa); `vfork` se emula como fork; `clone3` da ENOSYS (glibc usa `clone`, inofensivo).
+- fork sin copia-al-escribir (copia completa); `vfork` se emula como fork.
 - Sin inotify, signalfd ni pty (`/dev/ptmx`); `/proc/self/maps` truncado a 8 KB.
 - Capa de Windows (Wine): no iniciada.
 - Pulido visual: pendiente.
