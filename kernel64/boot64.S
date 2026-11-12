@@ -21,7 +21,7 @@
 pml4:  .skip 4096
 pdpt:  .skip 4096
 pd:    .skip 4096*16
-.global pd
+.global pd, pml4
 .align 16
 stack_bottom: .skip 65536
 stack_top:

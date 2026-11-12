@@ -189,6 +189,27 @@ static void reg_cut(u64 rs,u64 re){
         else hreg[i].e=rs;
     }
 }
+/* Mapea (identidad, paginas de 2 MB, sin cache) una zona MMIO fuera de los 16 GB del arranque: el firmware UEFI
+   o "Above 4G decoding" suele poner las BAR de 64 bits (NVMe) por encima de 4/16 GB. */
+extern uint64_t pml4[512];
+static uint64_t mm_pool[8][512] __attribute__((aligned(4096))); static int mm_used;
+static uint64_t *mm_tab(uint64_t *e){
+    if(*e&1) return (uint64_t*)(uintptr_t)(*e&0x000FFFFFFFFFF000ull);
+    if(mm_used>=8) return 0;
+    uint64_t *t=mm_pool[mm_used++]; for(int i=0;i<512;i++) t[i]=0;
+    *e=(uint64_t)(uintptr_t)t|3; return t;
+}
+static void *mmio_map(uint64_t phys,uint64_t len){
+    if(phys>=(1ull<<46)) return 0;
+    for(uint64_t a=phys&~0x1FFFFFull;a<phys+len;a+=0x200000){
+        uint64_t *pd3=mm_tab(&pml4[(a>>39)&511]); if(!pd3) return 0;
+        uint64_t *e3=&pd3[(a>>30)&511]; if((*e3&1)&&(*e3&0x80)) continue;   /* ya hay pagina de 1 GB */
+        uint64_t *pdd=mm_tab(e3); if(!pdd) return 0;
+        uint64_t *e2=&pdd[(a>>21)&511]; if(!(*e2&1)) *e2=a|0x9B;           /* P RW PWT PCD PS */
+        __asm__ volatile("invlpg (%0)"::"r"((uintptr_t)a):"memory");
+    }
+    return (void*)(uintptr_t)phys;
+}
 static const uint8_t *disk_image_mod(uint32_t *len){                    /* modulo que GRUB cargo con la imagen del instalador (MBR con particion EFI) */
     for(uint32_t i=0;i<mbi_copy.mods_n&&i<16;i++){
         const uint8_t *p=(const uint8_t*)(uintptr_t)mods_copy[i].s; uint32_t n=mods_copy[i].e-mods_copy[i].s;
@@ -456,6 +477,7 @@ void kmain64(uint32_t magic, struct mb_info *mi){
     if(!fs_root()) fs_init();
     proc_set_idle(idle64);
     if(!fb_ok && (mi->flags&8) && mi->mods_n) rootfs_load(mi->mods_n,mi->mods_addr);
+    kng_mmio_map=mmio_map;
     if(!fb_ok){ int r=kngfs_mount(); fs_track=1; if(r==0) kprintf("[ok] datos guardados cargados desde el disco (%s)\n",disk_kind()); }
     if(net_init()==0){ char nb[90]; net_info(nb,sizeof nb); kprintf("[ok] %s\n",nb); } else kprintf("[i] sin tarjeta de red compatible (e1000 / RTL8139)\n");
     if(fb_ok){

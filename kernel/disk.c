@@ -186,7 +186,7 @@ static int nvme_init(void){
             uint32_t lo=pcir(b,d,fn,0x10), hi=(lo&4)?pcir(b,d,fn,0x14):0;
             uint64_t bar=((uint64_t)hi<<32)|(lo&~0xFu);
             if(sizeof(void*)==4&&hi) continue;                                 /* el kernel de 32 bits no llega por encima de 4 GB */
-            if(bar>=(16ull<<30)) continue;                                     /* fuera del mapa de identidad del kernel de 64 bits */
+            if(bar+0x4000>(16ull<<30)){ if(!kng_mmio_map||!kng_mmio_map(bar,0x4000)) continue; }   /* BAR alta (UEFI / Above 4G): mapearla */
             pciw(b,d,fn,0x04,pcir(b,d,fn,0x04)|0x06);
             nvr=(volatile uint8_t*)(uintptr_t)bar;
             uint64_t cap=(uint64_t)nv32(0)|((uint64_t)nv32(4)<<32); nv_dstrd=(uint32_t)((cap>>32)&0xF);
@@ -288,6 +288,7 @@ int kngfs_mount(void){
 int kngfs_format(void){ if(disk_init()) return -1; kngfs_area(); mounted=1; int r=kngfs_save(); if(r) mounted=0; return r; }
 /* ===== instalador: copia al disco la imagen arrancable (MBR + GRUB BIOS/UEFI + FAT32) que GRUB cargo desde el USB,
  *       y crea despues una particion de tipo 0xDA con el resto del disco para los datos (KNGFS) ===== */
+void *(*kng_mmio_map)(uint64_t phys, uint64_t len);
 const uint8_t *(*kng_disk_image)(uint32_t *len);
 int kng_install(void){
     uint32_t n=0; const uint8_t *img=kng_disk_image?kng_disk_image(&n):0;
