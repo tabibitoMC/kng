@@ -6,7 +6,7 @@ faltan=""
 for c in gcc make grub-mkrescue xorriso mformat objcopy python3; do command -v "$c" >/dev/null || faltan="$faltan $c"; done
 if [ -n "$faltan" ] || [ ! -d /usr/lib/grub/i386-pc ]; then
   echo "Faltan herramientas:$faltan"
-  echo "Instala con:  sudo apt update && sudo apt install -y build-essential gcc-multilib grub-pc-bin grub-efi-amd64-bin xorriso mtools python3 dosfstools fdisk"
+  echo "Instala con:  sudo apt update && sudo apt install -y build-essential gcc-multilib grub-pc-bin grub-efi-amd64-bin xorriso mtools python3 dosfstools fdisk debootstrap cpio gzip"
   exit 1
 fi
 make -C kernel clean >/dev/null; make -C kernel64 clean >/dev/null
@@ -55,12 +55,14 @@ entrada(){ # titulo kernel modulos video
 } > build/iso/boot/grub/grub.cfg
 # Instalador: imagen de disco arrancable (MBR + GRUB BIOS/UEFI + FAT32) que kng copia al disco duro de la PC.
 if [ "$KNG_SIN_INSTALADOR" != 1 ] && bash tools/mkdisk.sh; then
-  python3 - <<'PY'
+  DEBIAN=$DEBIAN python3 - <<'PY'
+import os
 p='build/iso/boot/grub/grub.cfg'; s=open(p).read()
 e=("menuentry \"INSTALAR Königreich OS en el disco duro de esta PC\" {\n"
    "    if [ \"$grub_platform\" = efi ]; then set gfxpayload=keep; else set gfxpayload=1024x768x32,1280x1024x32,1366x768x32,800x600x32,1024x768x24,800x600x24; fi\n"
    "    echo \"Cargando el instalador (puede tardar 1 o 2 minutos)...\"\n"
    "    multiboot /boot/kng-kernel64.elf instalador\n"
+   + ("    module /boot/debian.cpio.gz\n    module /boot/kng-extra.cpio\n" if os.environ.get("DEBIAN")=="1" else "") +
    "    module /boot/disco.img.gz\n"
    "    boot\n}\n")
 i=s.index("menuentry"); s=s[:i]+e+s[i:]
