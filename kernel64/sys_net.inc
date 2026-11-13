@@ -242,6 +242,7 @@ static void tfd_update(KObj *o){
     else o->t_next=0;
 }
 static u64 sys_eventfd(u64 init,u64 flags){
+    if(flags&~(0x80000ull|0x800ull|1ull)) return RET_ERR(EINVAL);           /* solo EFD_CLOEXEC, EFD_NONBLOCK, EFD_SEMAPHORE */
     int fd=fd_alloc(CP,0); if(fd<0) return RET_ERR(EMFILE);
     KObj *o=obj_new(6); if(!o) return RET_ERR(ENOMEM); o->cnt=init; o->flags=(int)(flags&1);
     FD *f=&CP->fd[fd]; memset(f,0,sizeof *f); f->type=6; f->obj=o; f->flags=(flags&0x800)?0x800:0; f->cloexec=(flags&0x80000)?1:0; return (u64)fd;
