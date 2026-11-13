@@ -20,7 +20,7 @@ jobs:
           S=$(printf '0x%x' $((O-0x200))); E=$(printf '0x%x' $((O+0x40)))
           objdump -d --no-show-raw-insn --start-address=$S --stop-address=$E $B | tail -n 120
           echo "=== cadenas cercanas referenciadas ==="
-          objdump -d --no-show-raw-insn --start-address=$S --stop-address=$E $B | grep -o '# 0x[0-9a-f]*' | awk '{print $2}' | while read a; do
+          objdump -d --no-show-raw-insn --start-address=$S --stop-address=$E $B | grep -o '# [0-9a-f]* ' | awk '{print "0x"$2}' | while read a; do
             python3 - "$B" "$a" <<'PY'
           import sys,struct
           b=open(sys.argv[1],'rb').read(); a=int(sys.argv[2],16)
