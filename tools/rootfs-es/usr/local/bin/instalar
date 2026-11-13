@@ -18,7 +18,7 @@ agrega_repo() {   # nombre url-llave archivo-llave linea-del-repo
   echo "$4" > "/etc/apt/sources.list.d/$1.list"
   apt-get update || return 1
 }
-pantalla_base="xvfb xterm xauth x11-utils x11-xserver-utils fonts-dejavu-core fonts-liberation libgl1 libgl1-mesa-dri"
+pantalla_base="xvfb xterm xfonts-base xauth x11-utils x11-xserver-utils fonts-dejavu-core fonts-liberation libgl1 libgl1-mesa-dri"
 
 lista=""
 for p in "$@"; do

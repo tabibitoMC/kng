@@ -718,6 +718,7 @@ static u64 sys_dispatch(struct regs *r){
     case 0:  return fd_read(a1,a2,a3);
     case 1:  return fd_write(a1,a2,a3);
     case 2:  return do_open(AT_FDCWD_L,a1,a2,a3);
+    case 85: return do_open(AT_FDCWD_L,a1,0x241,a2);                      /* creat */
     case 257:return do_open((long)(int)a1,a2,a3,a4);
     case 3:  if(a1<MAXFD&&CP->fd[a1].type){ fd_close(&CP->fd[a1]); return 0; } return RET_ERR(EBADF);
     case 8:  return sys_lseek(a1,a2,a3);
@@ -942,6 +943,7 @@ void kernel_entry(struct regs *r){
         int pf_ok=(r->int_no==14&&!(r->err&1)&&vma_fault(CP,cr2,(r->err&2)!=0)==0);      /* primera vez que se toca la pagina: se crea y el programa sigue */
         if(!pf_ok){
             int sig=(r->int_no==14||r->int_no==13||r->int_no==12||r->int_no==11)?11:r->int_no==6?4:(r->int_no==0||r->int_no==16||r->int_no==19)?8:r->int_no==17?7:5;
+            if(krastro) kprintf("\n[proceso %d] excepcion %lu: rip=0x%lx err=0x%lx cr2=0x%lx (senal %d al programa)\n",cur->pid,r->int_no,r->rip,r->err,cr2,sig);
             if(sig_fault(r,sig,cr2)){
                 kprintf("\n[proceso %d] excepcion %lu en el programa: rip=0x%lx err=0x%lx cr2=0x%lx -> terminado\n",cur->pid,r->int_no,r->rip,r->err,cr2);
                 do_exit_group(-sig);
