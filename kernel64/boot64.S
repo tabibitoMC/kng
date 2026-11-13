@@ -91,7 +91,9 @@ _start:
     jb 3f
     or $0x18, %edx
 3:  mov %edx, pd(,%ecx,8)
-    movl $0, pd+4(,%ecx,8)
+    mov %ecx, %edx                    /* parte alta de la direccion: entrada*2 MB >> 32 (sin esto, de 4 a 16 GB se repetian los primeros 4 GB) */
+    shr $11, %edx
+    mov %edx, pd+4(,%ecx,8)
     inc %ecx
     cmp $8192, %ecx
     jne 2b
