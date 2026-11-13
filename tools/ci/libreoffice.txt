@@ -1,0 +1,15 @@
+# LibreOffice con ventana en la Pantalla X (como lo abre "Programas de Linux")
+600|actualizar
+1500|instalar libreoffice
+20|pantalla
+@esperar 10
+@byte 14
+@esperar 3
+20|rastro 1
+20|ejecutar /usr/local/bin/abrir-x /usr/bin/libreoffice --writer --norestore &
+@esperar 150
+@captura x1
+@esperar 60
+@captura x2
+20|rastro 0
+20|procesos
