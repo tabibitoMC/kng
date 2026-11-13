@@ -5,9 +5,9 @@
 @esperar 10
 @byte 14
 @esperar 3
-20|rastro 1
+20|rastro 2
 20|ejecutar /usr/local/bin/abrir-x /usr/bin/chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --no-zygote --disable-crash-reporter --disable-breakpad --enable-logging=stderr --v=0 about:blank &
-@esperar 120
+@esperar 60
 20|rastro 0
 @captura x1
 20|procesos
