@@ -51,7 +51,8 @@ static KObj *file_shm(FsNode *n){
     u64 sz=(u64)n->size; KObj *o=shm_new(sz?sz:4096,1); if(!o) return 0;
     if(sz) memcpy(o->contig,n->data,sz);
     if(!n->ro) kfree(n->data);
-    n->data=(char*)o->contig; n->ro=1; n->shm=o; o->refs++;               /* una referencia es la del archivo */
+    n->data=(char*)o->contig; n->ro=1; n->shm=o; o->refs++;
+    n->cap=(int)((((sz?sz:4096)+4095)&~4095ull));                        /* capacidad real del bloque: antes quedaba la del bloque viejo (hasta el doble) y al crecer el archivo se escribia fuera */               /* una referencia es la del archivo */
     return o;
 }
 
