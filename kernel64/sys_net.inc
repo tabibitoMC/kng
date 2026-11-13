@@ -394,13 +394,13 @@ static u64 dev_write(FD *f,u64 buf,u64 n){
     return RET_ERR(ENODEV);
 }
 static void dev_create(void){
-    static const struct { const char *n; int d; } L[]={{"null",DEV_NULL},{"zero",DEV_ZERO},{"urandom",DEV_RANDOM},{"random",DEV_RANDOM},{"tty",DEV_TTY},{"console",DEV_TTY},{"full",DEV_FULL}};
+    static const struct { const char *n; int d; } L[]={{"null",DEV_NULL},{"zero",DEV_ZERO},{"urandom",DEV_RANDOM},{"random",DEV_RANDOM},{"tty",DEV_TTY},{"console",DEV_TTY},{"full",DEV_FULL},{"ptmx",DEV_PTMX}};
     FsNode *root=fs_root(); if(!root) return;
     const char *dirs[]={"dev","tmp","proc","sys","run","var","etc","usr","bin","lib","lib64","root","home","opt","mnt"};
     for(unsigned i=0;i<sizeof dirs/sizeof *dirs;i++){ FsNode *d=fs_find(root,dirs[i]); if(!d){ d=fs_mkdir(root,dirs[i]); if(d) d->sys=1; } }
     FsNode *dev=fs_find(root,"dev"); if(!dev) return;
     for(unsigned i=0;i<sizeof L/sizeof *L;i++) if(!fs_find(dev,L[i].n)){ FsNode *n=fs_create(dev,L[i].n,"",0); if(n){ n->sys=1; n->dev=L[i].d; } }
-    const char *sub[]={"shm","input","dri"}; for(unsigned i=0;i<3;i++) if(!fs_find(dev,sub[i])){ FsNode *d=fs_mkdir(dev,sub[i]); if(d) d->sys=1; }
+    const char *sub[]={"shm","input","dri","pts"}; for(unsigned i=0;i<4;i++) if(!fs_find(dev,sub[i])){ FsNode *d=fs_mkdir(dev,sub[i]); if(d) d->sys=1; }
     { FsNode *in=fs_find(dev,"input"); if(in&&!fs_find(in,"event0")){ FsNode *n=fs_create(in,"event0","",0); if(n){ n->sys=1; n->dev=DEV_EVENT; } } }
     FsNode *tmp=fs_find(root,"tmp"); if(tmp&&!fs_find(tmp,".X11-unix")){ FsNode *d=fs_mkdir(tmp,".X11-unix"); if(d) d->sys=1; }
 }
@@ -416,7 +416,8 @@ static int fd_events_p(Proc *pr,int fdn){
     case 6: return (f->obj->cnt>0?PIN:0)|(f->obj->cnt<0xFFFFFFFFFFFFFFFEull?POUT:0);
     case 7: return epoll_scan(pr,f->obj,0,64,0)>0?PIN:0;
     case 8: tfd_update(f->obj); return f->obj->cnt?PIN:0;
-    case 10: if(f->aux==DEV_TTY){ stdin_pump(); return POUT|(tty_input_ready()?PIN:0); } return dev_events(f->aux);
+    case 10: if(is_pty(f->aux)) return pty_events(f->aux);
+             if(f->aux==DEV_TTY){ stdin_pump(); return POUT|(tty_input_ready()?PIN:0); } return dev_events(f->aux);
     default: return PIN|POUT;
     }
 }

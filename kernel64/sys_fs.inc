@@ -104,6 +104,8 @@ static u64 do_open(long dirfd,u64 path_va,u64 flags,u64 mode){
     if(n->dir&&(flags&O_ACCMODE_)) return RET_ERR(EISDIR);
     int f=fd_alloc(CP,0); if(f<0) return RET_ERR(EMFILE);
     FD *fp=&CP->fd[f]; memset(fp,0,sizeof *fp); fp->cloexec=(flags&O_CLOEXEC_)?1:0; fp->flags=(int)flags;
+    if(n->dev==DEV_PTMX){ int d=pty_open_master(); if(d<0){ fp->type=0; return RET_ERR(28); } fp->type=10; fp->aux=d; fp->node=n; fs_node_ref(n); return (u64)f; }
+    if(is_pty(n->dev)){ struct Pty *pp=pty_of(n->dev); if(!pp->used||pp->locked){ fp->type=0; return RET_ERR(5); } pp->sref++; pp->sopened=1; }
     if(n->dev){ fp->type=10; fp->aux=n->dev; fp->node=n; fs_node_ref(n); return (u64)f; }
     if((flags&O_TRUNC_)&&!n->dir&&(flags&O_ACCMODE_)) fs_resize(n,0);
     fp->type=2; fp->node=n; fp->pos=0; fs_node_ref(n); return (u64)f;

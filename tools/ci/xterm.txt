@@ -1,0 +1,14 @@
+# Pseudoterminales: script (util-linux) y xterm dentro de la pantalla X
+600|actualizar
+60|ejecutar /usr/bin/script -qc "tty; echo hola-desde-pty" /dev/null
+900|instalar xterm x11-apps
+20|pantalla
+@esperar 10
+@byte 14
+@esperar 3
+20|ejecutar /usr/local/bin/abrir-x xlogo -geometry 200x200+700+20 &
+20|ejecutar /usr/local/bin/abrir-x xterm -geometry 70x20+20+20 -e /bin/sh -c "echo HOLA-XTERM; ls /; sleep 600" &
+@esperar 40
+@captura x1
+20|procesos
+60|ejecutar /bin/sh -c "DISPLAY=:0 xwininfo -root -tree | head -30"

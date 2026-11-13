@@ -195,14 +195,15 @@ static void task_prepare(Task *t,const struct regs *fr){      /* pila de kernel:
 }
 static void shm_free(KObj *o);
 static void obj_unref(KObj *o){ if(o&&--o->refs<=0){ if(o->kind==12) shm_free(o); if(o->data) kfree(o->data); kfree(o); } }
+static void pty_ref(int dev); static void pty_unref(int dev);
 static void fd_close(FD *f){
     if(f->type==3||f->type==4){ struct Pipe *p=f->pipe; if(f->type==3) p->readers--; else p->writers--; if(p->readers<=0&&p->writers<=0) kfree(p); }
     else if(f->type==5) sock_unref(f->aux);
-    else if(f->type==2||f->type==10) fs_node_unref(f->node);
+    else if(f->type==2||f->type==10){ if(f->type==10) pty_unref(f->aux); fs_node_unref(f->node); }
     else if(f->type==6||f->type==7||f->type==8||f->type==11||f->type==12||(f->type==10&&f->obj)) obj_unref(f->obj);
     memset(f,0,sizeof *f);
 }
-static void fd_dup_into(FD *d,const FD *s){ *d=*s; d->cloexec=0; if(s->type==3) s->pipe->readers++; else if(s->type==4) s->pipe->writers++; else if(s->type==5) sock_ref(s->aux); else if((s->type==2||s->type==10)&&s->node) fs_node_ref(s->node); else if(s->obj&&(s->type==6||s->type==7||s->type==8||s->type==11||s->type==12||s->type==10)) s->obj->refs++; }
+static void fd_dup_into(FD *d,const FD *s){ *d=*s; d->cloexec=0; if(s->type==10) pty_ref(s->aux); if(s->type==3) s->pipe->readers++; else if(s->type==4) s->pipe->writers++; else if(s->type==5) sock_ref(s->aux); else if((s->type==2||s->type==10)&&s->node) fs_node_ref(s->node); else if(s->obj&&(s->type==6||s->type==7||s->type==8||s->type==11||s->type==12||s->type==10)) s->obj->refs++; }
 
 #include "sys_tty.inc"
 static int pipe_ready(Task *t){
@@ -464,7 +465,10 @@ static FsNode *resolve_parent(const char *path,char *leaf){      /* carpeta cont
     return fs_resolve(fs_root(),full);
 }
 #include "sys_sig.inc"
+#define DEV_PTMX 20
+static int is_pty(int dev); static int pty_events(int dev);
 #include "sys_net.inc"
+#include "pty.inc"
 #include "sys_proc.inc"
 static void etc_defaults(void){
     FsNode *root=fs_root(), *etc=root?fs_find(root,"etc"):0; if(!etc) return;
@@ -549,7 +553,7 @@ static u64 fd_read(u64 fdn,u64 buf,u64 n){
             if(INTR()) return RET_ERR(EINTR);
             if(wait_fd((int)fdn,PIN,0)==1) return RET_ERR(EINTR);
         } }
-    case 10: return dev_read(f,buf,n);
+    case 10: if(is_pty(f->aux)) return pty_read(f,(int)fdn,buf,n); return dev_read(f,buf,n);
     case 11: { KObj *o=f->obj; u64 left=f->pos<(u64)o->size?(u64)o->size-f->pos:0; if(n>left) n=left; if(n&&ucopy_to(CP,buf,o->data+f->pos,n)) return RET_ERR(EFAULT); f->pos+=n; return n; }
     case 12: { KObj *o=f->obj; u8 tmp[1024]; u64 done=0; while(done<n&&f->pos<o->ssize){ u64 c=n-done; if(c>sizeof tmp) c=sizeof tmp; u64 got=shm_rw(o,f->pos,tmp,c,0); if(!got) break;
                    if(ucopy_to(CP,buf+done,tmp,got)) return done?done:RET_ERR(EFAULT);
@@ -590,7 +594,7 @@ static u64 fd_write(u64 fdn,u64 buf,u64 n){
         return n; }
     case 5: return sock_send_fd(fdn,buf,n,0,0,0,0,0,0);
     case 6: { if(n<8) return RET_ERR(EINVAL); u64 v; if(ucopy_from(CP,&v,buf,8)) return RET_ERR(EFAULT); if(v==~0ull) return RET_ERR(EINVAL); f->obj->cnt+=v; return 8; }
-    case 10: return dev_write(f,buf,n);
+    case 10: if(is_pty(f->aux)) return pty_write(f,(int)fdn,buf,n); return dev_write(f,buf,n);
     }
     return RET_ERR(EBADF);
 }
@@ -747,6 +751,7 @@ static u64 sys_dispatch(struct regs *r){
         FD *tf=&CP->fd[a1]; int is_tty=tf->type==1||(tf->type==10&&tf->aux==DEV_TTY);
         if(a2==0x5421){ int v=0; if(a3&&ucopy_from(CP,&v,a3,4)) return RET_ERR(EFAULT); if(v) tf->flags|=0x800; else tf->flags&=~0x800; return 0; }      /* FIONBIO */
         if(is_tty) return tty_ioctl(a2,a3);
+        if(tf->type==10&&is_pty(tf->aux)) return pty_ioctl(tf,a2,a3);
         if(a2==0x541B){ int v=0; if(tf->type==3) v=tf->pipe->count; else if(tf->type==5) v=sock_avail(tf->aux); return ucopy_to(CP,a3,&v,4)?RET_ERR(EFAULT):0; }   /* FIONREAD */
         return RET_ERR(ENOTTY); }
     case 17: return sys_pio(a1,a2,a3,a4,0);
