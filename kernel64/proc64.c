@@ -949,6 +949,7 @@ void kernel_entry(struct regs *r){
         if(!pf_ok){
             int sig=(r->int_no==14||r->int_no==13||r->int_no==12||r->int_no==11)?11:r->int_no==6?4:(r->int_no==0||r->int_no==16||r->int_no==19)?8:r->int_no==17?7:5;
             if(krastro) kprintf("\n[proceso %d] excepcion %lu: rip=0x%lx err=0x%lx cr2=0x%lx (senal %d al programa)\n",cur->pid,r->int_no,r->rip,r->err,cr2,sig);
+            if(krastro){ kprintf("[pila %d]",cur->pid); int shown=0; for(int k=0;k<400&&shown<24;k++){ u64 v=0; if(ucopy_from(CP,&v,r->rsp+(u64)k*8,8)) break; if(v>=0x555555554000ull&&v<0x555555554000ull+0x20000000ull){ kprintf(" +%lx",v-0x555555554000ull); shown++; } } kprintf("\n"); }
             if(sig_fault(r,sig,cr2)){
                 kprintf("\n[proceso %d] excepcion %lu en el programa: rip=0x%lx err=0x%lx cr2=0x%lx -> terminado\n",cur->pid,r->int_no,r->rip,r->err,cr2);
                 do_exit_group(-sig);
