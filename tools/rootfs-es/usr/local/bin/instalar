@@ -37,6 +37,7 @@ for p in "$@"; do
         "deb [signed-by=/etc/apt/keyrings/opera.asc] https://deb.opera.com/opera-stable/ stable non-free" || exit 1
       lista="$lista $pantalla_base opera-stable" ;;
     chromium) lista="$lista $pantalla_base chromium" ;;
+    xterm) lista="$lista $pantalla_base" ;;
     firefox) lista="$lista $pantalla_base firefox-esr" ;;
     libreoffice)
       lista="$lista $pantalla_base libreoffice-writer libreoffice-calc libreoffice-impress libreoffice-draw libreoffice-math libreoffice-l10n-es fonts-noto-core" ;;
