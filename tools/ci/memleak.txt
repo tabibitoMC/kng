@@ -1,0 +1,10 @@
+# Uso de memoria del kernel al instalar paquetes
+20|heap
+600|actualizar
+20|heap
+900|instalar xterm
+20|heap
+60|ejecutar /bin/sh -c "du -sk /var/lib/apt /var/cache /var/lib/dpkg /usr /tmp 2>/dev/null"
+900|instalar x11-apps
+20|heap
+20|procesos
