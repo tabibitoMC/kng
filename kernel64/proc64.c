@@ -34,8 +34,8 @@ extern char blob_hola_start[], blob_hola_end[];
 
 #define USER_MIN   0x400000ull           /* debajo de 4 MB vive la imagen del kernel (solo supervisor) */
 #define USER_BASE  0x555555554000ull     /* donde se cargan los ELF PIE */
-#define INTERP_BASE 0x7e0000000000ull    /* enlazador dinamico (ld.so) */
-#define MMAP_BASE  0x7f0000000000ull
+#define INTERP_BASE 0x5f0000000000ull    /* enlazador dinamico (ld.so), debajo de la zona de mmap */
+#define MMAP_BASE  0x600000000000ull
 #define STACK_TOP  0x7ffffff00000ull
 #define STACK_SIZE (8*1024*1024)
 #define USER_MAX   0x7ffffffff000ull
