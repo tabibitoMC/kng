@@ -1,3 +1,6 @@
+#define NPASS 512
+static u8 sock_passcred[NPASS]; static int sock_sender[NPASS];    /* SO_PASSCRED y quien envio lo ultimo a cada socket (para SCM_CREDENTIALS) */
+static void sock_cred_reset(int s){ if(s>=0&&s<NPASS){ sock_passcred[s]=0; sock_sender[s]=0; } }
 /* sys_net.inc — sockets, poll/select/epoll, eventfd, timerfd, dispositivos (/dev) y archivos generados (/proc, /sys).
  * Se incluye dentro de proc64.c (comparte sus tipos y funciones estaticas). */
 
@@ -87,7 +90,7 @@ static u64 sys_socket(u64 dom,u64 type,u64 proto){
     if(base==5&&dom==1) base=1;                                            /* SOCK_SEQPACKET local: se trata como flujo (Chromium lo usa para hablar con sus procesos) */
     if(base!=1&&base!=2) return RET_ERR(base==3?EPERM:22);
     int fd=fd_alloc(CP,0); if(fd<0) return RET_ERR(EMFILE);
-    int s=sock_create((int)dom,base); if(s<0) return RET_ERR(-s);
+    int s=sock_create((int)dom,base); if(s<0) return RET_ERR(-s); sock_cred_reset(s);
     FD *f=&CP->fd[fd]; memset(f,0,sizeof *f); f->type=5; f->aux=s; f->flags=(type&0x800)?0x800:0; f->cloexec=(type&0x80000)?1:0;
     return (u64)fd;
 }
@@ -95,7 +98,7 @@ static u64 sys_socketpair(u64 dom,u64 type,u64 proto,u64 sv){
     (void)proto; if(dom!=1) return RET_ERR(EAFNOSUPPORT);
     int base=(int)(type&0xF); if(base==5) base=1; if(base!=1&&base!=2) return RET_ERR(22);
     int f0=fd_alloc(CP,0); if(f0<0) return RET_ERR(EMFILE); CP->fd[f0].type=9; int f1=fd_alloc(CP,0); CP->fd[f0].type=0; if(f1<0) return RET_ERR(EMFILE);
-    int a,b; int r=sock_pair(base,&a,&b); if(r<0) return RET_ERR(-r);
+    int a,b; int r=sock_pair(base,&a,&b); if(r<0) return RET_ERR(-r); sock_cred_reset(a); sock_cred_reset(b);
     int fl=(type&0x800)?0x800:0, ce=(type&0x80000)?1:0;
     memset(&CP->fd[f0],0,sizeof(FD)); memset(&CP->fd[f1],0,sizeof(FD));
     CP->fd[f0].type=5; CP->fd[f0].aux=a; CP->fd[f0].flags=fl; CP->fd[f0].cloexec=(u8)ce;
@@ -131,7 +134,7 @@ static u64 sys_accept(u64 fdn,u64 addr,u64 alen,u64 flags){
     int nb=CP->fd[fdn].flags&0x800;
     for(;;){
         u32 ip=0; u16 port=0; int c=sock_accept(s,&ip,&port);
-        if(c>=0){
+        if(c>=0){ sock_cred_reset(c);
             int nf=fd_alloc(CP,0); if(nf<0){ sock_unref(c); return RET_ERR(EMFILE); }
             FD *f=&CP->fd[nf]; memset(f,0,sizeof *f); f->type=5; f->aux=c; f->flags=(flags&0x800)?0x800:0; f->cloexec=(flags&0x80000)?1:0;
             if(addr){ int fam=sock_family(c); char up[108]; int pl=0; if(fam==1){ u32 i2; u16 p2; sock_names(c,1,&i2,&p2,up,&pl); } put_sockaddr(addr,alen,fam,ip,port,up,pl); }
@@ -151,6 +154,7 @@ static u64 sys_setsockopt(u64 fdn,u64 level,u64 opt,u64 val,u64 len){
     int s=fd_sock(fdn); if(s<0) return RET_ERR(fdn<MAXFD&&CP->fd[fdn].type?ENOTSOCK:EBADF);
     u32 v=0; if(val&&len>=4) ucopy_from(CP,&v,val,4);
     if(level==1&&opt==2) sock_set_reuse(s,v!=0);
+    if(level==1&&opt==16&&s>=0&&s<NPASS) sock_passcred[s]=(u8)(v!=0);                     /* SO_PASSCRED */
     if(level==1&&(opt==20||opt==21)&&val&&len>=16){ u64 t[2]; if(!ucopy_from(CP,t,val,16)){ u32 tk=(u32)(t[0]*100+t[1]/10000); if(opt==20) CP->fd[fdn].tmo_r=tk; else CP->fd[fdn].tmo_s=tk; } }
     return 0;
 }
@@ -181,6 +185,7 @@ static u64 sys_sendmsg(u64 fdn,u64 msgva,u64 flags){
                     int slot=-1; for(int q=0;q<128;q++) if(!scm_q[q].fd.type){ slot=q; break; } if(slot<0) return RET_ERR(ENOMEM);
                     fd_dup_into(&scm_q[slot].fd,&CP->fd[fx]); scm_q[slot].sock=peer>=0?peer:s; } }
             off+=(len+7)&~7ull; } }
+    { int pe=sock_peer(s); if(pe>=0&&pe<NPASS) sock_sender[pe]=cur->pid; }
     u32 ip=0; u16 port=0; char up[108]; int pl=0, fam=0, have=0;
     if(name&&namelen){ int r=get_sockaddr(name,namelen,&fam,&ip,&port,up,&pl); if(r<0) return RET_ERR(-r); have=1; }
     FD *f=&CP->fd[fdn]; int nb=(f->flags&0x800)||(flags&MSG_DONTWAIT);
@@ -215,8 +220,12 @@ static u64 sys_recvmsg(u64 fdn,u64 msgva,u64 flags){
     u64 cused=0;
     if(ctl&&ctllen>=16){
         int got[8],ng=0; for(int q=0;q<128&&ng<8;q++) if(scm_q[q].fd.type&&scm_q[q].sock==s){ int nf=fd_alloc(CP,0); if(nf<0) break; fd_dup_into(&CP->fd[nf],&scm_q[q].fd); CP->fd[nf].cloexec=(flags&0x40000000)?1:0; fd_close(&scm_q[q].fd); scm_q[q].sock=0; got[ng++]=nf; }
-        if(ng&&16+4*(u64)ng<=ctllen){ u8 cb[64]; memset(cb,0,sizeof cb); *(u64*)cb=16+4*(u64)ng; *(int*)(cb+8)=1; *(int*)(cb+12)=1; for(int k=0;k<ng;k++) *(int*)(cb+16+k*4)=got[k];
-            cused=(16+4*(u64)ng+7)&~7ull; if(ucopy_to(CP,ctl,cb,cused)) return RET_ERR(EFAULT); }
+        u8 cb[96]; memset(cb,0,sizeof cb);
+        if(ng&&16+4*(u64)ng<=ctllen){ *(u64*)cb=16+4*(u64)ng; *(int*)(cb+8)=1; *(int*)(cb+12)=1; for(int k=0;k<ng;k++) *(int*)(cb+16+k*4)=got[k];
+            cused=(16+4*(u64)ng+7)&~7ull; }
+        if(s>=0&&s<NPASS&&sock_passcred[s]&&sock_family(s)==1&&cused+32<=ctllen){      /* SCM_CREDENTIALS: pid, uid, gid de quien envio */
+            u8 *c=cb+cused; *(u64*)c=28; *(int*)(c+8)=1; *(int*)(c+12)=2; *(int*)(c+16)=sock_sender[s]?sock_sender[s]:cur->pid; *(int*)(c+20)=0; *(int*)(c+24)=0; cused+=32; }
+        if(cused&&ucopy_to(CP,ctl,cb,cused)) return RET_ERR(EFAULT);
     }
     u64 nm[2]={cused,0}; ucopy_to(CP,msgva+40,&nm[0],8); u32 z=0; ucopy_to(CP,msgva+48,&z,4);
     return (u64)r;
