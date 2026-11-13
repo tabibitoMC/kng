@@ -816,15 +816,16 @@ static u64 sys_dispatch(struct regs *r){
     case 95: { u32 o=CP->umask; CP->umask=(u32)a1&0777; return o; }
     case 98: case 100: { u8 z[144]; memset(z,0,sizeof z); if(a2&&nr==98) return ucopy_to(CP,a2,z,144)?RET_ERR(EFAULT):0; if(a1&&nr==100) ucopy_to(CP,a1,z,32); return kticks(); }
     case 74: case 75: case 26: case 27: case 149: case 150: case 221: case 144: case 142: case 141: case 145: case 146: case 73: case 162: case 306: return 0;
-    case 90: case 92: return sys_exists_noop(AT_FDCWD_L,a1);
+    case 90: return sys_chmodat(AT_FDCWD_L,a1,a2);
+    case 92: return sys_exists_noop(AT_FDCWD_L,a1);
     case 94: return sys_exists_nf(AT_FDCWD_L,a1,0);
     case 132: return sys_utime(AT_FDCWD_L,a1,a2,2,1);
     case 235: return sys_utime(AT_FDCWD_L,a1,a2?a2-16:0,1,1);
-    case 268: return sys_exists_noop((long)(int)a1,a2);
+    case 268: return sys_chmodat((long)(int)a1,a2,a3);
     case 260: return sys_exists_nf((long)(int)a1,a2,!(a5&0x100));
     case 261: return sys_utime((long)(int)a1,a2,a3?a3-16:0,1,1);
     case 280: return sys_utime((long)(int)a1,a2,a3,0,!(a4&0x100));
-    case 91: case 93: if(a1>=MAXFD||!CP->fd[a1].type) return RET_ERR(EBADF); return 0;
+    case 91: case 93: if(a1>=MAXFD||!CP->fd[a1].type) return RET_ERR(EBADF); if(nr==91&&(CP->fd[a1].type==2)&&CP->fd[a1].node){ CP->fd[a1].node->perm=(unsigned short)(a2&07777); if(!CP->fd[a1].node->perm) CP->fd[a1].node->perm=0400; } return 0;
     case 76: return sys_truncate_path(a1,a2);
     case 77: return sys_ftruncate_fd(a1,a2);
     case 285: if(a2) return 0; { u64 end=a3+a4; if(a1>=MAXFD||!CP->fd[a1].type) return RET_ERR(EBADF); if(CP->fd[a1].type==12){ if(end>CP->fd[a1].obj->ssize&&shm_resize(CP->fd[a1].obj,end)) return RET_ERR(ENOMEM); return 0; } if(CP->fd[a1].type==2){ FsNode *nd=CP->fd[a1].node; if(end>(u64)nd->size&&fs_resize(nd,(int)end)) return RET_ERR(28); return 0; } return RET_ERR(EINVAL); }
@@ -862,8 +863,8 @@ static u64 sys_dispatch(struct regs *r){
     case 265: return sys_linkat((long)(int)a1,a2,(long)(int)a3,a4);
     case 88: return sys_symlinkat(a1,AT_FDCWD_L,a2);
     case 266: return sys_symlinkat(a1,(long)(int)a2,a3);
-    case 83: return sys_mkdirat(AT_FDCWD_L,a1);
-    case 258: return sys_mkdirat((long)(int)a1,a2);
+    case 83: return sys_mkdirat(AT_FDCWD_L,a1,a2);
+    case 258: return sys_mkdirat((long)(int)a1,a2,a3);
     case 263: return sys_unlinkat((long)(int)a1,a2,a3);
     case 84: return sys_unlinkat(AT_FDCWD_L,a1,0x200);
     case 87: return sys_unlinkat(AT_FDCWD_L,a1,0);

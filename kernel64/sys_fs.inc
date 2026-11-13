@@ -95,7 +95,7 @@ static u64 do_open(long dirfd,u64 path_va,u64 flags,u64 mode){
     if(n&&(flags&O_CREAT_)&&(flags&O_EXCL_)) return RET_ERR(EEXIST);
     if(!n&&(flags&O_CREAT_)){
         char leaf[FS_NAME]; int e2=ENOENT; FsNode *d=parent_at(dirfd,path,leaf,&e2); if(!d) return RET_ERR(e2);
-        n=make_file(d,leaf); if(!n) return RET_ERR(ENOSPC_);
+        n=make_file(d,leaf); if(!n) return RET_ERR(ENOSPC_); n->perm=(unsigned short)(mode&07777&~CP->umask); if(!n->perm) n->perm=0400;
     }
     if(!n) return RET_ERR(err);
     if(n->link) return RET_ERR(ELOOP_);
@@ -114,7 +114,7 @@ static u64 do_open(long dirfd,u64 path_va,u64 flags,u64 mode){
 /* ---------- stat ---------- */
 struct KStat { u32 mode; u64 size, ino, rdev; u32 nlink; u64 mtime; };
 static void node_kstat(FsNode *n,struct KStat *k){
-    k->mode=n->link?0120777:n->dir?040755:0100755; k->size=(u64)(n->link?k_strlen(n->link):n->size); k->ino=(u64)(uintptr_t)fs_link_id(n)>>4; k->rdev=0; k->nlink=n->dir?2:(u32)fs_nlink(n); k->mtime=n->mtime;
+    k->mode=n->link?0120777:(n->dir?040000u:0100000u)|(n->perm?n->perm:0755u); k->size=(u64)(n->link?k_strlen(n->link):n->size); k->ino=(u64)(uintptr_t)fs_link_id(n)>>4; k->rdev=0; k->nlink=n->dir?2:(u32)fs_nlink(n); k->mtime=n->mtime;
     if(n->dev==8) k->mode=0140777; else if(n->dev){ k->mode=020666; k->rdev=(u64)n->dev; }
 }
 static int fd_kstat(long fd,struct KStat *k){
@@ -209,11 +209,11 @@ static u64 sys_truncate_path(u64 path_va,u64 size){
     int err=ENOENT; FsNode *n=lookup_at(AT_FDCWD_L,path,1,&err); if(!n) return RET_ERR(err); if(n->dir) return RET_ERR(EISDIR);
     return fs_resize(n,(int)size)?RET_ERR(ENOSPC_):0;
 }
-static u64 sys_mkdirat(long dirfd,u64 path_va){
+static u64 sys_mkdirat(long dirfd,u64 path_va,u64 mode){
     char path[PATH_MAX_]; int e=upath(path_va,path); if(e) return RET_ERR(-e);
     char leaf[FS_NAME]; int err=ENOENT; FsNode *d=parent_at(dirfd,path,leaf,&err); if(!d) return RET_ERR(err);
     if(fs_find(d,leaf)) return RET_ERR(EEXIST);
-    FsNode *n=fs_mkdir(d,leaf); if(!n) return RET_ERR(ENOSPC_); mark_sys(n); return 0;
+    FsNode *n=fs_mkdir(d,leaf); if(!n) return RET_ERR(ENOSPC_); mark_sys(n); n->perm=(unsigned short)(mode&07777&~CP->umask); if(!n->perm) n->perm=0100; return 0;
 }
 static u64 sys_unlinkat(long dirfd,u64 path_va,u64 flags){
     char path[PATH_MAX_]; int e=upath(path_va,path); if(e) return RET_ERR(-e);
@@ -278,6 +278,7 @@ static u64 sys_access_at(long dirfd,u64 path_va){
     return RET_ERR(err);
 }
 static u64 sys_exists_nf(long dirfd,u64 path_va,int follow);
+static u64 sys_chmodat(long dirfd,u64 path_va,u64 mode){ char path[PATH_MAX_]; int e=upath(path_va,path); if(e) return RET_ERR(-e); int err=ENOENT; FsNode *n=lookup_at(dirfd,path,1,&err); if(!n) return RET_ERR(err); n->perm=(unsigned short)(mode&07777); if(!n->perm) n->perm=0400; return 0; }
 static u64 sys_exists_noop(long dirfd,u64 path_va){ return sys_exists_nf(dirfd,path_va,1); }
 static u64 sys_exists_nf(long dirfd,u64 path_va,int follow){        /* chmod/chown/utimes...: kng no guarda permisos ni fechas; solo se comprueba que exista */
     char path[PATH_MAX_]; int e=upath(path_va,path); if(e) return RET_ERR(-e);

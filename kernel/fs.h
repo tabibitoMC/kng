@@ -10,7 +10,8 @@ typedef struct FsNode {
     char *link;       /* si no es 0: enlace simbolico a esta ruta */
     uint32_t mtime;   /* segundos desde 1970 de la ultima modificacion (0 = desconocida) */
     struct FsNode *hl; /* enlaces duros: anillo con los demas nombres del mismo archivo (0 = nombre unico) */
-    int chg;          /* cambiado desde el arranque (se guarda en el disco aunque sea del sistema: p. ej. lo que instala apt) */
+    int chg;
+    unsigned short perm;  /* permisos rwx guardados por chmod/mkdir/open (0 = por defecto 0755) */          /* cambiado desde el arranque (se guarda en el disco aunque sea del sistema: p. ej. lo que instala apt) */
     int opens, dead;  /* abierto por programas de usuario; borrado pero aun abierto (se libera al cerrar el ultimo) */
 } FsNode;
 extern int fs_track;                                                   /* 1 = ya arranco: lo que cambie desde ahora se marca 'chg' */
