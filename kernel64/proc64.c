@@ -779,7 +779,9 @@ static u64 sys_dispatch(struct regs *r){
         if(a2==0||a2==1030){ int n=fd_alloc(CP,(int)a3); if(n<0) return RET_ERR(EMFILE); fd_dup_into(&CP->fd[n],&CP->fd[a1]); if(a2==1030) CP->fd[n].cloexec=1; return (u64)n; }
         if(a2==1) return CP->fd[a1].cloexec;
         if(a2==2){ CP->fd[a1].cloexec=(u8)(a3&1); return 0; }
-        if(a2==3){ return (u64)(CP->fd[a1].flags&~3)|2; }
+        if(a2==3){ FD *gf=&CP->fd[a1]; int acc;                                                     /* F_GETFL: modo de acceso real (Chromium exige O_RDONLY en la memoria compartida de solo lectura) */
+            switch(gf->type){ case 2: case 10: case 11: case 12: acc=gf->flags&3; break; case 3: acc=0; break; case 4: acc=1; break; default: acc=2; }
+            return (u64)(gf->flags&~3)|(u64)acc; }
         if(a2==4){ CP->fd[a1].flags=(CP->fd[a1].flags&~0x800)|(int)(a3&0x800); return 0; }
         if(a2==1033||a2==1034){ FD *sf=&CP->fd[a1]; if(sf->type!=12||!sf->obj) return RET_ERR(EINVAL);                      /* F_ADD_SEALS / F_GET_SEALS (memfd) */
             if(a2==1034) return (u64)sf->obj->seals; if(sf->obj->seals&1) return RET_ERR(EPERM); sf->obj->seals|=(int)(a3&0x1F); return 0; }

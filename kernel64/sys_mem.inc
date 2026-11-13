@@ -240,7 +240,7 @@ static u64 sys_memfd_create(u64 name_va,u64 flags){
     (void)name_va; if(flags&~0x1Full) return RET_ERR(EINVAL);                     /* MFD_CLOEXEC|ALLOW_SEALING|HUGETLB|NOEXEC_SEAL|EXEC */
     int fd=fd_alloc(CP,0); if(fd<0) return RET_ERR(EMFILE);
     KObj *o=shm_new(0,0); if(!o) return RET_ERR(ENOMEM); o->seals=(flags&2)?0:1;     /* sin MFD_ALLOW_SEALING: F_SEAL_SEAL */
-    FD *f=&CP->fd[fd]; memset(f,0,sizeof *f); f->type=12; f->obj=o; f->cloexec=(flags&1)?1:0; return (u64)fd;
+    FD *f=&CP->fd[fd]; memset(f,0,sizeof *f); f->type=12; f->obj=o; f->flags=2; f->cloexec=(flags&1)?1:0; return (u64)fd;
 }
 static struct { int used, key, id, removed, nattach; KObj *o; u64 size; } shm_tab[256];
 static int shm_next_id=1;
