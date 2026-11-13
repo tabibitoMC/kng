@@ -120,6 +120,8 @@ int proc_init(void){
 /* ---------- paginas y tablas (por proceso) ---------- */
 static void vma_release(Proc *pr);
 static int vma_fault(Proc *pr,u64 va,int write);
+static int vma_find(Proc *pr,u64 va);
+static int uprot_none(Proc *pr,u64 va){ int i=vma_find(pr,va); return i>=0&&pr->vma[i].prot==0; }   /* pagina PROT_NONE: el nucleo tampoco la toca (EFAULT, como Linux) */
 static u64 *pg_new(Proc *pr){
     if(pr->freepg){ u64 *p=pr->freepg; pr->freepg=(u64*)(uintptr_t)p[0]; memset(p,0,4096); return p; }
     if(!pr->slab_n || pr->slab_used>=slab_cap(pr->slab_n-1)){
@@ -157,8 +159,8 @@ static u8 *uptr(Proc *pr,u64 va){
 /* memoria intermedia del nucleo con una direccion 'virtual' propia: permite a sendfile/copy_file_range reutilizar fd_read/fd_write sin pasar por el usuario */
 #define KB_VA 0xFFFF900000000000ull
 static u8 kbounce[65536];
-static int ucopy_to(Proc *pr,u64 va,const void *src,u64 n){ const u8 *s=src; if(va>=KB_VA&&va-KB_VA<=sizeof kbounce&&n<=sizeof kbounce-(va-KB_VA)){ memcpy(kbounce+(va-KB_VA),src,n); return 0; } while(n){ u8 *d=uptr(pr,va); if(!d) return -1; u64 c=4096-(va&0xFFF); if(c>n) c=n; memcpy(d,s,c); va+=c; s+=c; n-=c; } return 0; }
-static int ucopy_from(Proc *pr,void *dst,u64 va,u64 n){ u8 *o=dst; if(va>=KB_VA&&va-KB_VA<=sizeof kbounce&&n<=sizeof kbounce-(va-KB_VA)){ memcpy(dst,kbounce+(va-KB_VA),n); return 0; } while(n){ u8 *s=uptr(pr,va); if(!s) return -1; u64 c=4096-(va&0xFFF); if(c>n) c=n; memcpy(o,s,c); va+=c; o+=c; n-=c; } return 0; }
+static int ucopy_to(Proc *pr,u64 va,const void *src,u64 n){ const u8 *s=src; if(va>=KB_VA&&va-KB_VA<=sizeof kbounce&&n<=sizeof kbounce-(va-KB_VA)){ memcpy(kbounce+(va-KB_VA),src,n); return 0; } while(n){ u8 *d=uptr(pr,va); if(!d||uprot_none(pr,va)) return -1; u64 c=4096-(va&0xFFF); if(c>n) c=n; memcpy(d,s,c); va+=c; s+=c; n-=c; } return 0; }
+static int ucopy_from(Proc *pr,void *dst,u64 va,u64 n){ u8 *o=dst; if(va>=KB_VA&&va-KB_VA<=sizeof kbounce&&n<=sizeof kbounce-(va-KB_VA)){ memcpy(dst,kbounce+(va-KB_VA),n); return 0; } while(n){ u8 *s=uptr(pr,va); if(!s||uprot_none(pr,va)) return -1; u64 c=4096-(va&0xFFF); if(c>n) c=n; memcpy(o,s,c); va+=c; o+=c; n-=c; } return 0; }
 static int umap_range(Proc *pr,u64 va,u64 len){ for(u64 p=va&~0xFFFull;p<va+len;p+=4096) if(umap(pr,p)) return -1; return 0; }
 static int ustr(Proc *pr,char *out,int max,u64 va){ for(int i=0;i<max-1;i++){ u8 *c=uptr(pr,va+(u64)i); if(!c) return -1; out[i]=(char)*c; if(!*c) return 0; } out[max-1]=0; return 0; }
 
