@@ -13,6 +13,8 @@ def cadena(a):
             if len(s) > 3 and all(32 <= c < 127 for c in s): return s.decode()
     return None
 for spec in addrs:
+    if spec.startswith('s'):
+        print('cadena %s: %s' % (spec[1:], cadena(int(spec[1:], 16)))); continue
     a = int(spec.split(':')[0], 16); win = int(spec.split(':')[1], 16) if ':' in spec else 0x80
     out = subprocess.run(['objdump', '-d', '--no-show-raw-insn', '--start-address=%#x' % (a - win), '--stop-address=%#x' % (a + 0x10), b_path], capture_output=True, text=True).stdout
     lines = [l for l in out.splitlines() if re.match(r'^ +[0-9a-f]+:', l)]
