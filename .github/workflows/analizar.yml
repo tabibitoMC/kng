@@ -12,7 +12,6 @@ jobs:
     container: debian:bookworm
     steps:
       - run: |
-          echo 'deb http://deb.debian.org/debian-security bookworm-security main' >> /etc/apt/sources.list.d/sec.list
           apt-get update -qq && apt-get install -y -qq binutils > /dev/null
           cd /tmp && apt-get download "${{ inputs.paquete }}" && dpkg-deb -x *.deb x
           B=x/${{ inputs.binario }}; O=${{ inputs.offset }}
