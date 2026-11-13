@@ -37,3 +37,13 @@ Estado honesto. "VERIFICADO" = lo ejecuto GitHub Actions arrancando kng en QEMU 
 - Pruebas manuales en CI: workflow *diagnostico* con una lista de `tools/ci/*.txt` (`pantalla.txt`, `navegador.txt`, `oficina.txt`...). Disparo por API: `gh api -X POST repos/tabibitoMC/kng/actions/workflows/diag.yml/dispatches -f ref=main -f 'inputs[lista]=tools/ci/X.txt' -f 'inputs[ram]=6G'`.
 - ISO con Debian: workflow *construir-iso* (publica en Releases) o `KNG_DEBIAN=1 bash tools/build-iso.sh` en WSL. VM con 4 GB de RAM o mas, BIOS, red NAT e1000.
 - Depurar: `rastro 1` (llamadas fallidas), `procesos` o Ctrl+] (estado de cada proceso, sus descriptores y esperas).
+
+## Sesion 13-nov-2026: pantalla X negra y navegadores
+- **Causa de la pantalla negra (arreglada):** `file_shm` (archivo mapeado MAP_SHARED) dejaba `n->cap` del bloque viejo; al crecer el archivo (cache de apt) se escribia fuera del bloque y se corrompia el heap del nucleo -> "Cannot fork", programas X no arrancaban.
+- **Mapa de identidad (boot64.S):** la parte alta de las entradas de 2 MB era 0: de 4 a 16 GB se repetian los primeros 4 GB. Corregido.
+- **Pseudoterminales** `/dev/ptmx` + `/dev/pts/N` (kernel64/pty.inc): xterm funciona (verificado en CI con captura: xlogo y xterm dibujados en la Pantalla X).
+- Pantalla X: solo se redibuja cuando cambia (sin parpadeo del puntero) y muestra aviso mientras esta negra.
+- Para Chromium (probado en CI con chromium 156 de Debian 12, 8 GB): SO_PASSCRED/SCM_CREDENTIALS, creat, permisos reales (mkdir/open/chmod/stat), execve de /proc/self/exe, eventfd2/memfd_create con EINVAL ante opciones invalidas, sellos de memfd, F_GETFL con modo real, /proc/self/task (nlink = 2 + hilos), escrituras en /proc aceptadas, EFAULT en paginas PROT_NONE y de solo lectura.
+- **Estado de Chromium:** el proceso principal, el de red y los hijos arrancan; el renderizador aun falla mas adelante (rip offset 0x9cb0d6c en chromium 156.0.8078.79). Siguiente paso: `analizar.yml` con esa direccion y la pila (`rastro 1` imprime "[pila N]").
+- Herramientas nuevas: `tools/ci/chromium.txt`, `xpantalla.txt`, `xterm.txt`, `memleak.txt`; `ci_drive.py` admite `@captura nombre`; workflow `analizar.yml` + `tools/ci/analizar.py` (desensambla un binario de Debian alrededor de direcciones).
+- **CI detenido:** GitHub Actions dejo de ejecutar trabajos (limite de gasto / pagos de la cuenta).
