@@ -136,6 +136,9 @@ static int path_kstat(long dirfd,u64 path_va,int follow,struct KStat *k){
     int err=ENOENT; FsNode *n=lookup_at(dirfd,path,follow,&err);
     if(n){ memset(k,0,sizeof *k); node_kstat(n,k); return 0; }
     if(err==ENOENT){ char full[PATH_MAX_+100]; static char tmpb[8192];
+        if(path_full(dirfd,path,full,sizeof full)==0){                       /* /proc/self/task: carpeta con un enlace por hilo (Chromium cuenta asi sus hilos: nlink - 2) */
+            const char *q=0; if(k_startswith(full,"/proc/self/task")) q=full+15; else if(k_startswith(full,"/proc/")){ const char *r=full+6; int dg=0; while(*r>='0'&&*r<='9'){ r++; dg++; } if(dg&&k_startswith(r,"/task")) q=r+5; }
+            if(q&&(!*q||(q[0]=='/'&&!q[1]))){ memset(k,0,sizeof *k); k->mode=040555; k->ino=0x6000; k->nlink=2+(u32)(CP->nthreads>0?CP->nthreads:1); return 0; } }
         if(path_full(dirfd,path,full,sizeof full)==0&&is_virtual_path(full)&&gen_proc(full,tmpb,sizeof tmpb)>=0){ memset(k,0,sizeof *k); k->mode=0100444; k->ino=0x7000+(u64)k_strlen(full); k->nlink=1; return 0; } }
     return -err;
 }
