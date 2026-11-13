@@ -1,16 +1,17 @@
-# Pantalla X en el escritorio grafico: instalar xterm, abrir la pantalla, volver a una terminal (Ctrl+T) y medir
+# Pantalla X: programa X simple (xlogo) y un navegador (chromium), viendo sus errores en la terminal
 600|actualizar
-900|instalar xterm
+900|instalar xterm x11-apps
 20|pantalla
-@esperar 15
+@esperar 10
 @byte 14
 @esperar 3
-20|procesos
-20|ejecutar /bin/ls -l /var/lib/xvfb /tmp/.X11-unix
-30|ejecutar /bin/sh -c "tr -d '\000' < /var/lib/xvfb/Xvfb_screen0 | wc -c"
-20|ejecutar /usr/local/bin/abrir-x xterm -geometry 60x15+50+50 &
-@esperar 40
+20|ejecutar /usr/local/bin/abrir-x xlogo -geometry 300x300+20+20 &
+@esperar 20
 @captura x1
+1500|instalar chromium
+20|ejecutar /usr/local/bin/abrir-x chromium &
+@esperar 150
+@captura x2
 20|procesos
 30|ejecutar /bin/sh -c "tr -d '\000' < /var/lib/xvfb/Xvfb_screen0 | wc -c"
-60|ejecutar /bin/sh -c "DISPLAY=:0 xwininfo -root -tree | head -20"
+60|ejecutar /bin/sh -c "DISPLAY=:0 xwininfo -root -tree | head -30"

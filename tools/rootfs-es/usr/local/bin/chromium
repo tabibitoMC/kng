@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /usr/bin/chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --password-store=basic "$@"
