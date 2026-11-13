@@ -632,6 +632,8 @@ static u64 sys_clone(struct regs *r,u64 flags,u64 stack,u64 ptid,u64 ctid,u64 tl
 static u64 sys_execve(struct regs *r,u64 path_va,u64 argv_va,u64 envp_va){
     static char path[420], kargv[MAXARG][512], kenv[MAXARG][512]; static char *pa[MAXARG], *pe[MAXARG]; int argc=0, envc=0;
     if(ustr(CP,path,sizeof path,path_va)) return RET_ERR(EFAULT);
+    if(!k_strcmp(path,"/proc/self/exe")||(path[0]=='/'&&path[1]=='p'&&path[2]=='r'&&path[3]=='o'&&path[4]=='c'&&path[5]=='/'&&path[6]>='0'&&path[6]<='9'&&k_strlen(path)>10&&!k_strcmp(path+k_strlen(path)-4,"/exe"))){   /* el propio programa (Chromium lanza asi sus procesos) */
+        if(!CP->exe[0]) return RET_ERR(ENOENT); k_strcpy(path,CP->exe,sizeof path); }
     for(; argv_va && argc<MAXARG; argc++){ u64 p=0; if(ucopy_from(CP,&p,argv_va+(u64)argc*8,8)) return RET_ERR(EFAULT); if(!p) break; if(ustr(CP,kargv[argc],512,p)) return RET_ERR(EFAULT); pa[argc]=kargv[argc]; }
     for(; envp_va && envc<MAXARG; envc++){ u64 p=0; if(ucopy_from(CP,&p,envp_va+(u64)envc*8,8)) return RET_ERR(EFAULT); if(!p) break; if(ustr(CP,kenv[envc],512,p)) return RET_ERR(EFAULT); pe[envc]=kenv[envc]; }
     if(!argc){ pa[0]=path; argc=1; }
