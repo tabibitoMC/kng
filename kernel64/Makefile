@@ -1,11 +1,11 @@
 # kng-kernel64: kernel de 64 bits. Comparte gfx/fs/html/gui/net con el de 32 bits (../kernel).
 CC      = gcc
 K       = ../kernel
-KFLAGS  = -m64 -std=gnu11 -O2 -ffreestanding -fno-pie -no-pie -mcmodel=small -mno-red-zone -fno-stack-protector -fno-asynchronous-unwind-tables -fno-builtin -fno-tree-loop-distribute-patterns -mgeneral-regs-only -Wall -Wextra -nostdlib -I$(K) -DKNG_ARCH='"x86_64, 64 bits"'
+KFLAGS  = -m64 -march=x86-64 -mtune=generic -std=gnu11 -O2 -ffreestanding -fno-pie -no-pie -mcmodel=small -mno-red-zone -fno-stack-protector -fno-asynchronous-unwind-tables -fno-builtin -fno-tree-loop-distribute-patterns -mgeneral-regs-only -Wall -Wextra -nostdlib -I$(K) -DKNG_ARCH='"x86_64, 64 bits"'
 LDFLAGS = -m64 -T linker64.ld -nostdlib -static -no-pie -Wl,-z,noexecstack -Wl,--build-id=none -Wl,-z,max-page-size=4096
 OBJS    = kernel64.o proc64.o proc64s.o sock.o blob64.o gfx.o fs.o html.o gui.o net.o disk.o kbd.o zip.o
 
-UFLAGS = -m64 -O2 -ffreestanding -fPIE -pie -nostdlib -fno-stack-protector -Wl,-z,max-page-size=4096 -Wl,--build-id=none -Wl,-e,_start -Wl,--no-dynamic-linker
+UFLAGS = -m64 -march=x86-64 -mtune=generic -O2 -ffreestanding -fPIE -pie -nostdlib -fno-stack-protector -Wl,-z,max-page-size=4096 -Wl,--build-id=none -Wl,-e,_start -Wl,--no-dynamic-linker
 
 all: kng-kernel64.elf kng-kernel64-text.elf
 

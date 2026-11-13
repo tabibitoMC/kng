@@ -12,7 +12,7 @@ tmp = tempfile.mkdtemp()
 try:
     for d in ('bin',) + (() if DEB else ('lib64', 'lib/x86_64-linux-gnu')): os.makedirs(os.path.join(tmp, d))
     def cc(extra, dst, srcf, w=False):
-        subprocess.check_call(['gcc', '-O2'] + (['-w'] if w else []) + extra + ['-o', tmp + '/bin/' + dst, srcf])
+        subprocess.check_call(['gcc', '-O2', '-march=x86-64', '-mtune=generic'] + (['-w'] if w else []) + extra + ['-o', tmp + '/bin/' + dst, srcf])
     u = lambda f: os.path.join(raiz, 'kernel64', 'user', f)
     cc(['-static-pie'], 'hola-pie', u('hola-glibc.c'))
     cc(['-static', '-no-pie'], 'hola-static', u('hola-glibc.c'))
