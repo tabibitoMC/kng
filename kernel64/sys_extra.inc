@@ -18,7 +18,7 @@ static u64 sys_getrlimit_k(u64 res,u64 va){
     if(res==3) rl[0]=8ull<<20;                      /* pila */
     else if(res==7){ rl[0]=MAXFD; rl[1]=MAXFD; }    /* archivos abiertos */
     else if(res==6){ rl[0]=MAXT; rl[1]=MAXT; }      /* procesos/hilos */
-    if(krastro){ extern int krastro; int vi=vma_find(CP,va); kprintf("[rlimit %d res=%lu va=%lx vma=%d prot=%d]\n",cur->pid,res,va,vi,vi>=0?(int)CP->vma[vi].prot:-1); }
+    { extern int krastro; if(krastro){ int vi=vma_find(CP,va); kprintf("[rlimit %d res=%lu va=%lx vma=%d prot=%d]\n",cur->pid,res,va,vi,vi>=0?(int)CP->vma[vi].prot:-1); } }
     return va&&ucopy_to(CP,va,rl,16)?RET_ERR(EFAULT):0;
 }
 
