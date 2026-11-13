@@ -595,6 +595,7 @@ static u64 fd_write(u64 fdn,u64 buf,u64 n){
     case 5: return sock_send_fd(fdn,buf,n,0,0,0,0,0,0);
     case 6: { if(n<8) return RET_ERR(EINVAL); u64 v; if(ucopy_from(CP,&v,buf,8)) return RET_ERR(EFAULT); if(v==~0ull) return RET_ERR(EINVAL); f->obj->cnt+=v; return 8; }
     case 10: if(is_pty(f->aux)) return pty_write(f,(int)fdn,buf,n); return dev_write(f,buf,n);
+    case 11: return n;                                                     /* /proc/...: se acepta y se ignora (p. ej. oom_score_adj) */
     }
     return RET_ERR(EBADF);
 }

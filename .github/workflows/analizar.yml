@@ -12,10 +12,21 @@ jobs:
     container: debian:bookworm
     steps:
       - run: |
-          apt-get update -qq && apt-get install -y -qq binutils > /dev/null
+          apt-get update -qq && apt-get install -y -qq binutils python3 > /dev/null
           cd /tmp && apt-get download "${{ inputs.paquete }}" && dpkg-deb -x *.deb x
           B=x/${{ inputs.binario }}; O=${{ inputs.offset }}
-          python3 -c 1 2>/dev/null || apt-get install -y -qq python3 > /dev/null
+          if echo "$O" | grep -q ','; then
+            for a in $(echo "$O" | tr ',' ' '); do echo "=== retorno $a"; S=$(printf '0x%x' $((a-0x60))); objdump -d --no-show-raw-insn --start-address=$S --stop-address=$a $B | grep -E '^ +[0-9a-f]+:' | tail -12
+              objdump -d --no-show-raw-insn --start-address=$S --stop-address=$a $B | grep -o '# [0-9a-f]* ' | awk '{print $2}' | while read x; do python3 -c "
+import sys,struct
+b=open('$B','rb').read(); a=int('$x',16)
+phoff=struct.unpack_from('<Q',b,32)[0]; n=struct.unpack_from('<H',b,56)[0]
+for i in range(n):
+    t,f,off,va,pa,fs,ms,al=struct.unpack_from('<IIQQQQQQ',b,phoff+i*56)
+    if t==1 and va<=a<va+fs:
+        s=b[off+a-va:off+a-va+100].split(b'\\0')[0]
+        if len(s)>3 and all(32<=c<127 for c in s): print('   cadena',hex(a),s.decode())
+"; done; done; exit 0; fi
           # direccion virtual = offset si el binario se enlaza en 0 (PIE)
           S=$(printf '0x%x' $((O-0x200))); E=$(printf '0x%x' $((O+0x40)))
           objdump -d --no-show-raw-insn --start-address=$S --stop-address=$E $B | tail -n 120
