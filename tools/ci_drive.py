@@ -122,3 +122,9 @@ for c in cmds:
         espera(10)
 try: p.terminate(); p.wait(10)
 except Exception: p.kill()
+try:                                                      # panico del kernel: nombre de la funcion de la direccion
+    for m in re.finditer(rb'\[PANIC\][^\n]*rip=0x([0-9a-f]+)', open(logf,'rb').read()):
+        v = int(m.group(1), 16); n = sim(v)
+        dis = subprocess.run(['objdump','-d','--start-address=%#x' % (v-24),'--stop-address=%#x' % (v+8), os.environ.get('KELF','')], capture_output=True, text=True).stdout if os.environ.get('KELF') else ''
+        with open(logf,'ab') as lf: lf.write(('\n[ci_drive] PANIC en %s\n%s\n' % (n or hex(v), '\n'.join(dis.splitlines()[-8:]))).encode())
+except Exception as e: pass

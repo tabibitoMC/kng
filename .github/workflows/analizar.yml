@@ -8,7 +8,7 @@ on:
       offset: { description: "desplazamiento hexadecimal en el archivo (rip - base)", default: "0x9a34446" }
 jobs:
   a:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container: debian:bookworm
     steps:
       - uses: actions/checkout@v4

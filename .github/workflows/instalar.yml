@@ -7,7 +7,7 @@ on:
       disco: { description: "sata | nvme | ide", default: "sata" }
 jobs:
   instalar:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4

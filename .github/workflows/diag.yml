@@ -6,9 +6,10 @@ on:
       lista: { description: "archivo de comandos", default: "tools/ci/diag.txt" }
       ram: { description: "RAM de la VM", default: "3G" }
       grafico: { description: "modo grafico (ISO con GRUB, escritorio y terminal grafica)", default: "no" }
+      imagen: { description: "maquina de GitHub", default: "ubuntu-24.04" }
 jobs:
   diag:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.imagen }}
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
