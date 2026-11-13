@@ -19,6 +19,11 @@ jobs:
           # direccion virtual = offset si el binario se enlaza en 0 (PIE)
           S=$(printf '0x%x' $((O-0x200))); E=$(printf '0x%x' $((O+0x40)))
           objdump -d --no-show-raw-insn --start-address=$S --stop-address=$E $B | tail -n 120
+          echo "=== saltos al punto del fallo ==="
+          T=$(printf '%x' $O); S2=$(printf '0x%x' $((O-0x3000)))
+          objdump -d --no-show-raw-insn --start-address=$S2 --stop-address=$E $B > /tmp/d.txt
+          grep -n " $T " /tmp/d.txt | head -20
+          for n in $(grep -n "j[a-z]* *$T " /tmp/d.txt | cut -d: -f1 | head -8); do echo "--- $n"; sed -n "$((n-25)),$((n+1))p" /tmp/d.txt; done
           echo "=== cadenas cercanas referenciadas ==="
           objdump -d --no-show-raw-insn --start-address=$S --stop-address=$E $B | grep -o '# [0-9a-f]* ' | awk '{print "0x"$2}' | while read a; do
             python3 - "$B" "$a" <<'PY'
