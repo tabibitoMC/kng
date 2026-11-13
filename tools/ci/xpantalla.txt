@@ -1,13 +1,16 @@
-# Pantalla X en el escritorio grafico: instalar xterm, abrirlo y capturar la pantalla
+# Pantalla X en el escritorio grafico: instalar xterm, abrir la pantalla, volver a una terminal (Ctrl+T) y medir
 600|actualizar
 900|instalar xterm
 20|pantalla
-@esperar 20
-@captura x1
+@esperar 15
+@byte 14
+@esperar 3
+20|procesos
 20|ejecutar /bin/ls -l /var/lib/xvfb /tmp/.X11-unix
 30|ejecutar /bin/sh -c "tr -d '\000' < /var/lib/xvfb/Xvfb_screen0 | wc -c"
-20|abrir xterm
+20|ejecutar /usr/local/bin/abrir-x xterm -geometry 60x15+50+50 &
 @esperar 40
-@captura x2
-30|ejecutar /bin/sh -c "tr -d '\000' < /var/lib/xvfb/Xvfb_screen0 | wc -c"
+@captura x1
 20|procesos
+30|ejecutar /bin/sh -c "tr -d '\000' < /var/lib/xvfb/Xvfb_screen0 | wc -c"
+60|ejecutar /bin/sh -c "DISPLAY=:0 xwininfo -root -tree | head -20"
