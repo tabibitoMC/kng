@@ -206,6 +206,7 @@ static u64 sys_mprotect(u64 a,u64 len,u64 prot){
     len=(len+4095)&~4095ull; if(!len) return 0;
     vma_protect(CP,a,a+len,(u32)(prot&7));
     if(a<MMAP_BASE&&(prot&7)) for(u64 va=a;va<a+len&&va<MMAP_BASE;va+=4096) if(vma_find(CP,va)<0&&va>=USER_MIN&&va<USER_MAX) umap(CP,va);        /* zonas cargadas de golpe (ELF, brk) */
+    if(a<MMAP_BASE) for(u64 va=a;va<a+len&&va<MMAP_BASE;va+=4096) if(vma_find(CP,va)<0) pt_walk(CP,va,va+4096,pg_setprot,prot);          /* y su permiso de escritura */
     return 0;
 }
 static u64 sys_madvise(u64 a,u64 len,u64 adv){
