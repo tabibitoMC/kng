@@ -220,7 +220,9 @@ static uint32_t xs_sum(int *negro){
     FsNode *xf=fs_resolve(fs_root(),"/var/lib/xvfb/Xvfb_screen0"); *negro=1;
     if(!xf||xf->dir||xf->size<100||!xf->data) return 0;
     const unsigned char *d=(const unsigned char*)xf->data; uint32_t h=(uint32_t)xf->size, nz=0;
-    for(uint64_t i=100;i<(uint64_t)xf->size;i+=509){ h=h*31u+d[i]; nz|=d[i]; }
+    uint64_t off=((uint64_t)d[0]<<24|d[1]<<16|d[2]<<8|d[3])+12ull*((uint64_t)d[76]<<24|d[77]<<16|d[78]<<8|d[79]);   /* saltar la cabecera XWD y los colores */
+    if(off<100) off=100;
+    for(uint64_t i=off;i<(uint64_t)xf->size;i+=509){ h=h*31u+d[i]; nz|=d[i]; }
     *negro=!nz; return h;
 }
 void gui_open_xscreen(int w,int h){ xs_w=w; xs_h=h; open_app(A_XSCR); dirty=1; }
