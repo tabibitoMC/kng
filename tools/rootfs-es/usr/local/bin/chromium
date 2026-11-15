@@ -3,7 +3,7 @@
 # (pasa a veces la primera vez, al crear el perfil), se vuelve a abrir una vez.
 for intento in 1 2; do
   rm -f "$HOME"/.config/*/Singleton* 2>/dev/null
-  /usr/bin/chromium --no-sandbox --single-process --no-zygote --ozone-platform=x11 --disable-gpu --disable-dev-shm-usage --disable-crash-reporter --disable-breakpad --disable-features=MojoLinuxChannelSharedMem --no-first-run --hide-crash-restore-bubble --password-store=basic "$@"
+  /usr/bin/chromium --no-sandbox --single-process --no-zygote --ozone-platform=x11 --disable-gpu --disable-dev-shm-usage --disable-crash-reporter --disable-breakpad --disable-features=MojoLinuxChannelSharedMem,OptimizationHints,MediaRouter,Translate,OnDeviceModelService --disable-background-networking --disable-component-update --disable-sync --disable-default-apps --no-default-browser-check --disable-smooth-scrolling --no-first-run --hide-crash-restore-bubble --password-store=basic "$@"
   c=$?
   [ $c -eq 0 ] && exit 0
   echo "[kng] el navegador se cerro con codigo $c; se vuelve a abrir" >&2
