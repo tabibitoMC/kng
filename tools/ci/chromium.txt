@@ -1,16 +1,11 @@
-# Chromium: dos variantes con captura (x11 con GPU en proceso; un solo proceso)
+# Chromium con el lanzador de kng (como desde "Programas de Linux")
 600|actualizar
 1500|instalar xterm chromium
 20|pantalla
 @esperar 10
 @byte 14
 @esperar 3
-20|ejecutar /bin/sh -c "/usr/local/bin/abrir-x /usr/bin/chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --no-zygote --disable-crash-reporter --disable-breakpad --disable-features=MojoLinuxChannelSharedMem --enable-logging=stderr --v=0 --ozone-platform=x11 --in-process-gpu about:blank; echo CHROMIUM-A-SALIO=$?" &
-@esperar 120
+20|ejecutar /usr/local/bin/abrir-x chromium https://example.com &
+@esperar 150
 @captura x1
-20|procesos
-20|ejecutar /bin/sh -c "pkill chromium; sleep 3; rm -rf /root/.config/chromium/Singleton*"
-20|ejecutar /bin/sh -c "/usr/local/bin/abrir-x /usr/bin/chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --no-zygote --disable-crash-reporter --disable-breakpad --disable-features=MojoLinuxChannelSharedMem --enable-logging=stderr --v=0 --ozone-platform=x11 --single-process about:blank; echo CHROMIUM-B-SALIO=$?" &
-@esperar 120
-@captura x2
 20|procesos

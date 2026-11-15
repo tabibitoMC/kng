@@ -1,2 +1,2 @@
 #!/bin/sh
-exec /usr/bin/brave-browser --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --password-store=basic "$@"
+exec /usr/bin/brave-browser --no-sandbox --single-process --no-zygote --ozone-platform=x11 --disable-gpu --disable-dev-shm-usage --disable-crash-reporter --disable-breakpad --disable-features=MojoLinuxChannelSharedMem --no-first-run --hide-crash-restore-bubble --password-store=basic "$@"
