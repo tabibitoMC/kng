@@ -5,7 +5,10 @@
 @esperar 10
 @byte 14
 @esperar 3
+20|rastro 1
 20|ejecutar /usr/local/bin/abrir-x chromium https://example.com &
-@esperar 150
+@esperar 60
+20|rastro 0
+@esperar 120
 @captura x1
 20|procesos
