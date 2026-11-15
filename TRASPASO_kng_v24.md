@@ -47,3 +47,10 @@ Estado honesto. "VERIFICADO" = lo ejecuto GitHub Actions arrancando kng en QEMU 
 - **Estado de Chromium:** el proceso principal, el de red y los hijos arrancan; el renderizador aun falla mas adelante (rip offset 0x9cb0d6c en chromium 156.0.8078.79). Siguiente paso: `analizar.yml` con esa direccion y la pila (`rastro 1` imprime "[pila N]").
 - Herramientas nuevas: `tools/ci/chromium.txt`, `xpantalla.txt`, `xterm.txt`, `memleak.txt`; `ci_drive.py` admite `@captura nombre`; workflow `analizar.yml` + `tools/ci/analizar.py` (desensambla un binario de Debian alrededor de direcciones).
 - **CI detenido:** GitHub Actions dejo de ejecutar trabajos (limite de gasto / pagos de la cuenta).
+
+## 14-nov-2026: navegadores y LibreOffice funcionando
+- **LibreOffice Writer** abre con ventana en la Pantalla X (CI, 8 GB; ~4 min el primer arranque).
+- **Chromium** muestra paginas web (CI: example.com cargada). Claves: zona de mmap de 32 TB (MMAP_BASE 0x600000000000, ld.so en 0x5f0000000000) para el sandbox de V8 de 1 TB, y modo `--single-process --ozone-platform=x11` en los lanzadores de chromium/chrome/brave/opera.
+- El primer arranque de Chromium aun se cae (SIGSEGV en una zona de mmap, rip 0x600001751f96; pila en el registro "[pila]"); el lanzador lo vuelve a abrir solo y la segunda vez funciona.
+- Pendiente: modo multiproceso de Chromium (se cierra a los ~20 s), fuentes CJK (cuadritos), inotify, ptrace.
+- Compilacion fijada a -march=x86-64 / i686 (gcc 15 de Ubuntu 26.04 generaba BMI2/AVX2). CI fijado en ubuntu-24.04 (diag.yml acepta `imagen`).
