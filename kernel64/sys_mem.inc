@@ -47,6 +47,7 @@ static u64 shm_rw(KObj *o,u64 off,u8 *buf,u64 n,int write){      /* lectura/escr
     return done;
 }
 /* un archivo normal que se va a mapear de forma compartida pasa a vivir en paginas alineadas (el FS apunta a ellas) */
+static void fs_shm_size_fn(void *shm,int size){ KObj *o=(KObj*)shm; if(o->contig&&(u64)size>o->ssize) o->ssize=(u64)size>o->ccap?o->ccap:(u64)size; }   /* el archivo crecio: la vista compartida tambien */
 static KObj *file_shm(FsNode *n){
     if(n->shm) return (KObj*)n->shm;
     u64 sz=(u64)n->size, capb=sz*2; if(capb<sz+(1ull<<20)) capb=sz+(1ull<<20); if(capb>sz+(64ull<<20)) capb=sz+(64ull<<20);   /* margen para que el archivo crezca (bases de datos de los navegadores) */
@@ -144,9 +145,7 @@ static int vma_fault(Proc *pr,u64 va,int write){
     if(write&&!(v->prot&PROT_W)) return -1;
     u64 pg=va&~0xFFFull, fl=5|((v->prot&PROT_W)?2:0);
     if(v->kind==VK_SHARED){
-        u8 *p=shm_page(v->obj,(pg-v->s+v->off)/4096);
-        if(!p&&v->node&&v->node->shm==v->obj&&v->obj->contig&&(u64)v->node->size>v->obj->ssize){ u64 ns=(u64)v->node->size; if(ns>v->obj->ccap) ns=v->obj->ccap; v->obj->ssize=ns; p=shm_page(v->obj,(pg-v->s+v->off)/4096); }   /* el archivo crecio */
-        if(!p) return -1;
+        u8 *p=shm_page(v->obj,(pg-v->s+v->off)/4096); if(!p) return -1;
         return umap_set(pr,pg,(u64)(uintptr_t)p,fl|0x200);              /* bit 9: la pagina pertenece al objeto, no al proceso */
     }
     u64 *p=pg_new(pr); if(!p) return -1;

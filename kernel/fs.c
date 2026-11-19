@@ -4,6 +4,7 @@
 static FsNode *root;
 static uint32_t gen;
 void (*fs_shm_hook)(void *shm);
+void (*fs_shm_size)(void *shm,int size);                     /* el archivo de un bloque compartido cambio de tamano */
 uint32_t (*fs_now)(void);
 int fs_track;
 static void touch(FsNode *n){ if(fs_now) n->mtime=fs_now(); if(fs_track) n->chg=1; }
@@ -77,7 +78,7 @@ int fs_write_at(FsNode *n,int off,const char *src,int len){
     if(ensure_cap(n,end)) return -1;
     if(off>n->size) memset(n->data+n->size,0,(size_t)(off-n->size));
     if(len) memcpy(n->data+off,src,(size_t)len);
-    if(end>n->size){ n->size=end; if(!n->shm||end<n->cap) n->data[end]=0; }
+    if(end>n->size){ n->size=end; if(!n->shm||end<n->cap) n->data[end]=0; if(n->shm&&fs_shm_size) fs_shm_size(n->shm,end); }
     touch(n); hl_sync(n); gen++; return 0;
 }
 int fs_resize(FsNode *n,int size){
@@ -85,7 +86,7 @@ int fs_resize(FsNode *n,int size){
     if(size==n->size) return 0;
     if(size<n->size){ if(n->shm||n->ro){ if(n->ro&&!n->shm){ if(ensure_cap(n,n->size)) return -1; } } if(size<n->size) memset(n->data+size,0,(size_t)(n->size-size)); n->size=size; if(!n->shm||size<n->cap) n->data[size]=0; touch(n); hl_sync(n); gen++; return 0; }
     if(ensure_cap(n,size)) return -1;
-    memset(n->data+n->size,0,(size_t)(size-n->size)); n->size=size; if(!n->shm||size<n->cap) n->data[size]=0; touch(n); hl_sync(n); gen++; return 0;
+    memset(n->data+n->size,0,(size_t)(size-n->size)); n->size=size; if(!n->shm||size<n->cap) n->data[size]=0; if(n->shm&&fs_shm_size) fs_shm_size(n->shm,size); touch(n); hl_sync(n); gen++; return 0;
 }
 FsNode *fs_symlink(FsNode *dir,const char *name,const char *target){
     if(!dir||!dir->dir||!valid_name(name)||fs_find(dir,name)) return 0;

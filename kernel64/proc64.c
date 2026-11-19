@@ -52,7 +52,7 @@ static inline void wrmsr(u32 m,u64 v){ __asm__ volatile("wrmsr"::"c"(m),"a"((u32
 static inline u64 rdmsr(u32 m){ u32 a,d; __asm__ volatile("rdmsr":"=a"(a),"=d"(d):"c"(m)); return ((u64)d<<32)|a; }
 static int proc_ready;
 static void dev_create(void);
-static void fs_shm_release(void *o);
+static void fs_shm_release(void *o); static void fs_shm_size_fn(void *shm,int size);
 
 /* ---------- estructuras ---------- */
 #define SLAB_MAX   2048                  /* bloques de paginas por proceso: los 4 primeros de 64 paginas, el resto de 256 (hasta ~2 GB) */
@@ -113,7 +113,7 @@ int proc_init(void){
     wrmsr(0xC0000084,0x4700);
     u64 cr3; __asm__ volatile("mov %%cr3,%0":"=r"(cr3)); kcr3=cr3;
     task0.state=T_READY; task0.leader=1; k_strcpy(task0.name,"kernel",sizeof task0.name);
-    sock_init(); dev_create(); fs_shm_hook=fs_shm_release; fs_now=fs_now_fn;
+    sock_init(); dev_create(); fs_shm_hook=fs_shm_release; fs_shm_size=fs_shm_size_fn; fs_now=fs_now_fn;
     proc_ready=1; return 0;
 }
 

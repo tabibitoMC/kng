@@ -17,7 +17,8 @@ typedef struct FsNode {
 extern int fs_track;                                                   /* 1 = ya arranco: lo que cambie desde ahora se marca 'chg' */
 int fs_overlay(const uint8_t *in,int len);                             /* carga lo guardado ENCIMA del arbol actual (no lo reemplaza) */
 extern uint32_t (*fs_now)(void);                                        /* reloj de pared (lo pone el kernel de 64 bits) */
-extern void (*fs_shm_hook)(void *shm);                                  /* libera la referencia al objeto compartido */
+extern void (*fs_shm_hook)(void *shm);
+extern void (*fs_shm_size)(void *shm,int size);                                  /* libera la referencia al objeto compartido */
 int     fs_write_at(FsNode *n, int off, const char *src, int len);     /* escribe en una posicion, creciendo con reserva; 0 ok */
 int     fs_resize(FsNode *n, int size);                                 /* cambia el tamano (rellena con ceros); 0 ok */
 FsNode *fs_symlink(FsNode *dir, const char *name, const char *target);
