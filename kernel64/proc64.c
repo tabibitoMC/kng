@@ -823,6 +823,11 @@ static u64 sys_dispatch(struct regs *r){
     case 281: return sys_epoll_wait(a1,a2,a3,a4,a5,a6);
     case 284: return sys_eventfd(a1,0);
     case 290: return sys_eventfd(a1,a2);
+    /* inotify: descriptor que nunca avisa de cambios (los programas siguen funcionando, solo no ven cambios al vuelo) */
+    case 253: return sys_eventfd(0,0);
+    case 294: return sys_eventfd(0,a1&(0x800|0x80000));
+    case 254: { u64 r=sys_exists_noop(AT_FDCWD_L,a2); if((long)r<0) return r; static int wd=0; return (u64)(++wd); }
+    case 255: return 0;
     case 283: return sys_timerfd_create(a1,a2);
     case 286: return sys_timerfd_settime(a1,a2,a3,a4);
     case 287: return sys_timerfd_gettime(a1,a2);
