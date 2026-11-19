@@ -1,0 +1,15 @@
+# Programas reales con el gestor de ventanas: LibreOffice y Chromium (capturas)
+600|actualizar
+2400|instalar libreoffice chromium
+20|pantalla
+@esperar 10
+@byte 14
+@esperar 3
+20|ejecutar /usr/local/bin/abrir-x libreoffice --writer --norestore &
+@esperar 240
+@captura x1
+20|ejecutar /bin/sh -c "pkill -f soffice; sleep 3"
+20|ejecutar /usr/local/bin/abrir-x chromium https://example.com &
+@esperar 200
+@captura x2
+20|procesos
