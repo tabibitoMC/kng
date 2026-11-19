@@ -1,6 +1,12 @@
 #!/bin/sh
-# abrir-x <programa> [argumentos]: espera a que el servidor X este listo y abre el programa en la pantalla X
+# abrir-x <programa> [argumentos]: espera a que el servidor X este listo y abre el programa en la pantalla X.
+# Si no hay gestor de ventanas, arranca matchbox: cada programa ocupa toda la pantalla X (sin el, las ventanas
+# salen pequenas en una esquina y el resto queda negro).
 n=0
 while [ ! -S /tmp/.X11-unix/X0 ] && [ $n -lt 150 ]; do sleep 0.2; n=$((n+1)); done
 export DISPLAY=:0 HOME=${HOME:-/root}
+if command -v matchbox-window-manager >/dev/null 2>&1 && ! xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q window; then
+  matchbox-window-manager -use_titlebar no -use_cursor no >/dev/null 2>&1 &
+  n=0; while ! xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q window && [ $n -lt 50 ]; do sleep 0.2; n=$((n+1)); done
+fi
 exec "$@"

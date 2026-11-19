@@ -1,0 +1,11 @@
+# Gestor de ventanas: xterm (ventana pequena por defecto) debe ocupar toda la pantalla X
+600|actualizar
+900|instalar xterm
+20|pantalla
+@esperar 10
+@byte 14
+@esperar 3
+20|ejecutar /usr/local/bin/abrir-x xterm -e /bin/sh -c "echo VENTANA-MAXIMIZADA; sleep 600" &
+@esperar 40
+@captura x1
+20|procesos
