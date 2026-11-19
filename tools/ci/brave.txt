@@ -5,7 +5,10 @@
 @esperar 10
 @byte 14
 @esperar 3
+20|rastro 1
 20|ejecutar /usr/local/bin/abrir-x brave https://example.com &
-@esperar 240
+@esperar 90
+20|rastro 0
+@esperar 150
 @captura x1
 20|procesos
