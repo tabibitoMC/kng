@@ -67,7 +67,7 @@ struct Pipe { u8 buf[PIPESZ]; int r,w,count,readers,writers; };
 typedef struct KObj {
     int refs, kind, flags, seals; u64 cnt; u64 t_next, t_int;
     char *data; int size;
-    u8 **tab, **traw; int ntab; u8 *contig, *craw; u64 ssize;           /* memoria compartida (kind 12): paginas por bloques o un solo bloque alineado */
+    u8 **tab, **traw; int ntab; u8 *contig, *craw; u64 ssize, ccap;           /* memoria compartida (kind 12): paginas por bloques o un solo bloque alineado */
     int nw; struct { int fd; u32 ev; u64 data; } w[EP_MAX];
 } KObj;
 typedef struct { u8 type, cloexec; FsNode *node; u64 pos; int flags; struct Pipe *pipe; int aux; KObj *obj; u32 tmo_r, tmo_s; } FD;

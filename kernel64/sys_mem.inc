@@ -10,7 +10,8 @@
 static KObj *shm_new(u64 size,int contiguous){
     KObj *o=obj_new(12); if(!o) return 0;
     o->ssize=size; u64 np=(size+4095)/4096; if(!np) np=1;
-    if(contiguous){ o->craw=kmalloc(np*4096+4096); if(!o->craw){ kfree(o); return 0; } o->contig=(u8*)(uintptr_t)(((u64)(uintptr_t)o->craw+4095)&~4095ull); memset(o->contig,0,np*4096); }
+    if(contiguous){ if((u64)contiguous>np) np=(u64)contiguous;        /* 'contiguous' > 1: paginas de capacidad (para que el archivo pueda crecer) */
+        o->craw=kmalloc(np*4096+4096); if(!o->craw){ kfree(o); return 0; } o->contig=(u8*)(uintptr_t)(((u64)(uintptr_t)o->craw+4095)&~4095ull); memset(o->contig,0,np*4096); o->ccap=np*4096; }
     else { o->ntab=(int)(np/64+1); o->tab=kmalloc((size_t)o->ntab*sizeof(u8*)); o->traw=kmalloc((size_t)o->ntab*sizeof(u8*)); if(!o->tab||!o->traw){ if(o->tab) kfree(o->tab); if(o->traw) kfree(o->traw); kfree(o); return 0; }
            memset(o->tab,0,(size_t)o->ntab*sizeof(u8*)); memset(o->traw,0,(size_t)o->ntab*sizeof(u8*)); }
     return o;
@@ -20,7 +21,7 @@ static void shm_free(KObj *o){
     if(o->tab){ for(int i=0;i<o->ntab;i++) if(o->traw[i]) kfree(o->traw[i]); kfree(o->tab); kfree(o->traw); }
 }
 static int shm_resize(KObj *o,u64 size){                            /* solo crece o se recorta el tamano; las paginas ya creadas no se mueven */
-    if(o->contig){ if(size>((o->ssize+4095)&~4095ull)) return -1; o->ssize=size; return 0; }
+    if(o->contig){ if(size>o->ccap) return -1; o->ssize=size; return 0; }
     int nt=(int)((size+4095)/4096/64+1);
     if(nt>o->ntab){ u8 **t=kmalloc((size_t)nt*sizeof(u8*)), **r=kmalloc((size_t)nt*sizeof(u8*)); if(!t||!r){ if(t) kfree(t); if(r) kfree(r); return -1; }
         memset(t,0,(size_t)nt*sizeof(u8*)); memset(r,0,(size_t)nt*sizeof(u8*)); memcpy(t,o->tab,(size_t)o->ntab*sizeof(u8*)); memcpy(r,o->traw,(size_t)o->ntab*sizeof(u8*));
@@ -48,11 +49,12 @@ static u64 shm_rw(KObj *o,u64 off,u8 *buf,u64 n,int write){      /* lectura/escr
 /* un archivo normal que se va a mapear de forma compartida pasa a vivir en paginas alineadas (el FS apunta a ellas) */
 static KObj *file_shm(FsNode *n){
     if(n->shm) return (KObj*)n->shm;
-    u64 sz=(u64)n->size; KObj *o=shm_new(sz?sz:4096,1); if(!o) return 0;
+    u64 sz=(u64)n->size, capb=sz*2; if(capb<sz+(1ull<<20)) capb=sz+(1ull<<20); if(capb>sz+(64ull<<20)) capb=sz+(64ull<<20);   /* margen para que el archivo crezca (bases de datos de los navegadores) */
+    KObj *o=shm_new(sz?sz:4096,(int)((capb+4095)/4096)); if(!o) return 0;
     if(sz) memcpy(o->contig,n->data,sz);
     if(!n->ro) kfree(n->data);
     n->data=(char*)o->contig; n->ro=1; n->shm=o; o->refs++;
-    n->cap=(int)((((sz?sz:4096)+4095)&~4095ull));                        /* capacidad real del bloque: antes quedaba la del bloque viejo (hasta el doble) y al crecer el archivo se escribia fuera */               /* una referencia es la del archivo */
+    n->cap=(int)o->ccap;                        /* capacidad real del bloque: antes quedaba la del bloque viejo (hasta el doble) y al crecer el archivo se escribia fuera */               /* una referencia es la del archivo */
     return o;
 }
 
@@ -142,7 +144,9 @@ static int vma_fault(Proc *pr,u64 va,int write){
     if(write&&!(v->prot&PROT_W)) return -1;
     u64 pg=va&~0xFFFull, fl=5|((v->prot&PROT_W)?2:0);
     if(v->kind==VK_SHARED){
-        u8 *p=shm_page(v->obj,(pg-v->s+v->off)/4096); if(!p) return -1;
+        u8 *p=shm_page(v->obj,(pg-v->s+v->off)/4096);
+        if(!p&&v->node&&v->node->shm==v->obj&&v->obj->contig&&(u64)v->node->size>v->obj->ssize){ u64 ns=(u64)v->node->size; if(ns>v->obj->ccap) ns=v->obj->ccap; v->obj->ssize=ns; p=shm_page(v->obj,(pg-v->s+v->off)/4096); }   /* el archivo crecio */
+        if(!p) return -1;
         return umap_set(pr,pg,(u64)(uintptr_t)p,fl|0x200);              /* bit 9: la pagina pertenece al objeto, no al proceso */
     }
     u64 *p=pg_new(pr); if(!p) return -1;
