@@ -197,6 +197,7 @@ static u64 sys_mmap(u64 addr,u64 len,u64 prot,u64 flags,u64 fdn,u64 off){
     return RET_ERR(19);
 }
 static u64 sys_munmap(u64 a,u64 len){
+    { extern int krastro; if(krastro>=1) kprintf("[munmap %d] a=%lx len=%lx\n",cur->pid,(u64)a,(u64)len); }
     if(a&0xFFF||!len) return RET_ERR(EINVAL);
     len=(len+4095)&~4095ull; if(a<USER_MIN||a+len>USER_MAX) return RET_ERR(EINVAL);
     vma_cut(CP,a,a+len,1); return 0;
@@ -217,6 +218,7 @@ static u64 sys_madvise(u64 a,u64 len,u64 adv){
     return 0;
 }
 static u64 sys_mremap(u64 old,u64 olen,u64 nlen,u64 flags){
+    { extern int krastro; if(krastro>=1) kprintf("[mremap %d] old=%lx olen=%lx nlen=%lx\n",cur->pid,(u64)old,(u64)olen,(u64)nlen); }
     olen=(olen+4095)&~4095ull; nlen=(nlen+4095)&~4095ull;
     int i=vma_find(CP,old); if(i<0||old&0xFFF||!nlen) return RET_ERR(EINVAL);
     struct Vma v=CP->vma[i];
