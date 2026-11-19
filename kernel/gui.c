@@ -737,7 +737,7 @@ static void draw_doc(int x,int y){ rrect(x+2,y+1,16,20,2,0xe8eaf4,255); fill(x+5
 
 /* ---------------- gestor de archivos: portapapeles, menu contextual, papelera, arrastrar y soltar ---------------- */
 static int in_rect(int px,int py,int x,int y,int w,int h);
-static int dock_hit(int px,int py);
+static int dock_hit(int px,int py); static void dock_geom(int *bx,int *by,int *bw,int *bh);
 static void dsk_sync(void);
 static int  dsk_find(const char *name);
 static void dren_start(int i);
@@ -946,7 +946,8 @@ static void mu_show(int x,int y,int wi,FsNode *dir,FsNode *t){
         mu_add("Abrir terminal aqui",M_TERM); if(dir==tr) mu_add("Vaciar Papelera",M_EMPTYTRASH); mu_add("Actualizar",M_REFRESH);
     }
     mu_w=60; mu_h=8; for(int i=0;i<mu_n;i++){ int tw=text_w(mu_it[i].l)+36; if(tw>mu_w) mu_w=tw; mu_h+=mu_ih(i); }
-    mu_x=x; mu_y=y; if(mu_x+mu_w>gw-4) mu_x=gw-4-mu_w; if(mu_y+mu_h>gh-4) mu_y=gh-4-mu_h; if(mu_x<4) mu_x=4; if(mu_y<BARH) mu_y=BARH;
+    int dbx,dby,dbw,dbh; dock_geom(&dbx,&dby,&dbw,&dbh);                 /* el menu no tapa el dock */
+    mu_x=x; mu_y=y; if(mu_x+mu_w>gw-4) mu_x=gw-4-mu_w; if(mu_y+mu_h>dby-6) mu_y=dby-6-mu_h; if(mu_x<4) mu_x=4; if(mu_y<BARH) mu_y=BARH;
     mu_open=1; mu_hover=-1; dirty=1;
 }
 static int mu_item_at(int px,int py){
