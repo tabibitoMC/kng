@@ -937,7 +937,7 @@ static u64 sys_dispatch(struct regs *r){
     case 194: case 195: case 196: return 0;                         /* listxattr: ninguno */
     default: {
         static u8 avisado[512];                                     /* cada numero se avisa una sola vez: si no, parece un bucle en la pantalla */
-        if(nr<512&&!avisado[nr]){ avisado[nr]=1; kprintf("[syscall] numero %lu aun no implementado -> ENOSYS (se avisa una sola vez)\n",nr); }
+        if(krastro&&nr<512&&!avisado[nr]){ avisado[nr]=1; kprintf("[syscall] numero %lu aun no implementado -> ENOSYS (se avisa una sola vez)\n",nr); }
         return RET_ERR(ENOSYS); }
     }
 }
