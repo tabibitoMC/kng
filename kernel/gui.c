@@ -245,7 +245,11 @@ static const PApp PAPPS[]={
 #define NPAPPS ((int)(sizeof PAPPS/sizeof *PAPPS))
 static int papp_installed(int i){ FsNode *f=fs_resolve(fs_root(),PAPPS[i].path); return f&&!f->dir; }
 static void render(void);
-static void run_in_terminal(const char *cmd){ Win *t=open_app(A_TERM); if(!t||t->busy) return; for(const char *q=cmd;*q;q++) gui_key((unsigned char)*q); gui_key('\n'); }
+static void run_in_terminal(const char *cmd){          /* si la terminal esta ocupada (p. ej. instalando), se abre otra: el boton siempre responde */
+    Win *t=open_app(A_TERM); if(t&&t->busy){ open_new=1; t=open_app(A_TERM); open_new=0; }
+    if(!t||t->busy) return;
+    for(const char *q=cmd;*q;q++) gui_key((unsigned char)*q);
+    gui_key('\n'); }
 void gui_open_installer(void){ run_in_terminal("instalar-sistema"); }
 static void run_quiet(const char *cmd){ char l[160]; k_strcpy(l,cmd,sizeof l); term_target=0; kcon_hook=0; kshell_exec(l); }
 static Win *open_app(int type){
@@ -1118,9 +1122,10 @@ static void draw_window(int wi,int focused){
     case A_ABOUT:{
         crown(cx+cw/2-60,cy+24,120,0xe9c46a,ACCENT,255);
         int tw=12*13; text_big(cx+(cw-tw)/2,cy+130,"Königreich OS",0xffffff);
-        { char vb[80]="kng-kernel " KNG_VERSION " (" KNG_ARCH ")  -  sistema operativo propio"; text(cx+(cw-text_w(vb))/2,cy+166,vb,C_DIM); }
-        text(cx+(cw-text_w("No es Linux ni usa su codigo."))/2,cy+190,"No es Linux ni usa su codigo.",C_TXT);
-        text(cx+(cw-text_w("Autor: Nick Jose Tolentino Rojas"))/2,cy+226,"Autor: Nick Jose Tolentino Rojas",C_DIM);
+        { const char *vb="kng-kernel " KNG_VERSION " (" KNG_ARCH ")"; text(cx+(cw-text_w(vb))/2,cy+164,vb,C_DIM); }     /* en dos lineas: en una se salia de la ventana */
+        text(cx+(cw-text_w("Sistema operativo propio"))/2,cy+182,"Sistema operativo propio",C_DIM);
+        text(cx+(cw-text_w("No es Linux ni usa su codigo."))/2,cy+206,"No es Linux ni usa su codigo.",C_TXT);
+        text(cx+(cw-text_w("Autor: Nick Jose Tolentino Rojas"))/2,cy+238,"Autor: Nick Jose Tolentino Rojas",C_DIM);
         break; }
     case A_TERM:{
         fill(cx,cy,cw,ch,0x0d0e16,255);

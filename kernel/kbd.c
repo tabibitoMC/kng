@@ -1,4 +1,4 @@
-/* kbd.c — ver kbd.h. Sin dependencias del kernel: se prueba tal cual en el PC (tools/kbdtest.c). */
+/* kbd.c — ver kbd.h. Sin dependencias del kernel: se prueba tal cual en el PC (tools/dev/kbdtest.c). */
 #include "kbd.h"
 
 #define DEAD_ACUTE 1

@@ -39,9 +39,18 @@ Capturas de la interfaz: carpeta `docs/` (generadas con el mismo código de la i
 - Solo PS/2 (sin USB), teclado mapa US, BIOS (no UEFI).
 - **Nunca se arrancó en una máquina virtual al generar este paquete**: el código compila, la red y la interfaz se verificaron en el equipo de desarrollo contra simuladores, pero el arranque real con GRUB (sobre todo el paso a 64 bits y la red sobre la tarjeta virtual) está sin probar.
 
+## Organizacion de carpetas
+- `kernel/` — kernel de 32 bits y el codigo compartido: escritorio (`gui.c`), graficos, sistema de archivos, disco, red, zip.
+- `kernel64/` — kernel de 64 bits: procesos y capa de compatibilidad Linux (`proc64.c` + `sys_*.inc`, `pty.inc`).
+- `tools/` — construccion: `build-iso.sh`, `mkdisk.sh` (instalador), `mkrootfs.py`, `mkdebian.sh`; `rootfs-es/` son los archivos que se copian al sistema (lanzadores `instalar`, `abrir-x`, navegadores).
+- `tools/ci/` — guiones de las pruebas automaticas (QEMU en GitHub Actions) y `analizar.py`.
+- `tools/dev/` — pruebas en el PC sin QEMU: simulador del escritorio (`hostgui.py`), teclado, red.
+- `docs/` — capturas, `TRASPASO.md` (estado y pendientes) y `historial/` (traspasos anteriores).
+
 ## Pruebas
-- `gcc tools/kbdtest.c -o /tmp/kbdtest && /tmp/kbdtest` — teclado: US/Latam/Espana, Mayus, AltGr, tildes.
-- `python3 tools/nettest.py` — pila de red real contra una red simulada (sin QEMU).
+- `python3 tools/dev/hostgui.py` — escritorio completo en el PC con ASan/UBSan (capturas en /tmp/kngshots).
+- `gcc tools/dev/kbdtest.c -o /tmp/kbdtest && /tmp/kbdtest` — teclado: US/Latam/Espana, Mayus, AltGr, tildes.
+- `python3 tools/dev/nettest.py` — pila de red real contra una red simulada (sin QEMU).
 - `make -C kernel hosttest` — memoria, ELF, fork, brk. `make -C kernel hostgui` — interfaz dibujada en el host.
 - `make -C kernel test` / `make -C kernel64 run` — con QEMU instalado.
 
@@ -59,4 +68,4 @@ Comandos en español (en la terminal de kng, también dentro de la ventana gráf
 `actualizar` · `instalar <nombre>` · `quitar <nombre>` · `mejorar` · `buscar <palabra>` · `mostrar <nombre>` · `paquetes` · `limpiar` · `ayuda-programas`
 Nombres especiales de `instalar`: `brave`, `chrome`, `opera`, `chromium`, `firefox`, `libreoffice`, `openoffice` (el resto es cualquier paquete de Debian).
 Programas con ventana: `pantalla` (servidor X real) y `abrir <programa>` (p. ej. `abrir brave`), o la ventana **Programas** del dock.
-Diagnóstico: `rastro 1` muestra las llamadas del sistema que fallan. Estado real y pendientes: ver `TRASPASO_kng_v24.md`.
+Diagnóstico: `rastro 1` muestra las llamadas del sistema que fallan. Estado real y pendientes: ver `docs/TRASPASO.md`.

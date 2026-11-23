@@ -7,13 +7,13 @@
 #include <stdarg.h>
 #include <unistd.h>
 #include <poll.h>
-#include "../kernel/kng.h"
+#include "../../kernel/kng.h"
 void *kmalloc(size_t n){ return malloc(n); }
 void kfree(void *p){ free(p); }
 static uint32_t T;
 uint32_t kticks(void){ return T; }
 void kprintf(const char *f,...){ va_list a; va_start(a,f); vfprintf(stderr,f,a); va_end(a); }
-#include "../kernel/net.c"
+#include "../../kernel/net.c"
 
 static int fdin=3, fdout=4, fdsync=5, nsent; static uint8_t rb[1<<20]; static int rn;
 int host_send(const uint8_t *f,int n){ nsent++; uint16_t l=(uint16_t)n; if(write(fdout,&l,2)!=2) exit(3); if(write(fdout,f,(size_t)n)!=n) exit(3); return 0; }

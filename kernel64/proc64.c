@@ -227,7 +227,7 @@ static void poll_wakeups(void){
         if(t->state==T_ZOMBIE){
             if(t!=cur&&!t->leader) t->state=T_FREE;                       /* hilo terminado: su hueco se reutiliza */
             else if(t!=cur&&t->leader&&t->bg==2){ int pid=t->pid, code=t->exit_code; t->state=T_FREE; if(kproc_done) kproc_done(pid,code); }      /* programa pegado a la terminal: la ventana vuelve a mostrar el prompt */
-            else if(t!=cur&&t->leader&&t->bg){ kprintf("[proceso %d termino con codigo %d]\n",t->pid,t->exit_code); t->state=T_FREE; }
+            else if(t!=cur&&t->leader&&t->bg){ if(t->exit_code) kprintf("[proceso %d termino con codigo %d]\n",t->pid,t->exit_code); t->state=T_FREE; }   /* solo se avisa si fallo */
             else if(t!=cur&&t->leader&&!t->fg&&t->ppid==0) t->state=T_FREE;      /* huerfano ya terminado */
             continue; }
         if(t->state==T_READ) any_read=1;
@@ -243,9 +243,10 @@ static void poll_wakeups(void){
     }
     if(any_read||any_fg){ stdin_pump(); if(any_read&&tty_input_ready()) for(int i=0;i<MAXT;i++) if(tasks[i].state==T_READ) tasks[i].state=T_READY; }     /* con un programa pegado a la terminal las teclas (Ctrl+C...) se atienden aunque no lea */
 }
-static Task *pick_next(void){                    /* turnos: tasks[0..MAXT-1] y luego el kernel (task0) */
-    int me=cur==&task0?MAXT:(int)(cur-tasks);
-    for(int k=1;k<=MAXT+1;k++){ int i=(me+k)%(MAXT+1); Task *t=i==MAXT?&task0:&tasks[i]; if(t->state==T_READY) return t; }
+static int rr_last=-1;                           /* ultimo proceso de usuario que tuvo turno (reparto justo entre ellos) */
+static Task *pick_next(void){                    /* turnos entre procesos de usuario; si no hay ninguno listo, el kernel (task0) */
+    int me=cur==&task0?rr_last:(int)(cur-tasks);
+    for(int k=1;k<=MAXT;k++){ int i=((me+k)%MAXT+MAXT)%MAXT; if(tasks[i].state==T_READY){ rr_last=i; return &tasks[i]; } }
     return &task0;
 }
 static int any_ready_user(void){ for(int i=0;i<MAXT;i++) if(tasks[i].state==T_READY) return 1; return 0; }
@@ -641,7 +642,8 @@ static u64 sys_execve(struct regs *r,u64 path_va,u64 argv_va,u64 envp_va){
     static char path[420], kargv[MAXARG][512], kenv[MAXARG][512]; static char *pa[MAXARG], *pe[MAXARG]; int argc=0, envc=0;
     if(ustr(CP,path,sizeof path,path_va)) return RET_ERR(EFAULT);
     if(!k_strcmp(path,"/proc/self/exe")||(path[0]=='/'&&path[1]=='p'&&path[2]=='r'&&path[3]=='o'&&path[4]=='c'&&path[5]=='/'&&path[6]>='0'&&path[6]<='9'&&k_strlen(path)>10&&!k_strcmp(path+k_strlen(path)-4,"/exe"))){   /* el propio programa (Chromium lanza asi sus procesos) */
-        if(!CP->exe[0]) return RET_ERR(ENOENT); k_strcpy(path,CP->exe,sizeof path); }
+        if(!CP->exe[0]) return RET_ERR(ENOENT);
+        k_strcpy(path,CP->exe,sizeof path); }
     for(; argv_va && argc<MAXARG; argc++){ u64 p=0; if(ucopy_from(CP,&p,argv_va+(u64)argc*8,8)) return RET_ERR(EFAULT); if(!p) break; if(ustr(CP,kargv[argc],512,p)) return RET_ERR(EFAULT); pa[argc]=kargv[argc]; }
     for(; envp_va && envc<MAXARG; envc++){ u64 p=0; if(ucopy_from(CP,&p,envp_va+(u64)envc*8,8)) return RET_ERR(EFAULT); if(!p) break; if(ustr(CP,kenv[envc],512,p)) return RET_ERR(EFAULT); pe[envc]=kenv[envc]; }
     if(!argc){ pa[0]=path; argc=1; }
@@ -791,7 +793,9 @@ static u64 sys_dispatch(struct regs *r){
             return (u64)(gf->flags&~3)|(u64)acc; }
         if(a2==4){ CP->fd[a1].flags=(CP->fd[a1].flags&~0x800)|(int)(a3&0x800); return 0; }
         if(a2==1033||a2==1034){ FD *sf=&CP->fd[a1]; if(sf->type!=12||!sf->obj) return RET_ERR(EINVAL);                      /* F_ADD_SEALS / F_GET_SEALS (memfd) */
-            if(a2==1034) return (u64)sf->obj->seals; if(sf->obj->seals&1) return RET_ERR(EPERM); sf->obj->seals|=(int)(a3&0x1F); return 0; }
+            if(a2==1034) return (u64)sf->obj->seals;
+            if(sf->obj->seals&1) return RET_ERR(EPERM);
+            sf->obj->seals|=(int)(a3&0x1F); return 0; }
         if(a2==5||a2==36){ short lt=2; if(a3&&ucopy_to(CP,a3,&lt,2)) return RET_ERR(EFAULT); return 0; }      /* F_GETLK: nadie tiene el cerrojo */
         return 0; }
     /* ---- red ---- */
@@ -974,7 +978,9 @@ void kernel_entry(struct regs *r){
         }
     } else {
         isr_handler64(r);
-        if(r->int_no==32){ static int q; if(++q>=2){ q=0; Task *n=pick_next(); if(n!=cur){ poll_wakeups(); run_task(pick_next()); } } }
+        if(r->int_no==32){ static int q; if(++q>=2){ q=0; poll_wakeups();
+            /* el escritorio (task0) tiene un turno de cada dos: con muchos hilos listos (navegadores) el raton y los botones siguen respondiendo */
+            Task *n=(cur!=&task0&&task0.state==T_READY)?&task0:pick_next(); if(n!=cur) run_task(n); } }
     }
     r->rflags|=0x200;
     if(cur->killed) do_exit_group(-cur->killed);

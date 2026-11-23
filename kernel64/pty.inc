@@ -61,7 +61,8 @@ static u64 pty_read(FD *f,int fdn,u64 buf,u64 n){
         struct PtyQ *q=m?&p->out:&p->in;
         if(q->n){ u64 d=0; int canon=!m&&(p->tio.lflag&TL_ICANON);
             while(d<n&&q->n){ u64 k=0; int stop=0; while(k<sizeof tmp&&d+k<n&&q->n){ int c=q_get(q); tmp[k++]=(u8)c; if(canon&&c=='\n'){ stop=1; break; } }
-                if(ucopy_to(CP,buf+d,tmp,k)) return d?d:RET_ERR(EFAULT); d+=k; if(stop) break; }
+                if(ucopy_to(CP,buf+d,tmp,k)) return d?d:RET_ERR(EFAULT);
+                d+=k; if(stop) break; }
             return d; }
         if(!m&&p->eof){ p->eof=0; return 0; }
         if(m&&p->sopened&&p->sref<=0) return RET_ERR(5);                      /* EIO: el programa del esclavo termino */

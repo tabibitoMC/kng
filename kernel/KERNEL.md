@@ -26,7 +26,7 @@ Framebuffer lineal 1024x768x32 pedido a GRUB; dibujo por software con antialiasi
 
 ## Pruebas (qué se verificó y qué no)
 Verificado en el equipo de desarrollo (sin QEMU):
-- `python3 tools/nettest.py`: compila `net.c` real con ASan/UBSan y lo prueba contra una red simulada **independiente** escrita en Python (ARP, DHCP, DNS, ICMP, servidor TCP/HTTP con pérdida de paquetes). Verifica sumas de comprobación y 34 comprobaciones (contenido idéntico byte a byte, redirecciones, chunked, RST, tiempos agotados, https rechazado…).
+- `python3 tools/dev/nettest.py`: compila `net.c` real con ASan/UBSan y lo prueba contra una red simulada **independiente** escrita en Python (ARP, DHCP, DNS, ICMP, servidor TCP/HTTP con pérdida de paquetes). Verifica sumas de comprobación y 34 comprobaciones (contenido idéntico byte a byte, redirecciones, chunked, RST, tiempos agotados, https rechazado…).
 - `make -C kernel hosttest`: PMM, cargador ELF (13 ELF malformados), clone, brk.
 - `make -C kernel hostgui`: la interfaz real dibujada en el host (capturas en `docs/`).
 - `python3 tools/check-mb.py`: cabeceras Multiboot de los 4 ELF.

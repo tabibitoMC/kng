@@ -32,6 +32,6 @@ test: kng-kernel-text.elf
 hosttest: $(UELF)
 	python3 hosttest.py
 hostgui:
-	python3 ../tools/hostgui.py
+	python3 ../tools/dev/hostgui.py
 clean:
 	rm -f *.o kng-kernel.elf kng-kernel-text.elf user/*.elf

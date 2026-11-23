@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
-#include "../kernel/kbd.c"
+#include "../../kernel/kbd.c"
 static int fails;
 static void chk(int got,int want,const char *what){ if(got!=want){ printf("FALLO %s: obtuve 0x%x, esperaba 0x%x\n",what,got,want); fails++; } }
 static int press(int sc){ int r=kbd_feed((uint8_t)sc); kbd_feed((uint8_t)(sc|0x80)); return r; }

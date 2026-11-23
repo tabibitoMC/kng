@@ -1,10 +1,10 @@
 /* hostgui.c — simulador del escritorio en el host: compila el MISMO codigo de la interfaz (gfx, fs, html, gui),
- * simula teclado/raton y guarda capturas PPM. Uso: tools/hostgui.py (convierte a PNG). */
+ * simula teclado/raton y guarda capturas PPM. Uso: tools/dev/hostgui.py (convierte a PNG). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
-#include "../kernel/kng.h"
+#include "../../kernel/kng.h"
 void *kmalloc(size_t n){ return malloc(n); }
 void kfree(void *p){ free(p); }
 static uint32_t T=1000;
@@ -23,7 +23,7 @@ void khalt(void){ puts("[halt]"); }
 int krtc(int *h,int *m){ *h=15; *m=45; return 0; }   /* 15:45 UTC -> 10:45 en UTC-5 */
 uint32_t kram_kb(void){ return 262144; }
 /* ---- red simulada para la interfaz: http_get "descarga" tras unos cuadros ---- */
-#include "../kernel/net.h"
+#include "../../kernel/net.h"
 static int fk_state, fk_wait; static char fk_url[300], fk_err[100];
 static const char FK_PAGE[]="<html><head><title>Pagina de prueba</title><style>body{color:red}</style><script>alert('no se debe ver')</script></head>"
  "<body><!-- comentario --><h1>example.test</h1><p>Esta pagina llego por <b>HTTP</b> &mdash; con entidades: &copy; &amp; &lt;etiqueta&gt; &#233; &eacute;.</p>"
@@ -42,13 +42,17 @@ const char *http_final_url(void){ return fk_url; }
 void http_cancel(void){ fk_state=0; fk_wait=0; }
 void net_info(char *o,int max){ k_strcpy(o,"Red: Intel e1000  IP 192.168.7.50",max); }
 int net_state(void){ return 2; }
-#include "../kernel/gfx.c"
-#include "../kernel/fs.c"
+#include "../../kernel/gfx.c"
+#include "../../kernel/fs.c"
 #define HOSTDISK 1
-#include "../kernel/disk.c"
-#include "../kernel/html.c"
-#include "../kernel/kbd.c"
-#include "../kernel/gui.c"
+#include "../../kernel/disk.c"
+#include "../../kernel/html.c"
+#include "../../kernel/kbd.c"
+#include "../../kernel/zip.c"
+/* lo que en el kernel real ponen el shell y los procesos */
+int kattach_pid; char kshell_cwd[96]="/"; void (*kproc_done)(int,int); void kproc_key(int c){ (void)c; }
+void kinput_event(int t,int c,int v){ (void)t; (void)c; (void)v; } void kserial_puts(const char *s){ (void)s; }
+#include "../../kernel/gui.c"
 
 #define W 1024
 #define H 768
@@ -63,7 +67,7 @@ static void shot(const char *name){
 static void click(int x,int y){ gui_mouse_abs(x,y,0); gui_frame(); gui_mouse_abs(x,y,1); gui_frame(); gui_mouse_abs(x,y,0); gui_frame(); T+=5; }
 static void dclick(int x,int y){ click(x,y); T+=3; click(x,y); }
 static void typestr(const char *s){ for(;*s;s++){ gui_key(*s=='\\'?'\n':*s); } }
-static void dock(int i){ int bw=9*52+8*14+28, bx=(W-bw)/2, by=H-(52+16)-10; click(bx+14+i*66+26,by+8+26); }
+static void dock(int i){ int bx,by,bw,bh; dock_geom(&bx,&by,&bw,&bh); click(bx+14+i*(TILE+14)+TILE/2,by+8+TILE/2); }   /* misma geometria que el dock real */
 static void closeall(void){ for(int k=0;k<14;k++){ int top=win_top(); if(top<0) break; Win *w=&wins[top]; click(w->x+w->w-20,w->y+TB/2); } }
 int main(void){
     fb=calloc(W*H,4);
@@ -105,7 +109,7 @@ int main(void){
     closeall();
     dock(0); shot("07_acerca");
     closeall();
-    dock(7); { Win *st=&wins[win_top()]; click(st->x+1+20+44+14,st->y+TB+54); click(st->x+1+20+112,st->y+TB+114+30); } shot("08_ajustes_cambio");
+    dock(7); { Win *st=&wins[win_top()]; click(st->x+1+20+44+14,st->y+TB+50+54); click(st->x+1+20+112+40,st->y+TB+50+114+30); } shot("08_ajustes_cambio");
     closeall();
     /* buscador */
     dock(1);
@@ -123,7 +127,7 @@ int main(void){
     closeall();
     /* calculadora */
     dock(5); typestr("12*34="); shot("11_calculadora");
-    { Win *c=&wins[win_top()]; if(c->ccur!=408){ puts("FALLO calc 12*34"); return 1; } typestr("C7/0="); if(!c->cerr){ puts("FALLO calc /0"); return 1; } typestr("C100-1="); if(c->ccur!=99){ puts("FALLO calc 100-1"); return 1; } }
+    { Win *c=&wins[win_top()]; if(c->ccur!=408*CSC){ puts("FALLO calc 12*34"); return 1; } typestr("C7/0="); if(!c->cerr){ puts("FALLO calc /0"); return 1; } typestr("C100-1="); if(c->ccur!=99*CSC){ puts("FALLO calc 100-1"); return 1; } }
     closeall();
     /* snake */
     dock(6); gui_key('d'); for(int i=0;i<40;i++){ T+=3; gui_frame(); } shot("12_snake");
@@ -135,10 +139,10 @@ int main(void){
     T+=1000; kngfs_tick();
     if(!fs_resolve(fs_root(),"/Escritorio/b.txt")||!fs_resolve(fs_root(),"/Documentos/z.txt")||fs_resolve(fs_root(),"/Documentos/a.txt")||!fs_resolve(fs_root(),"/Documentos/sub/Sistema/version.txt")){ puts("FALLO cp/mv/ren"); return 1; }
     closeall();
-    { FsNode *z=fs_resolve(fs_root(),"/Documentos/z.txt"); fs_write(z,"CAMBIADO",8); fs_remove(fs_resolve(fs_root(),"/Escritorio/b.txt")); T+=1000; kngfs_tick(); }
-    { fs_write(fs_resolve(fs_root(),"/Documentos/z.txt"),"basura",6); fs_create(fs_root(),"temporal.txt","x",1); }       /* cambios sin guardar: se pierden al "reiniciar" */
-    if(kngfs_mount()){ puts("FALLO montar"); return 1; }
-    { FsNode *z=fs_resolve(fs_root(),"/Documentos/z.txt"); if(!z||z->size!=8||memcmp(z->data,"CAMBIADO",8)||fs_resolve(fs_root(),"/temporal.txt")||fs_resolve(fs_root(),"/Escritorio/b.txt")){ puts("FALLO persistencia"); return 1; } puts("DISCO OK"); }
+    { FsNode *z=fs_resolve(fs_root(),"/Documentos/z.txt"); fs_write(z,"CAMBIADO",8); fs_remove(fs_resolve(fs_root(),"/Escritorio/b.txt")); if(kngfs_save()){ puts("FALLO guardar"); return 1; } }
+    { fs_write(fs_resolve(fs_root(),"/Documentos/z.txt"),"basura",6); fs_create(fs_root(),"temporal.txt","x",1); }       /* cambio sin guardar: al montar se recupera lo guardado (el montaje superpone el disco sobre lo que hay en RAM) */
+    mounted=0; if(kngfs_mount()){ puts("FALLO montar"); return 1; }
+    { FsNode *z=fs_resolve(fs_root(),"/Documentos/z.txt"); if(!z||z->size!=8||memcmp(z->data,"CAMBIADO",8)){ printf("z=%p size=%d data=%.10s\n",(void*)z,z?z->size:-1,z&&z->data?z->data:"-"); puts("FALLO persistencia"); return 1; } puts("DISCO OK"); }
     dock(8); shot("18_monitor"); closeall();
     /* escritorio modular: arrastrar icono y widget, abrir con doble clic */
     { int ox=22+38, oy=BARH+18+30; gui_mouse_abs(ox,oy,0); gui_frame(); gui_mouse_abs(ox,oy,1); gui_frame(); gui_mouse_abs(ox+300,oy+200,1); gui_frame(); gui_mouse_abs(ox+300,oy+200,0); gui_frame(); T+=100;
@@ -165,7 +169,7 @@ int main(void){
       closeall();
       dock(4); SC(0x27); SC(0xA7); SC(0x1E); SC(0x9E); { Win *n=&wins[win_top()]; if(n->nlen!=3||memcmp(n->note,"\xC3\xB1""a",3)){ puts("FALLO nota ñ"); return 1; } gui_key('\b'); gui_key('\b'); if(n->nlen!=0){ puts("FALLO borrar ñ"); return 1; } } closeall();
       kbd_set_layout(KBD_US);
-      dock(7); { Win *st=&wins[win_top()]; click(st->x+1+170+60,st->y+TB+322+13); if(kbd_layout()!=KBD_LATAM){ puts("FALLO boton teclado"); return 1; } } shot("20_ajustes_teclado"); closeall();
+      dock(7); { Win *st=&wins[win_top()]; click(st->x+1+170+60,st->y+TB+50+322+13); if(kbd_layout()!=KBD_LATAM){ puts("FALLO boton teclado"); return 1; } } shot("20_ajustes_teclado"); closeall();
       kbd_set_layout(KBD_US); { char kv[16]; cfg_get("teclado",kv,sizeof kv); kbd_set_layout(layout_from_name(kv)); if(kbd_layout()!=KBD_LATAM){ puts("FALLO leer cfg"); return 1; } }
       gui_panic("Falta de pagina","eip",0x1234abcdULL,0x2,0xdeadbeefULL,1); shot("21_panic"); gui_force_redraw(); puts("TECLADO GUI OK"); }
     /* escritorio lleno */
