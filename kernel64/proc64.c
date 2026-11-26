@@ -713,7 +713,7 @@ static unsigned sys_intmask(u64 nr){
     case 41: case 53: case 54: case 55: case 292: case 233: case 234: return 7;
     case 44: case 45: case 288: case 280: return 1|8;
     case 46: case 47: case 263: case 258: case 269: case 264: return 1|4;
-    case 232: case 281: return 1|4|8;
+    case 232: case 281: case 441: return 1|4|8;
     case 257: return 1|4|8;
     case 262: return 1|8;
     case 265: case 316: return 1|4|16;
@@ -908,6 +908,16 @@ static u64 sys_dispatch(struct regs *r){
     case 302: return a4?sys_getrlimit_k(a2,a4):0;
     case 318: { static u64 rs=0x9E3779B97F4A7C15ull; u8 b[256]; u64 n=a2>256?256:a2; rs^=kticks(); for(u64 i=0;i<n;i++){ rs^=rs<<13; rs^=rs>>7; rs^=rs<<17; b[i]=(u8)rs; } return ucopy_to(CP,a1,b,n)?RET_ERR(EFAULT):n; }
     case 334: return RET_ERR(ENOSYS);
+    /* compatibilidad: llamadas que los programas prueban y de las que saben prescindir */
+    case 101: return RET_ERR(1);                                    /* ptrace: EPERM (sin depuradores; crashpad y similares siguen) */
+    case 165: case 166: return RET_ERR(1);                          /* mount / umount2: EPERM */
+    case 251: return 0;                                             /* ioprio_set */
+    case 252: return 4<<13;                                         /* ioprio_get: clase "best effort", nivel 4 */
+    case 297: return sys_kill(0,(int)a3,1,(int)a2);                 /* rt_tgsigqueueinfo: como tgkill */
+    case 441: { long ms=-1; if(a5){ u64 t[2]; if(ucopy_from(CP,t,a5,16)) return RET_ERR(EFAULT); ms=(long)(t[0]*1000+t[1]/1000000); if(!ms&&t[1]) ms=1; }   /* epoll_pwait2: espera con timespec */
+              return sys_epoll_wait(a1,a2,a3,(u64)ms,a6,8); }
+    case 315: return RET_ERR(1);                                    /* sched_getattr: EPERM, se usa sched_getparam */
+    case 425: case 426: case 427: return RET_ERR(ENOSYS);           /* io_uring: sin aviso, los programas usan read/write */
     case 40:  return sys_kcopy(a2,a3,a1,0,a4);                       /* sendfile(out,in,*off,count) */
     case 326: return sys_kcopy(a1,a2,a3,a4,a5);                      /* copy_file_range(in,*off_in,out,*off_out,len,flags) */
     case 97:  return sys_getrlimit_k(a1,a2);

@@ -54,3 +54,22 @@ Estado honesto. "VERIFICADO" = lo ejecuto GitHub Actions arrancando kng en QEMU 
 - El primer arranque de Chromium aun se cae (SIGSEGV en una zona de mmap, rip 0x600001751f96; pila en el registro "[pila]"); el lanzador lo vuelve a abrir solo y la segunda vez funciona.
 - Pendiente: modo multiproceso de Chromium (se cierra a los ~20 s), fuentes CJK (cuadritos), inotify, ptrace.
 - Compilacion fijada a -march=x86-64 / i686 (gcc 15 de Ubuntu 26.04 generaba BMI2/AVX2). CI fijado en ubuntu-24.04 (diag.yml acepta `imagen`).
+
+## 26-nov-2026: estilos visuales, animaciones, inicio de sesion, programas de Debian
+- **3 estilos** (Ajustes > Pantalla > Estilo visual; se guarda `tema=` en /Sistema/kng.cfg, tambien `acento=` y `fondo=`):
+  Frutiger Aero (vidrio azul con brillo, cielo con burbujas, por defecto), Windows 11 (barra de tareas abajo, sin barra
+  superior, botones rectangulares, fondo "flor"), Mac (semaforos a la izquierda, barra de menus, dock con lupa, ondas).
+  Codigo en `kernel/gui_estilo.inc` (incluido por gui.c). `BARH` ahora es variable (0 en Windows 11).
+- Vidrio esmerilado: `blur_rect` (gfx.c) bajo titulos Aero, barra y dock. Iconos del dock en cache con alfa (`icon_cache_build`)
+  y escalados con `blit_pm_scaled`. Texto grande: `text_scaled`.
+- Animaciones (100 Hz): abrir (escala+opacidad, `draw_window_anim`), cerrar y minimizar (copia "fantasma" `ghost_new`),
+  maximizar/restaurar/ajustar (rectangulo visual `win_vis`, el logico cambia al instante), rebote del icono al abrir.
+- Ventanas: minimizar (vuelve con el dock), maximizar con boton, cambiar tamano arrastrando bordes/esquina (Navegador,
+  Archivos, Notas, Visor, Programas).
+- Inicio de sesion opcional: sin usuario entra directo. Ajustes > Cuenta crea usuario+contrasena (`usuario=`, `sal=`,
+  `clave=` = SHA-256 iterado 1000 veces con sal). Con usuario: pantalla de bloqueo al encender y "Bloquear ahora";
+  con la sesion bloqueada no pasa teclado ni raton a la pantalla X.
+- Programas de Linux: ademas de la lista fija, muestra todos los programas con ventana de /usr/share/applications/*.desktop
+  (Name[es]/Name, Exec sin %U); clic = `abrir <exec>`.
+- kernel64: ptrace/mount -> EPERM, ioprio, rt_tgsigqueueinfo, epoll_pwait2, sched_getattr, io_uring -> ENOSYS sin aviso.
+- Simulador: `python3 tools/dev/hostgui.py` prueba temas, minimizar, tamano, cuenta/bloqueo y .desktop (TEMAS/SESION/DEBIAN OK).

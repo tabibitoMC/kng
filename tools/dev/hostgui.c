@@ -67,8 +67,8 @@ static void shot(const char *name){
 static void click(int x,int y){ gui_mouse_abs(x,y,0); gui_frame(); gui_mouse_abs(x,y,1); gui_frame(); gui_mouse_abs(x,y,0); gui_frame(); T+=5; }
 static void dclick(int x,int y){ click(x,y); T+=3; click(x,y); }
 static void typestr(const char *s){ for(;*s;s++){ gui_key(*s=='\\'?'\n':*s); } }
-static void dock(int i){ int bx,by,bw,bh; dock_geom(&bx,&by,&bw,&bh); click(bx+14+i*(TILE+14)+TILE/2,by+8+TILE/2); }   /* misma geometria que el dock real */
-static void closeall(void){ for(int k=0;k<14;k++){ int top=win_top(); if(top<0) break; Win *w=&wins[top]; click(w->x+w->w-20,w->y+TB/2); } }
+static void dock(int i){ int x,y; dock_base_center(i,&x,&y); click(x,y); T+=20; gui_frame(); }   /* misma geometria que el dock real */
+static void closeall(void){ for(int k=0;k<14;k++){ int top=win_top(); if(top<0) break; Win *w=&wins[top]; int x,y,cw,ch; ctl_geom(w,0,&x,&y,&cw,&ch); click(x+cw/2,y+ch/2); } T+=30; gui_frame(); }
 int main(void){
     fb=calloc(W*H,4);
     if(gui_init(fb,W,H,W*4)){ puts("gui_init fallo"); return 1; }
@@ -174,5 +174,52 @@ int main(void){
       gui_panic("Falta de pagina","eip",0x1234abcdULL,0x2,0xdeadbeefULL,1); shot("21_panic"); gui_force_redraw(); puts("TECLADO GUI OK"); }
     /* escritorio lleno */
     dock(0); dock(1); dock(2); dock(3); dock(4); dock(5); dock(6); shot("13_escritorio_lleno");
+    closeall();
+    /* estilos visuales: Frutiger Aero, Windows 11, Mac */
+    for(int t=0;t<NTEMAS;t++){ char n[64];
+        tema_aplicar(t,1);
+        { char v[8]; cfg_get("tema",v,sizeof v); if(v[0]!='0'+t){ puts("FALLO guardar tema"); return 1; } }
+        snprintf(n,sizeof n,"29_tema%d_escritorio",t); shot(n);
+        dock(2); dock(3); typestr("ls /\\"); dock(7);
+        { Win *st=&wins[win_top()]; click(st->x+1+12+1*120+58,st->y+TB+24); }
+        snprintf(n,sizeof n,"30_tema%d_ventanas",t); shot(n);
+        { int x,y; dock_base_center(2,&x,&y); gui_mouse_abs(x,y,0); gui_frame(); snprintf(n,sizeof n,"31_tema%d_dock",t); shot(n); gui_mouse_abs(500,300,0); }
+        /* minimizar y volver */
+        { int top=win_top(); Win *w=&wins[top]; int x,y,cw,ch; ctl_geom(w,2,&x,&y,&cw,&ch); click(x+cw/2,y+ch/2); if(!w->minim){ puts("FALLO minimizar"); return 1; }
+          T+=8; snprintf(n,sizeof n,"32_tema%d_minimizando",t); shot(n); T+=40; gui_frame();
+          dock(7); if(w->minim||win_top()!=top){ puts("FALLO restaurar minimizada"); return 1; } T+=6; snprintf(n,sizeof n,"33_tema%d_abriendo",t); shot(n); T+=30; gui_frame(); }
+        /* cambiar tamano con el borde */
+        { int fi=-1; for(int k=0;k<nord;k++) if(wins[order[k]].type==A_FILES) fi=order[k]; Win *w=&wins[fi]; focus(fi); gui_frame(); int ow=w->w, oh=w->h;
+          int ex=w->x+w->w-2, ey=w->y+w->h-2; gui_mouse_abs(ex,ey,0); gui_frame(); gui_mouse_abs(ex,ey,1); gui_frame(); gui_mouse_abs(ex+80,ey+40,1); gui_frame(); gui_mouse_abs(ex+80,ey+40,0); gui_frame();
+          if(w->w!=ow+80||w->h!=oh+40){ printf("%d %d -> %d %d\n",ow,oh,w->w,w->h); puts("FALLO cambiar tamano"); return 1; } }
+        closeall(); }
+    puts("TEMAS OK");
+    /* usuario y contrasena */
+    tema_aplicar(0,1);
+    dock(7); { Win *st=&wins[win_top()]; int ox=st->x+1, oy=st->y+TB;
+      click(ox+12+4*120+58,oy+24); shot("40_cuenta_vacia");
+      click(ox+20+100,oy+50+112+15); typestr("nick\\clave1\\clave1"); shot("41_cuenta_escribiendo"); gui_key('\n');
+      if(!cu_user[0]){ puts(cf_msg); puts("FALLO crear usuario"); return 1; }
+      shot("42_cuenta_creada"); }
+    closeall();
+    bloqueado=0; { char u[28], h[8]; if(cfg_get("usuario",u,sizeof u)&&u[0]&&cfg_get("clave",h,sizeof h)&&h[0]) bloqueado=1; }
+    if(!bloqueado){ puts("FALLO bloqueo al encender"); return 1; }
+    shot("43_bloqueo");
+    dock(3); if(nord){ puts("FALLO el bloqueo deja abrir programas"); return 1; }
+    typestr("mala\\"); T+=5; shot("44_bloqueo_error"); if(!bloqueado){ puts("FALLO contrasena mala"); return 1; }
+    T+=60; typestr("clave1\\"); if(bloqueado){ puts("FALLO contrasena buena"); return 1; } T+=8; shot("45_desbloqueando"); T+=40; shot("46_desbloqueado");
+    dock(7); { Win *st=&wins[win_top()]; int ox=st->x+1, oy=st->y+TB; click(ox+12+4*120+58,oy+24);
+      click(ox+20+100,oy+50+196+15); typestr("clave1"); click(ox+200+100,oy+50+300+15); if(cu_user[0]){ puts(cf_msg); puts("FALLO quitar usuario"); return 1; } shot("47_cuenta_quitada"); }
+    closeall();
+    puts("SESION OK");
+    /* programas de Linux: los .desktop instalados aparecen solos */
+    { FsNode *u=fs_root(); { const char *pp[3]={"usr","share","applications"}; for(int i=0;i<3;i++){ FsNode *n=fs_find(u,pp[i]); u=n?n:fs_mkdir(u,pp[i]); } }
+      { const char *dd="[Desktop Entry]\nName=GIMP\nName[es]=Editor de imagenes GIMP\nExec=gimp-2.10 %U\nType=Application\n[Desktop Action x]\nName=Otra\n"; fs_create(u,"gimp.desktop",dd,(int)strlen(dd)); }
+      { const char *dd="[Desktop Entry]\nName=Oculto\nExec=nada\nNoDisplay=true\n"; fs_create(u,"oculto.desktop",dd,(int)strlen(dd)); }
+      { const char *dd="[Desktop Entry]\nName=Chromium\nExec=/usr/bin/chromium %U\n"; fs_create(u,"chromium.desktop",dd,(int)strlen(dd)); }
+      { const char *dd="[Desktop Entry]\nName=Reproductor VLC\nExec=/usr/bin/vlc --started-from-file %U\nType=Application\n"; fs_create(u,"vlc.desktop",dd,(int)strlen(dd)); }
+      dock(9); shot("50_programas_linux");
+      if(ndapps!=2||strcmp(dapps[0].name,"Editor de imagenes GIMP")&&strcmp(dapps[1].name,"Editor de imagenes GIMP")){ printf("%d\n",ndapps); puts("FALLO .desktop"); return 1; }
+      puts("DEBIAN OK"); closeall(); }
     return 0;
 }

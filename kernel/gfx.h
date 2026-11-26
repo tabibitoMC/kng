@@ -26,4 +26,10 @@ int  text_bold(int x, int y, const char *s, uint32_t c);
 int  text_big(int x, int y, const char *s, uint32_t c);          /* 12x24 */
 int  text_w(const char *s);                                      /* ancho en pixeles (8 px por caracter) */
 void crown(int x, int y, int w, uint32_t body, uint32_t bar, int a);   /* logo de la corona; alto = w*2/3 */
+void clip_get(int *x0,int *y0,int *x1,int *y1);
+void blit_pm_scaled(int x,int y,int dw,int dh,const uint32_t *src,int sw,int sh,int alpha);   /* 0xAARRGGBB premultiplicado, bilineal */
+void rrect_grad(int x,int y,int w,int h,int r,uint32_t c0,uint32_t c1,int a);
+int  text_scaled(int x,int y,const char *s,uint32_t c,int h);   /* texto grande suave, alto h */
+int  text_scaled_w(const char *s,int h);
+void blur_rect(int x,int y,int w,int h,int r);                  /* desenfoca lo ya dibujado (vidrio) */
 #endif

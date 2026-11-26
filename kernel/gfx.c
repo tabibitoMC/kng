@@ -165,3 +165,73 @@ void crown(int x,int y,int w,uint32_t body,uint32_t bar,int a){
     circle(x+160*w/180,y+20*w/180,k_max(2,8*w/180),body,a);
     rrect(x+10*w/180,y+104*w/180,160*w/180,k_max(3,14*w/180),k_max(2,7*w/180),bar,a);
 }
+
+/* ---- para efectos (temas, animaciones) ---- */
+void clip_get(int *x0,int *y0,int *x1,int *y1){ *x0=cx0; *y0=cy0; *x1=cx1; *y1=cy1; }
+/* Imagen con alfa premultiplicado (0xAARRGGBB, RGB ya multiplicado por A) escalada con filtro bilineal y opacidad global. */
+void blit_pm_scaled(int x,int y,int dw,int dh,const uint32_t *src,int sw,int sh,int alpha){
+    if(dw<=0||dh<=0||alpha<=0) return;
+    int X0=k_max(x,cx0), Y0=k_max(y,cy0), X1=k_min(x+dw,cx1), Y1=k_min(y+dh,cy1);
+    if(alpha>255) alpha=255;
+    for(int j=Y0;j<Y1;j++){
+        int fy=((j-y)*2+1)*sh*128/dh-128; if(fy<0) fy=0; int y0=fy>>8, ty=fy&255; int y1=y0+1<sh?y0+1:y0;
+        uint32_t *d=&bb[j*gw];
+        for(int i=X0;i<X1;i++){
+            int fx=((i-x)*2+1)*sw*128/dw-128; if(fx<0) fx=0; int x0=fx>>8, tx=fx&255; int x1=x0+1<sw?x0+1:x0;
+            uint32_t p00=src[y0*sw+x0], p01=src[y0*sw+x1], p10=src[y1*sw+x0], p11=src[y1*sw+x1];
+            int c[4];
+            for(int k=0;k<4;k++){ int s=k*8;
+                int a0=(int)((p00>>s)&255)*(256-tx)+(int)((p01>>s)&255)*tx, a1=(int)((p10>>s)&255)*(256-tx)+(int)((p11>>s)&255)*tx;
+                c[k]=((a0*(256-ty)+a1*ty)>>16)*alpha/255; }
+            int a=c[3]; if(!a) continue;
+            uint32_t o=d[i]; int ia=255-a;
+            int r=c[2]+(int)((o>>16)&255)*ia/255, g=c[1]+(int)((o>>8)&255)*ia/255, b=c[0]+(int)(o&255)*ia/255;
+            r=k_min(r,255); g=k_min(g,255); b=k_min(b,255);
+            d[i]=((uint32_t)r<<16)|((uint32_t)g<<8)|(uint32_t)b;
+        }
+    }
+}
+/* rectangulo redondeado con degradado vertical (c0 arriba, c1 abajo) */
+void rrect_grad(int x,int y,int w,int h,int r,uint32_t c0,uint32_t c1,int a){
+    if(r*2>w) r=w/2;
+    if(r*2>h) r=h/2;
+    if(r<0) r=0;
+    int j0=k_max(y,cy0), j1=k_min(y+h,cy1);
+    for(int j=j0;j<j1;j++){ int yy=j-y; uint32_t c=mix(c0,c1,h>1?yy*255/(h-1):0);
+        if(yy<r||yy>=h-r){ int jj=yy<r?yy:h-1-yy;
+            for(int i=0;i<r;i++){ int k=cov(i,jj,r*4,r*4,r); if(k){ px_blend(x+i,j,c,a*k/16); px_blend(x+w-1-i,j,c,a*k/16); } }
+            fill(x+r,j,w-2*r,1,c,a); }
+        else fill(x,j,w,1,c,a); }
+}
+/* texto grande y suave: alto h pixeles (ancho h/2 por letra), ampliado desde la fuente 12x24 */
+int text_scaled(int x,int y,const char *s,uint32_t c,int h){
+    int cw=h/2; if(cw<1) return x;
+    while(*s){ int ch=next_char(&s); if(ch<32||ch>255) ch='?'; const unsigned char *g=font_b[ch-32];
+        for(int j=0;j<h;j++){ int yy=y+j; if(yy<cy0||yy>=cy1) continue;
+            int fy=(j*2+1)*24*128/h-128; if(fy<0) fy=0; int y0=fy>>8, ty=fy&255, y1=y0<23?y0+1:23;
+            for(int i=0;i<cw;i++){ int xx=x+i; if(xx<cx0||xx>=cx1) continue;
+                int fx=(i*2+1)*12*128/cw-128; if(fx<0) fx=0; int x0=fx>>8, tx=fx&255, x1=x0<11?x0+1:11;
+                int a=((g[y0*12+x0]*(256-tx)+g[y0*12+x1]*tx)*(256-ty)+(g[y1*12+x0]*(256-tx)+g[y1*12+x1]*tx)*ty)>>16;
+                a=(a-128)*3/2+128; if(a<=0) continue; if(a>255) a=255; px_blend(xx,yy,c,a); } }
+        x+=cw; }
+    return x;
+}
+int text_scaled_w(const char *s,int h){ return text_w(s)/8*(h/2); }
+/* desenfoque de caja (dos pasadas) de lo que ya esta dibujado: base del efecto "vidrio" */
+static void blur_line(uint32_t *p,int n,int step,int r,uint32_t *tmp){
+    for(int i=0;i<n;i++) tmp[i]=p[i*step];
+    int sr=0,sg=0,sb=0, w=2*r+1;
+    for(int i=-r;i<=r;i++){ uint32_t c=tmp[i<0?0:(i>=n?n-1:i)]; sr+=(c>>16)&255; sg+=(c>>8)&255; sb+=c&255; }
+    for(int i=0;i<n;i++){
+        p[i*step]=((uint32_t)(sr/w)<<16)|((uint32_t)(sg/w)<<8)|(uint32_t)(sb/w);
+        uint32_t a=tmp[i+r+1>=n?n-1:i+r+1], b=tmp[i-r<0?0:i-r];
+        sr+=(int)((a>>16)&255)-(int)((b>>16)&255); sg+=(int)((a>>8)&255)-(int)((b>>8)&255); sb+=(int)(a&255)-(int)(b&255); }
+}
+void blur_rect(int x,int y,int w,int h,int r){
+    static uint32_t tmp[4096];
+    int x0=k_max(x,cx0), y0=k_max(y,cy0), x1=k_min(x+w,cx1), y1=k_min(y+h,cy1);
+    if(x1-x0<2||y1-y0<2||r<1||x1-x0>4096||y1-y0>4096) return;
+    for(int it=0;it<2;it++){
+        for(int j=y0;j<y1;j++) blur_line(bb+j*gw+x0,x1-x0,1,r,tmp);
+        for(int i=x0;i<x1;i++) blur_line(bb+y0*gw+i,y1-y0,gw,r,tmp); }
+}
