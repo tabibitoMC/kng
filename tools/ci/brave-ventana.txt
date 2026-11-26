@@ -8,3 +8,5 @@
 @captura x1
 @esperar 60
 @captura x2
+60|ejecutar /bin/sh -c "tail -60 /var/log/programas.log"
+20|cat /tmp/.kng-xwin
