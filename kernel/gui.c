@@ -17,6 +17,7 @@ enum { A_ABOUT, A_BROWSER, A_FILES, A_TERM, A_SETTINGS, A_VIEWER, A_NOTES, A_CAL
 #define KNGFS_CAP (2*1024*1024)
 #define MAXW 24
 #define TB 30
+#define FMS 156                                                            /* Archivos: ancho de la columna de lugares */
 #define SBW 176                                                            /* Ajustes: ancho del menu lateral */
 #define SOY 56                                                             /* Ajustes: donde empieza el contenido */
 static int bar_h=28;                                               /* alto de la barra superior (0 en el estilo Windows 11) */
@@ -46,7 +47,7 @@ static Win wins[MAXW];
 static void chrome_draw(Win *w,int f); static void chrome_title(Win *w,int f); static void tema_card(int i,int x,int y,int sel);
 static void cuenta_draw(int cx,int oy,int cw); static void cuenta_click(int lx,int y); static int cuenta_key(int c);
 static void tema_aplicar(int t,int guardar); static void dmark_bars(void); static void dmark_dock(void);
-static void set_sidebar(int cx,int cy,int ch); static int set_item_at(int ly); static void xw_draw(Win *w); static void xw_shadow(Win *w,int f); static void xw_corners(const Win *w,int restore); static void launch_set(const char *nm); static void glass_panel(int x,int y,int w,int h,int r); static void aero_clock(int cx,int cy,int R);
+static const char *SET_TT[8]; static void set_sidebar(int cx,int cy,int ch); static void toggle_row(int cx,int y,int cw,const char *l,const char *d,int on); static int toggle_hit(int lx,int y,int cw,int ry); static void cfg_bool(const char *k,int v); static void fm_sidebar(Win *w,int cx,int cy,int ch); static FsNode *fm_place_at(int ly); static void sel_row(int x,int y,int w,int h); static uint32_t sel_txt(void); static int set_item_at(int ly); static void xw_draw(Win *w); static void xw_shadow(Win *w,int f); static void xw_corners(const Win *w,int restore); static void launch_set(const char *nm); static void glass_panel(int x,int y,int w,int h,int r); static void aero_clock(int cx,int cy,int R);
 static char ed_suf[96]; static const char *ed_owner;                   /* extension que se conserva al reescribir un nombre (se muestra y se agrega al final) */
 static void fm_edit_done(char *buf,int *len,int max);
 static int open_new;                                               /* open_app: crear otra ventana aunque ya haya una del mismo tipo */
@@ -74,14 +75,15 @@ static int set_tab, fmt_confirm; static uint32_t *fb_front; static int fb_bpp0=3
 static int clk_h=12, clk_m=0; static uint32_t clk_next;
 static const uint32_t ACC[6]={0x7c5cff,0x14b8a6,0xf59e0b,0xec4899,0x3b82f6,0x22c55e};
 /* estilos visuales: Frutiger Aero, Windows 11 y Mac (marcos, barra, dock y fondo en gui_estilo.inc) */
-typedef struct { const char *nombre; uint32_t bg, border, txt, dim, btn; int rad, ta, estilo; uint32_t acento; int fondo; } Tema;
+typedef struct { const char *nombre; uint32_t bg, border, txt, dim, btn; int rad, ta, estilo; uint32_t acento; int fondo; uint32_t panel; int claro; } Tema;
 #define NTEMAS 3
 #define NFONDOS 6
 static const Tema TEMAS[NTEMAS]={
-    {"Frutiger Aero",0x13243b,0x5d8fbf,0xeaf4ff,0xa6c3dc,0x24466c, 8,175,0,0x1e9be8,3},
-    {"Windows 11",   0x1f1f1f,0x3a3a3a,0xf3f3f3,0xa8a8a8,0x2d2d2d, 8,240,1,0x3b8eea,4},
-    {"Mac",          0x1e1e1e,0x48484a,0xececec,0x9b9b9b,0x363638,12,250,2,0x0a84ff,5}};
+    {"Frutiger Aero",0xeaf3fb,0x5d8fbf,0x10283f,0x4b6987,0x2f5f92, 8,175,0,0x1e9be8,3,0xffffff,1},     /* Aero: apps claras, como Windows 7 */
+    {"Windows 11",   0x1f1f1f,0x3a3a3a,0xf3f3f3,0xa8a8a8,0x2d2d2d, 8,240,1,0x3b8eea,4,0x2b2b2b,0},
+    {"Mac",          0x1e1e1e,0x48484a,0xececec,0x9b9b9b,0x363638,12,250,2,0x0a84ff,5,0x2a2a2c,0}};
 static int tema=0, bloqueado;
+static int anim_on=1, transp_on=1, lupa_on=1, widgets_on=1, iconos_on=1, cursor_big=0;   /* Ajustes > Escritorio / Accesibilidad */
 #define TM (&TEMAS[tema])
 #define ESTILO (TM->estilo)
 #define ACCENT (acc_i<0?TM->acento:ACC[acc_i])
@@ -90,6 +92,9 @@ static int tema=0, bloqueado;
 #define C_TXT (TM->txt)
 #define C_DIM (TM->dim)
 #define C_BTN (TM->btn)
+#define C_PANEL (TM->panel)
+#define C_OK (TM->claro?0x1a7f37:0x7ee787)
+#define C_WARN (TM->claro?0xb35900:0xffb86b)
 
 void gui_force_redraw(void){ dirty=1; }
 
@@ -317,7 +322,7 @@ static Win *open_app(int type){
     switch(type){
     case A_ABOUT:    w->w=440; w->h=320; set_title(w,"Acerca de Königreich OS"); break;
     case A_BROWSER:  w->w=720; w->h=500; set_title(w,"Navegador"); break;
-    case A_FILES:    w->w=660; w->h=440; set_title(w,"Archivos"); w->dir=fs_root(); break;
+    case A_FILES:    w->w=660+FMS; w->h=440; set_title(w,"Archivos"); w->dir=fs_root(); break;
     case A_TERM:     w->w=TW*8+2; w->h=TH*16+TB+1; set_title(w,"Terminal"); w->cwd=fs_root();
                      memset(w->grid,' ',sizeof w->grid); tp(w,"Königreich OS - terminal. Escribe 'help'.\n"); term_prompt(w); break;
     case A_SETTINGS: w->w=SBW+622; w->h=560; set_title(w,"Ajustes"); break;
@@ -1074,7 +1079,9 @@ static void fm_drop(void){                                          /* se solto 
     FsNode *s=fs_resolve_nf(fs_root(),fd_path); if(!s) return;
     FsNode *dst=0; Win *tw=0; int onwin=0;
     for(int k=nord-1;k>=0;k--){ Win *w=&wins[order[k]]; if(w->minim||!in_rect(mx,my,w->x,w->y,w->w,w->h)) continue; onwin=1;
-        if(w->type==A_FILES&&my>=w->y+TB){ tw=w; dst=w->dir; FsNode *r=fm_row_node(w,my-(w->y+TB),0); if(r&&r->dir&&r!=s) dst=r; }
+        if(w->type==A_FILES&&my>=w->y+TB){ tw=w; dst=w->dir;
+            if(mx<w->x+1+FMS){ FsNode *pd=fm_place_at(my-(w->y+TB)); if(pd) dst=pd; }                 /* soltar sobre un lugar de la columna */
+            else { FsNode *r=fm_row_node(w,my-(w->y+TB),0); if(r&&r->dir&&r!=s) dst=r; } }
         break; }
     FsNode *dk=desk_dir();
     if(!onwin){
@@ -1202,7 +1209,7 @@ static void draw_window(int wi,int focused){
     switch(w->type){
     case A_ABOUT:{
         crown(cx+cw/2-60,cy+24,120,0xe9c46a,ACCENT,255);
-        int tw=12*13; text_big(cx+(cw-tw)/2,cy+130,"Königreich OS",0xffffff);
+        int tw=12*13; text_big(cx+(cw-tw)/2,cy+130,"Königreich OS",C_TXT);
         { const char *vb="kng-kernel " KNG_VERSION " (" KNG_ARCH ")"; text(cx+(cw-text_w(vb))/2,cy+164,vb,C_DIM); }     /* en dos lineas: en una se salia de la ventana */
         text(cx+(cw-text_w("Sistema operativo propio"))/2,cy+182,"Sistema operativo propio",C_DIM);
         text(cx+(cw-text_w("No es Linux ni usa su codigo."))/2,cy+206,"No es Linux ni usa su codigo.",C_TXT);
@@ -1231,9 +1238,10 @@ static void draw_window(int wi,int focused){
         break; }
     case A_FILES:{
         { char t[40]="Archivos - "; cat(t,40,w->dir==fs_root()?"/":w->dir->name); k_strcpy(w->title,t,40); }
+        fm_sidebar(w,cx,cy,ch); cx+=FMS; cw-=FMS; clip_set(cx,cy,cw,ch);                                    /* columna de lugares */
         for(int i=0;i<8;i++){ int bw, bx=ftb_x(i,&bw); int off=((i==2||i==3||i==5||i==6||i==7)&&!w->sel)||(i==4&&!clip_path[0]);
             button(cx+bx,cy+6,bw,24,FTB[i],i==1); if(off) rrect(cx+bx,cy+6,bw,24,6,C_BG,150); }
-        rrect(cx+8,cy+36,cw-16,24,6,0x10111b,255);
+        rrect(cx+8,cy+36,cw-16,24,6,C_PANEL,255);
         { char p[200]; fs_path(w->dir,p,sizeof p); clip_set(cx+12,cy+36,cw-24,24); text(cx+16,cy+40,p,C_TXT); clip_set(cx,cy,cw,ch); }
         int tx=cx+cw-230, sx=cx+cw-24;
         text(cx+46,cy+66,"Nombre",C_DIM); text(tx,cy+66,"Tipo",C_DIM); text(sx-text_w("Tamano"),cy+66,"Tamano",C_DIM);
@@ -1242,7 +1250,7 @@ static void draw_window(int wi,int focused){
         if(w->scroll>k_max(0,n-rows)) w->scroll=k_max(0,n-rows);
         for(int i=0;i<rows && i+w->scroll<n;i++){
             FsNode *f=fl[i+w->scroll]; int ry=ly+i*26;
-            if(f==w->sel) rrect(cx+6,ry,cw-22,25,5,ACCENT,90);
+            if(f==w->sel) sel_row(cx+6,ry,cw-22,25);
             else if(fd_on&&f->dir&&in_rect(mx,my,cx+6,ry,cw-22,25)) rrect(cx+6,ry,cw-22,25,5,0xffffff,30);    /* carpeta donde se soltaria */
             draw_ficon(cx+14,ry+2,f);
             if(w->editing&&f==w->sel){
@@ -1252,20 +1260,20 @@ static void draw_window(int wi,int focused){
                 text(cx+48,ry+4,w->ebuf,0xffffff); text(cx+48+text_w(w->ebuf),ry+4,fm_edit_suffix(w->ebuf),C_DIM);
                 if((kticks()/50)&1) fill(cx+48+text_w(w->ebuf),ry+4,2,17,0xffffff,255);
                 clip_set(cx,cy,cw,ch);
-            } else { clip_set(cx+44,ry,tx-cx-52,26); text(cx+46,ry+4,f->name,f->link?0x8ab4ff:C_TXT); clip_set(cx,cy,cw,ch); }
+            } else { clip_set(cx+44,ry,tx-cx-52,26); text(cx+46,ry+4,f->name,f->link?0x8ab4ff:(f==w->sel?sel_txt():C_TXT)); clip_set(cx,cy,cw,ch); }
             text(tx,ry+4,type_name(f),C_DIM);
             if(!f->dir){ char b[24]; size_str(f->size,b,24); text(sx-text_w(b),ry+4,b,C_DIM); }
         }
         if(n>rows){ int th=ch-88-22, bh=k_max(20,th*rows/n), by=cy+88+(th-bh)*w->scroll/k_max(1,n-rows); rrect(cx+cw-10,cy+88,6,th,3,0xffffff,14); rrect(cx+cw-10,by,6,bh,3,C_DIM,170); }
         if(!n) text(cx+46,ly+6,"(carpeta vacia - clic derecho para crear algo)",C_DIM);
-        fill(cx,cy+ch-22,cw,22,0x10111b,255);
+        fill(cx,cy+ch-22,cw,22,C_PANEL,255);
         { char b[80]=""; cat_int(b,80,n); cat(b,80,n==1?" elemento":" elementos");
           if(w->sel){ cat(b,80,"  |  "); cat(b,80,w->sel->name); } b[60]=0; text(cx+10,cy+ch-19,b,C_DIM);
           const char *m=w->nstat[0]?w->nstat:(clip_path[0]?(clip_cut?"Portapapeles: cortado":"Portapapeles: copiado"):"");
-          if(*m) text(cx+cw-10-text_w(m),cy+ch-19,m,w->nstat[0]?0x7ee787:C_DIM); }
+          if(*m) text(cx+cw-10-text_w(m),cy+ch-19,m,w->nstat[0]?C_OK:C_DIM); }
         break; }
     case A_VIEWER:{
-        fill(cx,cy,cw,ch,0x10111b,255);
+        fill(cx,cy,cw,ch,C_PANEL,255);
         if(w->file && w->file->data){
             const char *d=w->file->data; int line=0, i=0, rows=(ch-8)/16;
             while(d[i] && line<w->scroll+rows){
@@ -1277,13 +1285,14 @@ static void draw_window(int wi,int focused){
         break; }
     case A_BROWSER:{
         button(cx+8,cy+6,32,24,"<",0);
-        rrect(cx+48,cy+6,cw-56,24,6,0x10111b,255);
+        rrect(cx+48,cy+6,cw-56,24,6,C_PANEL,255);
         char shown[100]; if(w->editing){ k_strcpy(shown,w->ebuf,sizeof shown); } else k_strcpy(shown,w->url,sizeof shown);
         if(w->editing && w->selall) fill(cx+57,cy+9,text_w(shown)+2,18,ACCENT,150);
         text(cx+58,cy+10,shown,w->editing?0xffffff:C_DIM);
         if(w->editing && ((kticks()/50)&1)) fill(cx+58+text_w(shown),cy+10,2,16,ACCENT,255);
         int src_len; const char *src=page_src(w,&src_len);
         int vx=cx+12, vy=cy+38, vw=cw-24, vh=ch-38;
+        html_col_txt=C_TXT; html_col_dim=C_DIM; html_col_h=TM->claro?0x0b3a6e:0xffffff;
         html_render(src,src_len,vx,vy,vw,vh,w->bscroll,mix(0x8ab4ff,ACCENT,60),1,&w->page);
         { int maxs=k_max(0,w->page.content_h-vh); if(w->bscroll>maxs) w->bscroll=maxs; }
         if(w->page.title[0]){ char t[40]="Navegador - "; cat(t,40,w->page.title); k_strcpy(w->title,t,40); }
@@ -1296,17 +1305,17 @@ static void draw_window(int wi,int focused){
         int cwid=(cw-48)/2;
         for(int i=0;i<NPAPPS;i++){
             int x=cx+16+(i%2)*(cwid+16), y=cy+64+(i/2)*76, inst=papp_installed(i);
-            rrect(x,y,cwid,66,10,0x10111b,255);
+            rrect(x,y,cwid,66,10,C_PANEL,255);
             circle(x+32,y+33,17,PAPPS[i].col,255); { char ini[2]={PAPPS[i].name[0],0}; text_bold(x+27,y+25,ini,0xffffff); }
             clip_set(x,y,cwid-8,66); text_bold(x+60,y+8,PAPPS[i].name,C_TXT); text(x+60,y+26,PAPPS[i].desc,C_DIM);
-            text(x+60,y+44,inst?"Instalado: clic para abrir":"Clic para instalar",inst?0x7ee787:0xf59e0b); clip_set(cx,cy,cw,ch);
+            text(x+60,y+44,inst?"Instalado: clic para abrir":"Clic para instalar",inst?C_OK:0xf59e0b); clip_set(cx,cy,cw,ch);
         }
         { dapps_scan(); int y0=cy+64+((NPAPPS+1)/2)*76+6, cols=3, bw=(cw-32-(cols-1)*8)/cols;
           char b[64]="Otros programas instalados ("; cat_int(b,64,ndapps); cat(b,64,")"); text_bold(cx+16,y0,b,C_TXT);
           if(!ndapps) text(cx+16,y0+24,"Ninguno todavia. Prueba: instalar gimp | vlc | gedit | inkscape ...",C_DIM);
           int rows=k_max(1,(cy+ch-(y0+24))/34), maxs=k_max(0,(ndapps+cols-1)/cols-rows); if(w->scroll>maxs) w->scroll=maxs;
           for(int i=w->scroll*cols;i<ndapps;i++){ int r=i/cols-w->scroll, x=cx+16+(i%cols)*(bw+8), y=y0+24+r*34; if(y+30>cy+ch) break;
-              rrect(x,y,bw,30,8,0x10111b,255); circle(x+15,y+15,9,mix(0x3b82f6,0xf97316,(i*53)&255),255);
+              rrect(x,y,bw,30,8,C_PANEL,255); circle(x+15,y+15,9,mix(0x3b82f6,0xf97316,(i*53)&255),255);
               { char ini[2]={dapps[i].name[0],0}; text_bold(x+11,y+7,ini,0xffffff); }
               clip_set(x+28,y,bw-32,30); text(x+30,y+7,dapps[i].name,C_TXT); clip_set(cx,cy,cw,ch); }
           if(maxs) text(cx+cw-120,y0,"flechas: mas",C_DIM); }
@@ -1317,19 +1326,19 @@ static void draw_window(int wi,int focused){
         b[0]=0; cat(b,100,"RAM detectada: "); cat_int(b,100,tot); cat(b,100," MB"); text(cx+20,cy+40,b,C_TXT);
         text_bold(cx+20,cy+88,"Archivos",C_TXT);
         b[0]=0; cat_int(b,100,f); cat(b,100," archivos, "); cat_int(b,100,dr); cat(b,100," carpetas, "); cat_int(b,100,by); cat(b,100," bytes"); text(cx+20,cy+110,b,C_TXT);
-        rrect(cx+20,cy+134,cw-40,14,7,0x10111b,255); { int pct=by*100/(KNGFS_CAP); if(pct<1&&by>0) pct=1; if(pct>100) pct=100; if(pct) rrect(cx+20,cy+134,(cw-40)*pct/100,14,7,ACCENT,255); }
+        rrect(cx+20,cy+134,cw-40,14,7,C_PANEL,255); { int pct=by*100/(KNGFS_CAP); if(pct<1&&by>0) pct=1; if(pct>100) pct=100; if(pct) rrect(cx+20,cy+134,(cw-40)*pct/100,14,7,ACCENT,255); }
         text_bold(cx+20,cy+164,"Disco",C_TXT);
         b[0]=0; if(disk_sectors()){ cat(b,100,disk_model()); cat(b,100,kngfs_active()?"  (guardado automatico)":"  (sin formato kng)"); } else cat(b,100,"sin disco (los archivos se pierden al apagar)");
-        text(cx+20,cy+186,b,disk_sectors()&&kngfs_active()?0x7ee787:C_DIM);
+        text(cx+20,cy+186,b,disk_sectors()&&kngfs_active()?C_OK:C_DIM);
         text_bold(cx+20,cy+216,"Red",C_TXT);
-        { char nb[90]; net_info(nb,sizeof nb); nb[44]=0; text(cx+20,cy+238,nb,net_state()>=2?0x7ee787:C_DIM); }
+        { char nb[90]; net_info(nb,sizeof nb); nb[44]=0; text(cx+20,cy+238,nb,net_state()>=2?C_OK:C_DIM); }
         b[0]=0; cat(b,100,"Ventanas: "); cat_int(b,100,nord); cat(b,100,"   Activo: "); cat_int(b,100,(int)(kticks()/6000)); cat(b,100," min"); text(cx+20,cy+266,b,C_DIM);
         break; }
     case A_NOTES:{
         button(cx+8,cy+6,70,24,"Nueva",0); button(cx+86,cy+6,80,24,"Guardar",1);
-        if(w->nstat[0]) text(cx+178,cy+10,w->nstat,0x7ee787);
+        if(w->nstat[0]) text(cx+178,cy+10,w->nstat,C_OK);
         else { char b[40]=""; cat_int(b,40,w->nlen); cat(b,40," / "); cat_int(b,40,NOTEMAX); text(cx+cw-16-text_w(b),cy+10,b,C_DIM); }
-        rrect(cx+8,cy+38,cw-16,ch-46,8,0x10111b,255);
+        rrect(cx+8,cy+38,cw-16,ch-46,8,C_PANEL,255);
         int cols=(cw-40)/8, rows=(ch-46-16)/16, total=1, col=0;
         for(int i=0;i<w->nlen;i++){ if(w->note[i]=='\n'||col>=cols){ total++; col=0; if(w->note[i]=='\n') continue; } col++; }
         int skip=total>rows?total-rows:0, row=0; col=0;
@@ -1343,9 +1352,9 @@ static void draw_window(int wi,int focused){
         clip_reset();
         break; }
     case A_CALC:{
-        rrect(cx+14,cy+10,cw-28,58,10,0x10111b,255);
+        rrect(cx+14,cy+10,cw-28,58,10,C_PANEL,255);
         char b[40]; if(w->cerr) k_strcpy(b,"Error",40); else calc_fmt(w->ccur,(!w->cfresh&&w->cdec>=0)?w->cdec:-1,b,40);
-        text_big(cx+cw-28-text_w_big(b),cy+34,b,w->cerr?0xff7b72:0xffffff);
+        text_big(cx+cw-28-text_w_big(b),cy+34,b,w->cerr?0xff7b72:C_TXT);
         if(w->cop){ char e[48]; calc_fmt(w->cacc,-1,e,40); char o[4]={' ',w->cop=='*'?'x':(char)w->cop,0,0}; cat(e,48,o); text(cx+cw-28-text_w(e),cy+14,e,C_DIM); }
         for(int i=0;i<NCKEYS;i++){ int x,y,kw,kh; ckey_rect(&CKEYS[i],&x,&y,&kw,&kh); x+=cx; y+=cy; int k=CKEYS[i].k;
             uint32_t bc=((k>='0'&&k<='9')||k=='.')?0x2a2e4a:(k=='=')?ACCENT:(k=='C'||k=='<'||k=='n'||k=='%')?0x3a3550:mix(0x2a2e4a,ACCENT,90);
@@ -1367,7 +1376,7 @@ static void draw_window(int wi,int focused){
         break; }
     case A_SETTINGS:{
         set_sidebar(cx,cy,ch); cx+=SBW; cw-=SBW;                          /* menu lateral (como Windows 11 / macOS / Panel de control) */
-        { static const char *TT[5]={"General","Pantalla","Almacenamiento","Sistema","Cuenta"}; text_scaled(cx+20,cy+14,TT[set_tab],C_TXT,26); }
+        text_scaled(cx+20,cy+14,SET_TT[set_tab],C_TXT,26);
         int oy=cy+SOY;
         if(set_tab==0){
             text_bold(cx+20,oy+14,"Color de acento",C_TXT);
@@ -1417,12 +1426,38 @@ static void draw_window(int wi,int focused){
                 uint64_t cap=(uint64_t)disk_sectors()*512u, used=kngfs_active()?(uint64_t)kngfs_last_size():0;
                 hsize(cap,s1,24); b[0]=0; cat(b,96,disk_kind()); cat(b,96,": "); cat(b,96,disk_model()); cat(b,96,", "); cat(b,96,s1); text(cx+20,dy+24,b,C_DIM);
                 uint64_t seg[1]={used}; uint32_t col[1]={ACCENT}; stor_bar(cx+20,dy+48,cw-40,22,seg,col,1,cap);
-                if(kngfs_active()){ hsize(used,s1,24); b[0]=0; cat(b,96,"Guardado: "); cat(b,96,s1); cat(b,96,"  (se guarda solo y al apagar)"); text(cx+20,dy+78,b,0x7ee787);
+                if(kngfs_active()){ hsize(used,s1,24); b[0]=0; cat(b,96,"Guardado: "); cat(b,96,s1); cat(b,96,"  (se guarda solo y al apagar)"); text(cx+20,dy+78,b,C_OK);
                     button(cx+20,dy+104,150,28,"Guardar ahora",1); }
-                else { text(cx+20,dy+78,"Este disco aun no guarda datos de Konigreich OS.",0xffb86b);
+                else { text(cx+20,dy+78,"Este disco aun no guarda datos de Konigreich OS.",C_WARN);
                     button(cx+20,dy+104,260,28,fmt_confirm?"Pulsa otra vez: BORRA el disco":"Usar este disco para guardar",fmt_confirm); }
-            } else { text(cx+20,dy+24,"No se encontro un disco duro (IDE o SATA).",C_DIM); text(cx+20,dy+44,"Sin disco, lo que hagas se pierde al apagar.",0xffb86b); }
+            } else { text(cx+20,dy+24,"No se encontro un disco duro (IDE o SATA).",C_DIM); text(cx+20,dy+44,"Sin disco, lo que hagas se pierde al apagar.",C_WARN); }
             button(cx+cw-170,dy+104,150,28,"Vaciar Papelera",0);
+        } else if(set_tab==5){                                             /* Escritorio y efectos */
+            text_bold(cx+20,oy+10,"Escritorio",C_TXT);
+            toggle_row(cx,oy+34,cw,"Widgets (reloj y sistema)","Los cuadros de la derecha del escritorio",widgets_on);
+            toggle_row(cx,oy+84,cw,"Iconos del escritorio","Accesos y archivos sobre el fondo",iconos_on);
+            button(cx+20,oy+136,190,28,"Ordenar los iconos",0);
+            text_bold(cx+20,oy+186,"Efectos",C_TXT);
+            toggle_row(cx,oy+210,cw,"Animaciones","Abrir, cerrar, minimizar y maximizar con movimiento",anim_on);
+            toggle_row(cx,oy+260,cw,"Transparencias","Vidrio esmerilado en barras, dock y titulos",transp_on);
+            toggle_row(cx,oy+310,cw,"Lupa del dock","Los iconos crecen al pasar el raton (Mac y Aero)",lupa_on);
+        } else if(set_tab==6){                                             /* Red */
+            char nb[100]; net_info(nb,sizeof nb);
+            text_bold(cx+20,oy+10,"Conexion por cable (Ethernet)",C_TXT);
+            rrect(cx+20,oy+36,cw-40,46,10,C_PANEL,255); circle(cx+44,oy+59,9,net_state()>=2?C_OK:C_WARN,255);
+            clip_set(cx+60,oy+36,cw-84,46); text(cx+62,oy+51,nb,C_TXT); clip_set(cx,cy,cw,ch);
+            button(cx+20,oy+96,220,28,"Volver a conectar (DHCP)",1); button(cx+250,oy+96,160,28,"Probar internet",0); button(cx+420,oy+96,160,28,"Ver detalles",0);
+            text(cx+20,oy+138,"Si dice \"reserva\" o no hay IP, revisa que el cable vaya a un puerto LAN",C_DIM);
+            text(cx+20,oy+156,"del router y pulsa \"Volver a conectar\".",C_DIM);
+            text_bold(cx+20,oy+196,"Wi-Fi",C_TXT);
+            text(cx+20,oy+220,"Todavia no disponible: Konigreich OS usa la red por cable.",C_DIM);
+            text(cx+20,oy+238,"Truco: un repetidor Wi-Fi con puerto de red pasa el Wi-Fi a cable.",C_DIM);
+        } else if(set_tab==7){                                             /* Accesibilidad */
+            text_bold(cx+20,oy+10,"Ver y usar mejor",C_TXT);
+            toggle_row(cx,oy+34,cw,"Cursor grande","El puntero del raton al doble de tamano",cursor_big);
+            toggle_row(cx,oy+84,cw,"Reducir movimiento","Sin animaciones de ventanas ni del dock",!anim_on);
+            toggle_row(cx,oy+134,cw,"Reloj de 24 horas","Si no, se muestra AM/PM",show24);
+            toggle_row(cx,oy+184,cw,"Menos transparencia","Barras y titulos opacos, mas faciles de leer",!transp_on);
         } else if(set_tab==4){
             cuenta_draw(cx,oy,cw);
         } else {
@@ -1434,7 +1469,7 @@ static void draw_window(int wi,int focused){
             b[0]=0; cat(b,96,"Tiempo encendido: "); cat_int(b,96,(int)(kticks()/6000)); cat(b,96," min"); text(cx+20,oy+104,b,C_DIM);
             { char nb[90]; net_info(nb,sizeof nb); text(cx+20,oy+126,nb,C_DIM); }
             b[0]=0; cat(b,96,"Disco: "); if(disk_init()==0){ cat(b,96,disk_kind()); cat(b,96,", "); cat(b,96,kngfs_active()?"guardando datos":"sin usar"); } else cat(b,96,"ninguno"); text(cx+20,oy+148,b,C_DIM);
-            button(cx+20,cy+ch-44,110,28,"Reiniciar",0); button(cx+142,cy+ch-44,110,28,"Apagar",0);
+            button(cx+20,cy+ch-44,110,28,"Reiniciar",0); button(cx+264,cy+ch-44,230,28,"Buscar actualizaciones",0); button(cx+142,cy+ch-44,110,28,"Apagar",0);
         }
         break; }
     }
@@ -1466,11 +1501,11 @@ static void draw_icon(int i,int x,int y){
     case 1: circle(cx,cy,19,0xf97316,255); circle(cx,cy,15,0x1a1d33,255); ellipse_ring(cx,cy,7,15,0xf97316);
             line(cx-15,cy,cx+15,cy,2,0xf97316,255); line(cx-12,cy-8,cx+12,cy-8,1,0xf97316,255); line(cx-12,cy+8,cx+12,cy+8,1,0xf97316,255); break;
     case 2: rrect(x+9,y+14,16,9,3,0xe0a62d,255); rrect(x+9,y+19,34,22,4,0xf5b83d,255); fill(x+13,y+25,26,2,0xffffff,70); break;
-    case 3: rrect(x+7,y+11,38,30,5,0x0d0e16,255); line(x+14,y+19,x+21,y+25,2,0x7ee787,255); line(x+21,y+25,x+14,y+31,2,0x7ee787,255); fill(x+25,y+31,10,3,0x7ee787,255); break;
+    case 3: rrect(x+7,y+11,38,30,5,0x0d0e16,255); line(x+14,y+19,x+21,y+25,2,C_OK,255); line(x+21,y+25,x+14,y+31,2,C_OK,255); fill(x+25,y+31,10,3,C_OK,255); break;
     case 4: rrect(x+11,y+8,28,36,5,0xf4f1e6,255); rrect(x+11,y+8,28,9,4,0xf59e0b,255); fill(x+11,y+13,28,4,0xf59e0b,255);
             for(int k=0;k<3;k++) fill(x+16,y+22+k*7,18,2,0x8a8fa8,255);
             line(x+34,y+42,x+44,y+30,3,0x60a5fa,255); break;
-    case 5: rrect(x+10,y+7,32,38,6,0x2b2f4d,255); rrect(x+14,y+11,24,10,3,0x7ee787,230);
+    case 5: rrect(x+10,y+7,32,38,6,0x2b2f4d,255); rrect(x+14,y+11,24,10,3,C_OK,230);
             for(int r=0;r<3;r++){
                 for(int c2=0;c2<3;c2++) rrect(x+15+c2*8,y+26+r*6,6,4,2,c2==2?ACCENT:0xc9cde0,255);
             }
@@ -1528,10 +1563,11 @@ static void draw_dobj(const DObj *o){
         text_bold(o->x+14,o->y+10,"Sistema",0xffffff);
         char b[48]; b[0]=0; cat(b,48,"RAM: "); cat_int(b,48,(int)(kram_kb()/1024)); cat(b,48," MB"); text(o->x+14,o->y+34,b,C_TXT);
         b[0]=0; cat(b,48,"Activo: "); cat_int(b,48,(int)(kticks()/6000)); cat(b,48," min"); text(o->x+14,o->y+54,b,C_TXT);
-        b[0]=0; cat(b,48,net_state()>=2?"Red: conectada":"Red: sin conexion"); text(o->x+14,o->y+74,b,net_state()>=2?0x7ee787:C_DIM);
+        b[0]=0; cat(b,48,net_state()>=2?"Red: conectada":"Red: sin conexion"); text(o->x+14,o->y+74,b,net_state()>=2?C_OK:C_DIM);
     }
 }
-static int dobj_hit(int px,int py){ for(int i=NDO-1;i>=0;i--) if(dobj[i].kind>=0 && px>=dobj[i].x&&px<dobj[i].x+dobj[i].w&&py>=dobj[i].y&&py<dobj[i].y+dobj[i].h) return i; return -1; }
+static int dobj_vis(int i){ int k=dobj[i].kind; if(k<0) return 0; if(k>=100&&k<200) return widgets_on; return iconos_on; }
+static int dobj_hit(int px,int py){ for(int i=NDO-1;i>=0;i--) if(dobj_vis(i) && px>=dobj[i].x&&px<dobj[i].x+dobj[i].w&&py>=dobj[i].y&&py<dobj[i].y+dobj[i].h) return i; return -1; }
 static int dsk_find(const char *name){ for(int i=0;i<NDO;i++) if(dobj[i].kind==200&&!k_strcmp(dobj[i].name,name)) return i; return -1; }
 static int dsk_find_at(int x,int y){ int i=dobj_hit(x,y); return (i>=0&&dobj[i].kind==200)?i:-1; }
 static const char *dsk_name(int i){ return dobj[i].name; }
@@ -1570,7 +1606,9 @@ static int dsk_drop(int i){                                         /* se solto 
     FsNode *dk=desk_dir(); FsNode *s=dk?fs_find(dk,dobj[i].name):0; if(!s) return 0;
     FsNode *dst=0; Win *tw=0;
     for(int k=nord-1;k>=0;k--){ Win *w=&wins[order[k]]; if(w->minim||!in_rect(mx,my,w->x,w->y,w->w,w->h)) continue;
-        if(w->type==A_FILES&&my>=w->y+TB){ tw=w; dst=w->dir; FsNode *r=fm_row_node(w,my-(w->y+TB),0); if(r&&r->dir&&r!=s) dst=r; }
+        if(w->type==A_FILES&&my>=w->y+TB){ tw=w; dst=w->dir;
+            if(mx<w->x+1+FMS){ FsNode *pd=fm_place_at(my-(w->y+TB)); if(pd) dst=pd; }                 /* soltar sobre un lugar de la columna */
+            else { FsNode *r=fm_row_node(w,my-(w->y+TB),0); if(r&&r->dir&&r!=s) dst=r; } }
         break; }
     if(!dst){ for(int j=NDO-1;j>=0;j--) if(j!=i&&dobj[j].kind==200&&in_rect(mx,my,dobj[j].x,dobj[j].y,dobj[j].w,dobj[j].h)){ FsNode *f=fs_find(dk,dobj[j].name); if(f&&f->dir&&f!=s) dst=f; break; } }
     if(!dst||dst==dk) return 0;
@@ -1586,9 +1624,11 @@ static int dsk_drop(int i){                                         /* se solto 
 static const char *CUR[CH]={
 "X           ","XX          ","X.X         ","X..X        ","X...X       ","X....X      ","X.....X     ","X......X    ",
 "X.......X   ","X........X  ","X.....XXXXX ","X..X..X     ","X.X X..X    ","XX  X..X    ","X    X..X   ","     X..X   ","      X..X  ","      X..X  ","       XX   "};
-static void cursor_restore(void){ gfx_present_rect(cur_x,cur_y,CW+1,CH+1); }
+static void cursor_restore(void){ gfx_present_rect(cur_x,cur_y,CW*2+1,CH*2+1); }
 static void cursor_draw(void){
-    for(int j=0;j<CH;j++) for(int i=0;i<CW;i++){ char c=CUR[j][i]; if(c=='X') gfx_front_px(mx+i,my+j,0x000000); else if(c=='.') gfx_front_px(mx+i,my+j,0xffffff); }
+    int k=cursor_big?2:1;                                              /* Accesibilidad: cursor grande */
+    for(int j=0;j<CH;j++) for(int i=0;i<CW;i++){ char c=CUR[j][i]; if(c!='X'&&c!='.') continue; uint32_t col=c=='X'?0x000000:0xffffff;
+        for(int b=0;b<k;b++) for(int a=0;a<k;a++) gfx_front_px(mx+i*k+a,my+j*k+b,col); }
     cur_x=mx; cur_y=my;
 }
 
@@ -1608,14 +1648,14 @@ static void render(void){
     clip_base(x0,y0,rw,rh);
     for(int j=y0;j<y1;j++) memcpy(bb+j*gw+x0,wall+j*gw+x0,(size_t)rw*4);
     if(bloqueado){ lock_draw(); ghosts_draw(); goto listo; }
-    for(int i=0;i<NDO;i++) if(dobj[i].kind>=0 && rect_hit(dobj[i].x-6,dobj[i].y-6,dobj[i].w+12,dobj[i].h+12,x0,y0,rw,rh)) draw_dobj(&dobj[i]);
+    for(int i=0;i<NDO;i++) if(dobj_vis(i) && rect_hit(dobj[i].x-6,dobj[i].y-6,dobj[i].w+12,dobj[i].h+12,x0,y0,rw,rh)) draw_dobj(&dobj[i]);
     { int top=win_top();
     for(int k=0;k<nord;k++){
         Win *w=&wins[order[k]]; if(w->minim||(w->type==A_XWIN&&w->xpop)) continue;
         int sx=w->x, sy=w->y, sw=w->w, sh=w->h; win_vis(w,&w->x,&w->y,&w->w,&w->h);          /* durante maximizar/restaurar se dibuja el tamano intermedio */
         if(rect_hit(w->x-14,w->y-10,w->w+28,w->h+32,x0,y0,rw,rh)){
             int hidden=0; for(int j=k+1;j<nord;j++){ Win *o=&wins[order[j]]; if(!o->minim&&!o->vanim&&!o->aopen&&rect_in(w->x-14,w->y-10,w->w+28,w->h+32,o->x,o->y,o->w,o->h)){ hidden=1; break; } }
-            if(!hidden){ if(w->aopen) draw_window_anim(order[k],order[k]==top); else draw_window(order[k],order[k]==top); } }
+            if(!hidden){ if(w->aopen&&anim_on) draw_window_anim(order[k],order[k]==top); else draw_window(order[k],order[k]==top); } }
         w->x=sx; w->y=sy; w->w=sw; w->h=sh;
     } }
     for(int k=0;k<nord;k++){ Win *w=&wins[order[k]]; if(w->type==A_XWIN&&w->xpop&&rect_hit(w->x,w->y,w->w,w->h,x0,y0,rw,rh)) draw_window(order[k],0); }   /* menus de Linux: siempre encima */
@@ -1651,13 +1691,15 @@ void gui_frame(void){
 static int in_rect(int px,int py,int x,int y,int w,int h){ return px>=x&&px<x+w&&py>=y&&py<y+h; }
 static void files_click(Win *w,int lx,int ly,int cw,int ch){
     int wi=(int)(w-wins);
+    if(lx<FMS){ FsNode *pd=fm_place_at(ly); if(pd&&pd!=w->dir){ if(w->editing) fm_commit_rename(w); w->dir=pd; w->sel=0; w->scroll=0; w->nstat[0]=0; dirty=1; } return; }
+    lx-=FMS; cw-=FMS;
     if(w->editing) fm_commit_rename(w);
     w->nstat[0]=0;
     if(ly>=6&&ly<30){
         for(int i=0;i<8;i++){ int bw, bx=ftb_x(i,&bw); if(lx<bx||lx>=bx+bw) continue;
             switch(i){
             case 0: if(w->dir->parent){ FsNode *o=w->dir; w->dir=w->dir->parent; w->sel=o; w->scroll=0; } break;
-            case 1: mu_show(w->x+1+bx,w->y+TB+31,wi,w->dir,0); break;
+            case 1: mu_show(w->x+1+FMS+bx,w->y+TB+31,wi,w->dir,0); break;
             case 2: fm_do(M_CUT,w,w->dir,w->sel); break;
             case 3: fm_do(M_COPY,w,w->dir,w->sel); break;
             case 4: fm_do(M_PASTE,w,w->dir,0); break;
@@ -1702,11 +1744,30 @@ static void settings_click(int lx,int ly,int cw,int ch){
             dirty=1; return; }
         if(in_rect(lx,y,cw-170,dy+104,150,28)){ FsNode *tr=trash_dir(); if(tr) while(tr->child) fs_remove(tr->child); dirty=1; return; }
         if(fmt_confirm){ fmt_confirm=0; dirty=1; }
+    } else if(set_tab==5){
+        if(toggle_hit(lx,y,cw,34)){ widgets_on=!widgets_on; cfg_bool("widgets",widgets_on); }
+        else if(toggle_hit(lx,y,cw,84)){ iconos_on=!iconos_on; cfg_bool("iconos",iconos_on); }
+        else if(in_rect(lx,y,20,136,190,28)){ dobj_init(); dsk_sync(); }
+        else if(toggle_hit(lx,y,cw,210)){ anim_on=!anim_on; cfg_bool("anim",anim_on); }
+        else if(toggle_hit(lx,y,cw,260)){ transp_on=!transp_on; cfg_bool("transp",transp_on); }
+        else if(toggle_hit(lx,y,cw,310)){ lupa_on=!lupa_on; cfg_bool("lupa",lupa_on); }
+        dirty=1;
+    } else if(set_tab==6){
+        if(in_rect(lx,y,20,96,220,28)){ run_quiet("red renovar"); dirty=1; }
+        else if(in_rect(lx,y,250,96,160,28)) run_in_terminal("ping 8.8.8.8");
+        else if(in_rect(lx,y,420,96,160,28)) run_in_terminal("red");
+    } else if(set_tab==7){
+        if(toggle_hit(lx,y,cw,34)){ cursor_big=!cursor_big; cfg_bool("cursor",cursor_big); gfx_present(); }
+        else if(toggle_hit(lx,y,cw,84)){ anim_on=!anim_on; cfg_bool("anim",anim_on); }
+        else if(toggle_hit(lx,y,cw,134)){ show24=!show24; }
+        else if(toggle_hit(lx,y,cw,184)){ transp_on=!transp_on; cfg_bool("transp",transp_on); }
+        dirty=1;
     } else if(set_tab==4){
         cuenta_click(lx,y);
     } else {
         if(in_rect(lx,ly,20,ch-44,110,28)) kreboot();
         else if(in_rect(lx,ly,142,ch-44,110,28)) khalt();
+        else if(in_rect(lx,ly,264,ch-44,230,28)) run_in_terminal("actualizar");
     }
 }
 static void browser_click(Win *w,int lx,int ly,int cw,int ch){

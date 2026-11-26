@@ -92,3 +92,9 @@ Estado honesto. "VERIFICADO" = lo ejecuto GitHub Actions arrancando kng en QEMU 
   _MOTIF_WM_HINTS sin decoraciones (Chromium, Brave, Chrome, GTK con barra propia) salen SIN la barra de kng: se ven
   como en Windows, con sus pestanas y botones, y esos botones funcionan. Orden 5 = poner/quitar maximizada en _NET_WM_STATE.
 - Aviso "Abriendo <programa>..." con ruedita hasta que aparece su ventana (o 2 minutos).
+- (4) Apps por estilo: Tema tiene `panel` y `claro` (Aero = apps claras tipo Windows 7; C_PANEL, C_OK, C_WARN; colores
+  del HTML por estilo). Archivos con columna "Lugares" (FMS) y seleccion por estilo (`sel_row`). Ajustes con menu
+  lateral de 8 secciones (SET_ORD): General, Pantalla, Escritorio (widgets, iconos, animaciones, transparencias, lupa),
+  Red (estado, volver a conectar, probar), Almacenamiento, Cuenta, Accesibilidad (cursor grande, reducir movimiento,
+  24 h, menos transparencia), Sistema (+ buscar actualizaciones). Se guardan en kng.cfg (anim, transp, lupa, widgets,
+  iconos, cursor). Menu de apagado en la barra; apagado ACPI real (kernel64).

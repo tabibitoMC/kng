@@ -2,9 +2,10 @@
 #include "html.h"
 #include "gfx.h"
 
-#define COL_TXT  0xdfe3f0
-#define COL_DIM  0x9aa0b8
-#define COL_H    0xffffff
+uint32_t html_col_txt=0xdfe3f0, html_col_dim=0x9aa0b8, html_col_h=0xffffff;      /* el escritorio los cambia segun el estilo */
+#define COL_TXT  html_col_txt
+#define COL_DIM  html_col_dim
+#define COL_H    html_col_h
 
 typedef struct { int cx, cy, lh, left, right; } Lay;           /* cursor de maquetacion */
 

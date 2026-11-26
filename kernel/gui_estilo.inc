@@ -3,6 +3,8 @@
  * Se incluye desde gui.c (comparte sus variables estaticas). Sin coma flotante. */
 
 static char cu_user[28];                                           /* usuario configurado ("" = sin usuario: entra directo) */
+static void vblur(int x,int y,int w,int h,int r){                  /* vidrio: desenfoca lo de atras; sin transparencias, fondo solido */
+    if(transp_on) blur_rect(x,y,w,h,r); else fill(x,y,w,h,ESTILO==0?0x3a7cc2:0x232326,255); }
 /* ---------------- seno entero: periodo 256, resultado -1024..1024 ---------------- */
 static const short SIN64[65]={0,25,50,75,100,125,150,175,200,224,249,273,297,321,345,369,392,415,438,460,483,505,526,548,569,590,610,630,650,669,688,706,
     724,742,759,775,792,807,822,837,851,865,878,891,903,915,926,936,946,955,964,972,980,987,993,999,1004,1009,1013,1016,1019,1021,1023,1024,1024};
@@ -78,6 +80,12 @@ static void ajustes_guardados(void){                               /* tema, acen
     if(cfg_get("tema",v,sizeof v)&&v[0]>='0'&&v[0]<'0'+NTEMAS) tema_set(v[0]-'0');
     if(cfg_get("acento",v,sizeof v)){ int a=v[0]=='-'?-1:v[0]-'0'; if(a>=-1&&a<6) acc_i=a; }
     if(cfg_get("fondo",v,sizeof v)&&v[0]>='0'&&v[0]<'0'+NFONDOS) wall_i=v[0]-'0';
+    if(cfg_get("anim",v,sizeof v)) anim_on=v[0]!='0';
+    if(cfg_get("transp",v,sizeof v)) transp_on=v[0]!='0';
+    if(cfg_get("lupa",v,sizeof v)) lupa_on=v[0]!='0';
+    if(cfg_get("widgets",v,sizeof v)) widgets_on=v[0]!='0';
+    if(cfg_get("iconos",v,sizeof v)) iconos_on=v[0]!='0';
+    if(cfg_get("cursor",v,sizeof v)) cursor_big=v[0]=='1';
 }
 
 /* ---------------- iconos del dock en memoria (para escalarlos: lupa del Mac, barra de Windows) ---------------- */
@@ -130,7 +138,7 @@ static void dock_layout(void){
         return; }
     int bh=dock_bh(), by=gh-bh-10, s[NDOCK+XW_EXTRA], tot=0, near=dock_near()&&!mu_open&&drag<0&&!bloqueado;
     int bw0=n*TILE+(n-1)*14+28, bx0=(gw-bw0)/2, it=dock_itop();
-    int gmax=ESTILO==2?30:12, rad=ESTILO==2?150:110;
+    int gmax=!lupa_on?0:ESTILO==2?30:12, rad=ESTILO==2?150:110;
     for(int i=0;i<n;i++){ int c=bx0+14+i*(TILE+14)+TILE/2, g=0;
         if(near){ int d=iabs(mx-c); if(d<rad) g=gmax*(1024+icos(d*128/rad))/2048; }
         s[i]=TILE+g; tot+=s[i]; }
@@ -143,7 +151,7 @@ static void dock_layout(void){
         x=mx-mp+7; bx=x-14; }
     uint32_t t=kticks();
     for(int i=0;i<n;i++){ int up=0;
-        if(i==bnc_i&&t-bnc_t<70){ int e=(int)(t-bnc_t); up=iabs(isin(e*256/35))*16/1024*(70-e)/70; }
+        if(i==bnc_i&&t-bnc_t<70&&anim_on){ int e=(int)(t-bnc_t); up=iabs(isin(e*256/35))*16/1024*(70-e)/70; }
         dsl[i].x=x; dsl[i].s=s[i]; dsl[i].y=by+it+TILE-s[i]-up; x+=s[i]+14; }
     dbx=bx; dby=by; dbw=bw; dbh=bh;
 }
@@ -200,7 +208,7 @@ static void tray_draw(int rx,int cy,uint32_t col){                 /* red, tecla
 static void draw_topbar(void){
     if(!BARH) return;
     char t[16]; clock_str(t);
-    blur_rect(0,0,gw,BARH,6);
+    vblur(0,0,gw,BARH,6);
     if(ESTILO==0){                                                /* Aero: vidrio azul con brillo */
         for(int j=0;j<BARH;j++) fill(0,j,gw,1,mix(0x9bd8ff,0x1f6fc4,j*255/BARH),165);
         fill(0,0,gw,BARH/2,0xffffff,38); fill(0,0,gw,1,0xffffff,120); fill(0,BARH-1,gw,1,0x0b3a6e,170);
@@ -222,7 +230,7 @@ static void draw_topbar(void){
 static void draw_dock(void){
     icon_cache_build(); dock_layout();
     if(ESTILO==1){                                                /* barra de tareas de Windows 11 */
-        blur_rect(0,dby,gw,dbh,8); fill(0,dby,gw,dbh,0x1b1b1f,200); fill(0,dby,gw,1,0xffffff,26);
+        vblur(0,dby,gw,dbh,8); fill(0,dby,gw,dbh,0x1b1b1f,200); fill(0,dby,gw,1,0xffffff,26);
         for(int i=0;i<dock_n;i++){ int x=dsl[i].x, y=dsl[i].y, S=dsl[i].s, act, run=dock_running(i,&act);
             if(hover==i||act) rrect(x-5,y-4,S+10,S+8,6,0xffffff,act?26:18);
             dock_icon(i,x,y,S,255);
@@ -232,7 +240,7 @@ static void draw_dock(void){
         char t[16]; clock_str(t); int tw=text_w(t); text(gw-14-tw,dby+16,t,0xffffff);
         tray_draw(gw-24-tw,dby+dbh/2,0xd0d0d0);
         return; }
-    blur_rect(dbx+4,dby,dbw-8,dbh,6);
+    vblur(dbx+4,dby,dbw-8,dbh,6);
     if(ESTILO==0){                                                /* Aero: repisa de vidrio con brillo y reflejo de los iconos */
         rrect(dbx,dby,dbw,dbh,18,0xffffff,110);
         rrect_grad(dbx+1,dby+1,dbw-2,dbh-2,17,0x7cc6f5,0x1c5ea8,135);
@@ -257,7 +265,7 @@ static void draw_dock(void){
 /* ---------------- paneles de vidrio (widgets, menus) y reloj de aguja ---------------- */
 static void glass_panel(int x,int y,int w,int h,int r){
     int X0,Y0,X1,Y1; clip_get(&X0,&Y0,&X1,&Y1);
-    blur_rect(x,y,w,h,6);
+    vblur(x,y,w,h,6);
     if(ESTILO==0){
         rrect(x,y,w,h,r,0xffffff,150); rrect_grad(x+1,y+1,w-2,h-2,r-1,0x5fb0ee,0x123f80,190);
         clip_set(x,y,w,h*2/5); rrect(x+1,y+1,w-2,h-2,r-1,0xffffff,62); clip_set(X0,Y0,X1-X0,Y1-Y0);
@@ -282,9 +290,9 @@ static void aero_clock(int cx,int cy,int R){
 /* ---------------- Ajustes: menu lateral con iconos ---------------- */
 static void set_icon(int i,int x,int y,int sel){                     /* 20x20 */
     uint32_t c = ESTILO==1 ? (sel?ACCENT:0xd0d0d0) : 0xffffff;
-    if(ESTILO==2){ static const uint32_t MC[5]={0x8e8e93,0x0a84ff,0x30d158,0x5e5ce6,0xff9f0a};   /* Mac: cuadritos de color */
+    if(ESTILO==2){ static const uint32_t MC[8]={0x8e8e93,0x0a84ff,0x30d158,0x5e5ce6,0xff9f0a,0x64d2ff,0x0a84ff,0x34c759};   /* Mac: cuadritos de color */
         rrect(x,y,20,20,5,MC[i],255); c=0xffffff; }
-    else if(ESTILO==0){ static const uint32_t AC[5]={0x6fb5e8,0x3fa3ff,0x47c46a,0x8a7cf0,0xf0a63c};
+    else if(ESTILO==0){ static const uint32_t AC[8]={0x6fb5e8,0x3fa3ff,0x47c46a,0x8a7cf0,0xf0a63c,0x38c8d8,0x3f8fe8,0x4cc070};
         rrect_grad(x,y,20,20,5,mix(AC[i],0xffffff,90),AC[i],255); clip_set(x,y,20,9); rrect(x,y,20,20,5,0xffffff,70); clip_reset(); c=0xffffff; }
     int cx=x+10, cy=y+10;
     switch(i){
@@ -292,12 +300,27 @@ static void set_icon(int i,int x,int y,int sel){                     /* 20x20 */
     case 1: rrect(x+3,y+4,14,10,2,c,255); rrect(x+5,y+6,10,6,1,ESTILO==1?0x1a1a1a:0x000000,ESTILO==1?255:90); fill(x+8,y+14,4,2,c,255); fill(x+6,y+16,8,1,c,255); break;            /* pantalla */
     case 2: rrect(x+3,y+5,14,10,3,c,255); fill(x+5,y+11,10,1,ESTILO==1?0x1a1a1a:0x000000,ESTILO==1?255:90); circle(x+14,y+8,1,ESTILO==1?0x1a1a1a:0x000000,200); break;          /* disco */
     case 3: circle(cx,cy,7,c,255); circle(cx,cy,5,ESTILO==1?0x1a1a1a:0x000000,ESTILO==1?255:90); fill(cx-1,cy-1,2,5,c,255); fill(cx-1,cy-4,2,2,c,255); break;                    /* informacion */
-    default: circle(cx,cy-3,3,c,255); rrect(cx-6,cy+2,12,6,3,c,255); break;                                                                                                 /* persona */
+    case 4: circle(cx,cy-3,3,c,255); rrect(cx-6,cy+2,12,6,3,c,255); break;
+    case 5: rrect(x+2,y+3,16,12,2,c,255); rrect(x+4,y+5,5,4,1,ESTILO==1?0x1a1a1a:0x000000,90); rrect(x+11,y+5,5,4,1,ESTILO==1?0x1a1a1a:0x000000,90); fill(x+6,y+16,8,2,c,255); break; /* escritorio */
+    case 6: for(int b=0;b<4;b++) fill(x+3+b*4,y+16-(b+1)*3,3,(b+1)*3+1,c,255); break;                                                                                     /* red */
+    default: circle(cx,cy-5,2,c,255); line(cx-6,cy-1,cx+6,cy-1,2,c,255); line(cx,cy-1,cx,cy+4,2,c,255); line(cx,cy+4,cx-4,cy+9,2,c,255); line(cx,cy+4,cx+4,cy+9,2,c,255); break;   /* accesibilidad */                                                                                                 /* persona */
     }
 }
-static int set_item_at(int ly){ if(ly<86) return -1; int i=(ly-86)/40; return i<5?i:-1; }
+static const char *SET_TT[8]={"General","Pantalla","Almacenamiento","Sistema","Cuenta","Escritorio","Red","Accesibilidad"};
+static const int SET_ORD[8]={0,1,5,6,2,4,7,3};                         /* orden en el menu lateral */
+static int set_item_at(int ly){ if(ly<86) return -1; int i=(ly-86)/40; return i<8?SET_ORD[i]:-1; }
+static void cfg_bool(const char *k,int v){ cfg_set(k,v?"1":"0"); }
+static void toggle_row(int cx,int y,int cw,const char *l,const char *d,int on){      /* interruptor con titulo y descripcion */
+    text(cx+20,y+2,l,C_TXT); text(cx+20,y+20,d,C_DIM);
+    int sx=cx+cw-80, sy=y+4;
+    if(ESTILO==0){ rrect(sx,sy,48,24,12,on?0x1d6fc0:0x8fa8c0,255); rrect_grad(sx+1,sy+1,46,22,11,on?0x8fd3ff:0xe8eef4,on?0x1a6fd0:0xb6c4d2,255);
+        int kx=on?sx+26:sx+2; circle(kx+10,sy+12,10,0x30506f,90); circle(kx+10,sy+12,9,0xffffff,255); }
+    else { rrect(sx,sy,48,24,12,on?ACCENT:(ESTILO==2?0x4a4a4c:0x3a3a3a),255); if(!on&&ESTILO==1){ rrect(sx+1,sy+1,46,22,11,0x202020,255); }
+        int kx=on?sx+28:sx+4; circle(kx+8,sy+12,ESTILO==1?6:9,on||ESTILO==2?0xffffff:0xcfcfcf,255); }
+    fill(cx+20,y+44,cw-40,1,TM->claro?0x000000:0xffffff,TM->claro?20:16);
+}
+static int toggle_hit(int lx,int y,int cw,int ry){ return in_rect(lx,y,cw-84,ry,52,32); }
 static void set_sidebar(int cx,int cy,int ch){
-    static const char *TT[5]={"General","Pantalla","Almacenamiento","Sistema","Cuenta"};
     int X0,Y0,X1,Y1; clip_get(&X0,&Y0,&X1,&Y1);
     if(ESTILO==0){ rrect_grad(cx,cy,SBW,ch,0,0x3b86cf,0x123f78,255); clip_set(cx,cy,SBW,60); fill(cx,cy,SBW,60,0xffffff,30); clip_set(X0,Y0,X1-X0,Y1-Y0); fill(cx+SBW-1,cy,1,ch,0xffffff,70); }
     else if(ESTILO==1) { fill(cx,cy,SBW,ch,0x1a1a1a,255); }
@@ -305,7 +328,7 @@ static void set_sidebar(int cx,int cy,int ch){
     const char *un=cu_user[0]?cu_user:"Usuario local";                   /* arriba: la cuenta */
     circle(cx+30,cy+40,18,ACCENT,255); { char in[2]={un[0]>='a'&&un[0]<='z'?(char)(un[0]-32):un[0],0}; text_bold(cx+26,cy+32,in,0xffffff); }
     { char nb[16]; k_strcpy(nb,un,sizeof nb); text_bold(cx+56,cy+26,nb,0xffffff); } text(cx+56,cy+44,cu_user[0]?"con contrasena":"sin contrasena",ESTILO==0?0xd6ecff:C_DIM);
-    for(int i=0;i<5;i++){ int y=cy+86+i*40, sel=i==set_tab;
+    for(int k=0;k<8;k++){ int i=SET_ORD[k], y=cy+86+k*40, sel=i==set_tab;
         if(sel){
             if(ESTILO==2) rrect(cx+8,y+2,SBW-16,34,7,ACCENT,255);
             else if(ESTILO==1){ rrect(cx+6,y+2,SBW-12,34,5,0xffffff,18); rrect(cx+6,y+11,3,16,1,ACCENT,255); }
@@ -313,9 +336,40 @@ static void set_sidebar(int cx,int cy,int ch){
         }
         set_icon(i,cx+18,y+9,sel);
         uint32_t tc=ESTILO==0?(sel?0x0a2e55:0xffffff):(ESTILO==2&&sel?0xffffff:C_TXT);
-        if(ESTILO==0&&!sel) text(cx+49,y+12,TT[i],0x0a2e55);
-        text(cx+48,y+11,TT[i],tc);
+        if(ESTILO==0&&!sel) text(cx+49,y+12,SET_TT[i],0x0a2e55);
+        text(cx+48,y+11,SET_TT[i],tc);
     }
+}
+
+/* ---------------- columna lateral generica (Archivos) y seleccion de filas ---------------- */
+static void side_bg(int x,int y,int w,int h){
+    int X0,Y0,X1,Y1; clip_get(&X0,&Y0,&X1,&Y1);
+    if(ESTILO==0){ rrect_grad(x,y,w,h,0,0xe4f1fc,0xc5dff4,255); fill(x+w-1,y,1,h,0x9cc0e0,255); clip_set(x,y,w,40); fill(x,y,w,40,0xffffff,60); clip_set(X0,Y0,X1-X0,Y1-Y0); }
+    else if(ESTILO==1) fill(x,y,w,h,0x1a1a1a,255);
+    else { fill(x,y,w,h,0x2a2a2c,255); fill(x+w-1,y,1,h,0x000000,120); }
+}
+static void sel_row(int x,int y,int w,int h){                      /* fila elegida segun el estilo */
+    int X0,Y0,X1,Y1; clip_get(&X0,&Y0,&X1,&Y1);
+    if(ESTILO==0){ rrect(x,y,w,h,4,0x7fb7e6,255); rrect_grad(x+1,y+1,w-2,h-2,3,0xf2f9ff,0xc6e2f8,255); clip_set(x,y,w,h/2); rrect(x+1,y+1,w-2,h-2,3,0xffffff,90); clip_set(X0,Y0,X1-X0,Y1-Y0); }
+    else if(ESTILO==1){ rrect(x,y,w,h,4,0xffffff,20); rrect(x,y+5,3,h-10,1,ACCENT,255); }
+    else rrect(x,y,w,h,5,ACCENT,255);
+}
+static uint32_t sel_txt(void){ return ESTILO==2?0xffffff:C_TXT; }
+static const char *FMP_L[7]={"Inicio","Escritorio","Documentos","Imagenes","Programas","Sistema","Papelera"};
+static const char *FMP_P[7]={"/","/Escritorio","/Documentos","/Imagenes","/Programas","/Sistema",0};
+static FsNode *trash_dir(void);
+static FsNode *fm_place(int i){ return FMP_P[i]?fs_resolve(fs_root(),FMP_P[i]):trash_dir(); }
+static FsNode *fm_place_at(int ly){ if(ly<40) return 0; int i=(ly-40)/32; if(i>=7) return 0; FsNode *d=fm_place(i); return d&&d->dir?d:0; }
+static void fm_sidebar(Win *w,int cx,int cy,int ch){
+    side_bg(cx,cy,FMS,ch);
+    text_bold(cx+14,cy+14,"Lugares",ESTILO==0?0x2a5a8a:C_DIM);
+    for(int i=0;i<7;i++){ FsNode *d=fm_place(i); if(!d||!d->dir) continue; int y=cy+40+i*32, sel=d==w->dir;
+        if(sel) sel_row(cx+6,y,FMS-12,28);
+        int ix=cx+14, iy=y+5;
+        if(i==0) crown(ix,iy+2,20,0xe9c46a,ACCENT,255);
+        else if(i==6){ uint32_t tc=ESTILO==0?0x6b8db0:0xa0a0a8; rrect(ix+3,iy+4,14,14,2,tc,255); fill(ix+1,iy+2,18,2,tc,255); fill(ix+7,iy,6,2,tc,255); }
+        else { static const uint32_t FC[6]={0,0x3b82f6,0xf5b83d,0x22c55e,0xa855f7,0x8a8fa8}; rrect(ix,iy+2,9,5,2,mix(FC[i],0x000000,40),255); rrect(ix,iy+5,20,13,3,FC[i],255); fill(ix+3,iy+9,14,1,0xffffff,90); }
+        text(cx+42,y+6,FMP_L[i],sel?sel_txt():C_TXT); }
 }
 
 /* ---------------- menu de apagado (boton de la barra) ---------------- */
@@ -411,18 +465,18 @@ static void chrome_draw(Win *w,int f){
         for(int bnd=0;bnd<4;bnd++){
             if(bnd==0) clip_set(x-F,y-F,W+2*F,F); else if(bnd==1) clip_set(x-F,y+H,W+2*F,F);
             else if(bnd==2) clip_set(x-F,y,F,H); else clip_set(x+W,y,F,H);
-            blur_rect(x-F,y-F,W+2*F,H+2*F,4);
+            vblur(x-F,y-F,W+2*F,H+2*F,4);
             rrect_grad(x-F,y-F,W+2*F,H+2*F,r+F,f?0xc6ebff:0xb4cde0,f?0x2f7fd0:0x7393b4,f?175:125);
             rrect(x-F,y-F,W+2*F,H+2*F,r+F,0xffffff,f?40:20); }
         clip_reset(); }
     uint32_t bord=f?(e==0?0x1b5a98:e==1?mix(0x3a3a3a,ACCENT,50):0x5c5c5e):TM->border;
     clip_set(x,y+TB,W,H-TB); rrect(x,y,W,H,r,bord,255);
-    if(e==0) rrect_grad(x+1,y+1,W-2,H-2,r-1,0x1d3a60,0x0e1b31,255); else rrect(x+1,y+1,W-2,H-2,r-1,C_BG,255);      /* Aero: fondo con degradado */
+    if(e==0) rrect_grad(x+1,y+1,W-2,H-2,r-1,0xf7fbff,0xdcebf8,255); else rrect(x+1,y+1,W-2,H-2,r-1,C_BG,255);      /* Aero: fondo con degradado */
     clip_reset();
     clip_set(x,y,W,TB);
     int ta=f?TM->ta:TM->ta-40;
     if(e==0){
-        blur_rect(x,y,W,TB,5);                                     /* vidrio esmerilado: lo de atras se ve borroso */
+        vblur(x,y,W,TB,5);                                     /* vidrio esmerilado: lo de atras se ve borroso */
         rrect_grad(x,y,W,TB+2*r,r,f?0xb4e2ff:0xa6c8de,f?0x2a7cd0:0x5d88ad,ta);
         clip_set(x,y,W,TB/2); rrect(x+1,y+1,W-2,TB,r-1,0xffffff,f?72:40); clip_set(x,y,W,TB);
         fill(x+r,y+1,W-2*r,1,0xffffff,160); fill(x,y+r,1,TB-r,bord,200); fill(x+W-1,y+r,1,TB-r,bord,200);
@@ -443,7 +497,7 @@ static void chrome_title(Win *w,int f){
     if(w->type==A_ABOUT){ crown(tx-2,y+9,18,0xe9c46a,ACCENT,255); tx+=24; }
     else if(w->type==A_XWIN&&w->xicon&&e!=2){ blit_pm_scaled(tx-2,y+(TB-18)/2,18,18,w->xicon,w->xiw,w->xih,255); tx+=22; }
     clip_set(x+1,y+1,lim-x-1,TB-1);
-    if(e==0){ int tw=text_w(w->title)+1; rrect(tx-8,y+6,tw+16,18,9,0xffffff,f?80:40); blur_rect(tx-12,y+2,tw+24,TB-4,4);   /* resplandor detras del titulo */
+    if(e==0){ int tw=text_w(w->title)+1; rrect(tx-8,y+6,tw+16,18,9,0xffffff,f?80:40); vblur(tx-12,y+2,tw+24,TB-4,4);   /* resplandor detras del titulo */
         text_bold(tx+1,y+8,w->title,0x08294d); text_bold(tx,y+7,w->title,f?0xffffff:0xe0ecf6); }
     else if(e==1) text(tx,y+7,w->title,f?0xffffff:0x9a9a9a);
     else text_bold(tx,y+7,w->title,f?0xe6e6e6:0x8a8a8c);
@@ -471,7 +525,7 @@ static void ghost_mark(const Ghost *g){
 /* copia lo que hay en pantalla en (x,y,w,h) y lo anima hasta (x1,y1,w1,h1) con opacidad a0 -> a1 */
 static void ghost_new(int x,int y,int w,int h,int x1,int y1,int w1,int h1,int a0,int a1,int dur,int mode){
     if(x<0){ w+=x; x=0; } if(y<0){ h+=y; y=0; } if(x+w>gw) w=gw-x; if(y+h>gh) h=gh-y;
-    if(w<8||h<8) return;
+    if(w<8||h<8||!anim_on) return;
     int s=-1; for(int i=0;i<NGH;i++) if(!ghs[i].on){ s=i; break; }
     if(s<0) return;
     Ghost *g=&ghs[s]; g->buf=kmalloc((size_t)w*h*4); if(!g->buf) return;
@@ -498,7 +552,7 @@ static int anim_tick(void){                                        /* avanza las
     return act;
 }
 static void win_vis(const Win *w,int *x,int *y,int *ww,int *hh){   /* rectangulo que se ve (durante maximizar/restaurar) */
-    *x=w->x; *y=w->y; *ww=w->w; *hh=w->h; if(!w->vanim) return;
+    *x=w->x; *y=w->y; *ww=w->w; *hh=w->h; if(!w->vanim||!anim_on) return;
     int e=ease_out((int)(kticks()-w->vt0)*256/A_RECT);
     *x=w->vx0+(w->x-w->vx0)*e/256; *y=w->vy0+(w->y-w->vy0)*e/256; *ww=w->vw0+(w->w-w->vw0)*e/256; *hh=w->vh0+(w->h-w->vh0)*e/256;
 }
@@ -560,7 +614,7 @@ static void tema_card(int i,int x,int y,int sel){
     if(e==1){ fill(x+1,y+H-14,W-2,13,0x1b1b1f,220); for(int k=0;k<5;k++) rrect(x+W/2-34+k*14,y+H-11,9,8,2,k==0?0x60a5fa:0xd0d0d0,230); }
     else { int dw=e==0?84:92; rrect(x+(W-dw)/2,y+H-17,dw,13,4,e==0?0x2c86d8:0x262628,e==0?170:190);
         for(int k=0;k<6;k++) rrect(x+(W-dw)/2+5+k*14,y+H-15,9,9,3,k==0?0xe9c46a:k==1?0xf97316:k==2?0xf5b83d:0x9aa6c8,255); }
-    text(x+(W-text_w(T->nombre))/2,y+H+8,T->nombre,sel?0xffffff:C_TXT);
+    (sel?text_bold:text)(x+(W-text_w(T->nombre))/2,y+H+8,T->nombre,C_TXT);
 }
 
 /* ---------------- usuario y contrasena (opcional) ---------------- */
@@ -621,11 +675,11 @@ static void campo_key(Campo *c,int k,int ascii_only){
     for(int i=0;i<en;i++){ c->s[c->n++]=e[i]; } c->s[c->n]=0;
 }
 static void campo_draw(int x,int y,int w,const Campo *c,int sel,int oculto,const char *ph){
-    rrect(x,y,w,30,7,sel?ACCENT:0xffffff,sel?255:40); rrect(x+1,y+1,w-2,28,6,0x0b0c14,235);
+    rrect(x,y,w,30,7,sel?ACCENT:(TM->claro?0x8fb3d6:0xffffff),sel?255:(TM->claro?255:40)); rrect(x+1,y+1,w-2,28,6,C_PANEL,255);
     char b[44]; if(oculto){ int n=0; for(int i=0;i<c->n&&n<40;i++) if(((unsigned char)c->s[i]&0xC0)!=0x80) b[n++]='*'; b[n]=0; } else k_strcpy(b,c->s,sizeof b);
     int ex;
-    if(!b[0]&&!sel) ex=text(x+10,y+7,ph,0x6b7088); else ex=text(x+10,y+7,b,0xffffff);
-    if(sel&&((kticks()/50)&1)==0) fill(b[0]?ex+1:x+10,y+7,2,16,0xffffff,220);
+    if(!b[0]&&!sel) ex=text(x+10,y+7,ph,C_DIM); else ex=text(x+10,y+7,b,C_TXT);
+    if(sel&&((kticks()/50)&1)==0) fill(b[0]?ex+1:x+10,y+7,2,16,C_TXT,220);
 }
 static void cuenta_draw(int cx,int oy,int cw){
     (void)cw;
@@ -639,7 +693,7 @@ static void cuenta_draw(int cx,int oy,int cw){
         button(cx+20,oy+284,170,30,"Crear usuario",1);
     } else {
         circle(cx+52,oy+78,28,ACCENT,255); { char in[3]={cu_user[0]>='a'&&cu_user[0]<='z'?(char)(cu_user[0]-32):cu_user[0],0}; text_big(cx+46,oy+66,in,0xffffff); }
-        text_big(cx+96,oy+56,cu_user,0xffffff); text(cx+96,oy+86,"Pide contrasena al encender y al bloquear.",C_DIM);
+        text_big(cx+96,oy+56,cu_user,C_TXT); text(cx+96,oy+86,"Pide contrasena al encender y al bloquear.",C_DIM);
         button(cx+20,oy+124,170,30,"Bloquear ahora",1);
         text(cx+20,oy+174,"Para cambiar o quitar la contrasena escribe la actual:",C_DIM);
         campo_draw(cx+20,oy+196,280,&cf[0],cf_sel==0,1,"contrasena actual");

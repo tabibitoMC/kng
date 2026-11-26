@@ -184,6 +184,10 @@ int main(void){
         { Win *st=&wins[win_top()]; click(st->x+1+80,st->y+TB+86+1*40+18); }
         snprintf(n,sizeof n,"30_tema%d_ventanas",t); shot(n);
         pw_open=1; pw_hov=1; dirty=1; snprintf(n,sizeof n,"34_tema%d_apagar",t); shot(n); pw_open=0; pw_hov=-1; dirty=1;
+        { Win *st=&wins[win_top()]; click(st->x+1+80,st->y+TB+86+2*40+18); snprintf(n,sizeof n,"35_tema%d_escritorio_ajustes",t); shot(n);
+          click(st->x+1+80,st->y+TB+86+3*40+18); snprintf(n,sizeof n,"36_tema%d_red",t); shot(n); }
+        { for(int k=0;k<nord;k++) if(wins[order[k]].type==A_FILES){ focus(order[k]); break; } T+=30; gui_frame(); snprintf(n,sizeof n,"37_tema%d_archivos",t); shot(n); }
+        { for(int k=0;k<nord;k++) if(wins[order[k]].type==A_SETTINGS){ focus(order[k]); break; } T+=30; gui_frame(); }
         { int x,y; dock_base_center(2,&x,&y); gui_mouse_abs(x,y,0); gui_frame(); snprintf(n,sizeof n,"31_tema%d_dock",t); shot(n); gui_mouse_abs(500,300,0); }
         /* minimizar y volver */
         { int top=win_top(); Win *w=&wins[top]; int x,y,cw,ch; ctl_geom(w,2,&x,&y,&cw,&ch); click(x+cw/2,y+ch/2); if(!w->minim){ puts("FALLO minimizar"); return 1; }
@@ -198,7 +202,7 @@ int main(void){
     /* usuario y contrasena */
     tema_aplicar(0,1);
     dock(7); { Win *st=&wins[win_top()]; int ox=st->x+1, oy=st->y+TB;
-      click(ox+80,oy+86+4*40+18); shot("40_cuenta_vacia");
+      click(ox+80,oy+86+5*40+18); shot("40_cuenta_vacia");
       click(ox+SBW+20+100,oy+SOY+112+15); typestr("nick\\clave1\\clave1"); shot("41_cuenta_escribiendo"); gui_key('\n');
       if(!cu_user[0]){ puts(cf_msg); puts("FALLO crear usuario"); return 1; }
       shot("42_cuenta_creada"); }
@@ -209,7 +213,7 @@ int main(void){
     dock(3); if(nord){ puts("FALLO el bloqueo deja abrir programas"); return 1; }
     typestr("mala\\"); T+=5; shot("44_bloqueo_error"); if(!bloqueado){ puts("FALLO contrasena mala"); return 1; }
     T+=60; typestr("clave1\\"); if(bloqueado){ puts("FALLO contrasena buena"); return 1; } T+=8; shot("45_desbloqueando"); T+=40; shot("46_desbloqueado");
-    dock(7); { Win *st=&wins[win_top()]; int ox=st->x+1, oy=st->y+TB; click(ox+80,oy+86+4*40+18);
+    dock(7); { Win *st=&wins[win_top()]; int ox=st->x+1, oy=st->y+TB; click(ox+80,oy+86+5*40+18);
       click(ox+SBW+20+100,oy+SOY+196+15); typestr("clave1"); click(ox+SBW+200+100,oy+SOY+300+15); if(cu_user[0]){ puts(cf_msg); puts("FALLO quitar usuario"); return 1; } shot("47_cuenta_quitada"); }
     closeall();
     puts("SESION OK");
