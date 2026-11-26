@@ -166,12 +166,12 @@ static struct gdesc g_rxd[G_NRX] __attribute__((aligned(256)));
 static struct gdesc g_txd[G_NTX] __attribute__((aligned(256)));
 static u8 g_rxb[G_NRX][2048] __attribute__((aligned(16)));
 static u8 g_txb[G_NTX][2048] __attribute__((aligned(16)));
-static u16 g_io; static int g_rx_cur, g_tx_cur;
+static u16 g_io; static int g_rx_cur, g_tx_cur; static unsigned n_tx, n_txfail, n_rx, n_rxbad, n_dhcp;   /* contadores para 'red' */
 static int g_send(const u8 *f,int n){
     volatile struct gdesc *d=&g_txd[g_tx_cur];
     int t=200000; while((d->cmd&0x80000000u) && --t) __asm__ volatile("" ::: "memory");
-    if(!t||n>1792) return -1;
-    memcpy(g_txb[g_tx_cur],f,(size_t)n);
+    if(!t||n>1792){ n_txfail++; return -1; }
+    memcpy(g_txb[g_tx_cur],f,(size_t)n); n_tx++;
     if(n<60){ memset(g_txb[g_tx_cur]+n,0,(size_t)(60-n)); n=60; }
     d->lo=(u32)(uintptr_t)g_txb[g_tx_cur]; d->hi=0; d->vlan=0;
     __asm__ volatile("" ::: "memory");
@@ -185,7 +185,7 @@ static int g_recv(u8 *buf,int max){
     volatile struct gdesc *d=&g_rxd[g_rx_cur];
     if(d->cmd&0x80000000u) return 0;                              /* aun es de la tarjeta */
     u32 c=d->cmd; int n=(int)(c&0x3FFF)-4, bad=((c&0x30000000u)!=0x30000000u)||(c&0x00200000u)||n<14||n>max;
-    if(!bad) memcpy(buf,g_rxb[g_rx_cur],(size_t)n);
+    if(!bad){ memcpy(buf,g_rxb[g_rx_cur],(size_t)n); n_rx++; } else n_rxbad++;
     d->vlan=0; d->lo=(u32)(uintptr_t)g_rxb[g_rx_cur]; d->hi=0;
     __asm__ volatile("" ::: "memory");
     d->cmd=0x80000000u|(g_rx_cur==G_NRX-1?0x40000000u:0)|2048u;
@@ -362,6 +362,7 @@ static void dhcp_send(int type){
     dh_t=kticks();
 }
 static void dhcp_in(const u8 *p,int n){
+    n_dhcp++;
     if(n<241 || p[0]!=2 || rd32(p+4)!=dh_xid || mcmp(p+28,mac,6)) return;
     if(rd32(p+236)!=0x63825363u) return;
     int type=0; u32 m=0,r=0,d=0,sid=0;
@@ -875,6 +876,8 @@ int net_cmd(char *l){
         kprintf("Tarjeta: %s  MAC %s  enlace %s\n",nic_desc,m,nic->link&&nic->link()?"activo":"sin senal");
         if(net_st==2){ kprintf("IP %s  mascara %s  puerta %s  DNS %s%s\n",ipstr(my_ip),ipstr(mask),ipstr(gw),ipstr(dns_ip),ip_static?"  (configuracion de reserva: no hubo DHCP; se sigue intentando, o escribe: red renovar)":""); }
         else kprintf("Esperando respuesta DHCP...\n");
+        if(nic==&g_drv) kprintf("Paquetes: enviados %u (fallos %u), recibidos %u (malos %u), respuestas DHCP %u, estado del chip %x\n",n_tx,n_txfail,n_rx,n_rxbad,n_dhcp,(unsigned)io_i16((u16)(g_io+0x3E)));
+        else kprintf("Respuestas DHCP recibidas: %u\n",n_dhcp);
         return 1;
     }
     if(k_startswith(l,"ping")){
