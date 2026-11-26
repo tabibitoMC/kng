@@ -434,7 +434,41 @@ static void fb_wc(uint32_t addr,uint32_t bytes){      /* framebuffer en write-co
     uint64_t cr3; __asm__ volatile("mov %%cr3,%0":"=r"(cr3)); __asm__ volatile("mov %0,%%cr3"::"r"(cr3):"memory");
 }
 void kreboot(void){ if(kngfs_active()) (void)kngfs_save(); outb(0x64,0xFE); for(;;) __asm__ volatile("hlt"); }
-void khalt(void){ kprintf("Apagando...\n"); if(kngfs_active()) (void)kngfs_save(); outw(0x604,0x2000); outw(0xB004,0x2000); outw(0x4004,0x3400); for(;;) __asm__ volatile("cli;hlt"); }
+/* Apagado real por ACPI (PC de verdad): FADT -> registro PM1a_CNT y valor SLP_TYP del paquete \_S5 del DSDT. */
+static inline uint16_t inw_(uint16_t p){ uint16_t v; __asm__ volatile("inw %1,%0":"=a"(v):"Nd"(p)); return v; }
+static int sig4(const uint8_t *p,const char *t){ return p[0]==t[0]&&p[1]==t[1]&&p[2]==t[2]&&p[3]==t[3]; }
+static int acpi_ok(const uint8_t *p,uint32_t n){ uint8_t s=0; for(uint32_t i=0;i<n;i++) s+=p[i]; return s==0; }
+static const uint8_t *acpi_table(u64 a,const char *t){ if(!a||a>=0x100000000ull) return 0; const uint8_t *p=(const uint8_t*)(uintptr_t)a; uint32_t l=*(const uint32_t*)(p+4); return sig4(p,t)&&l>=36&&l<(1u<<20)&&acpi_ok(p,l)?p:0; }
+static const uint8_t *acpi_fadt(void){
+    const uint8_t *r=0; uintptr_t bda=0x40E; __asm__("":"+r"(bda)); u64 ebda=(u64)(*(volatile uint16_t*)bda)<<4;
+    for(u64 a=ebda;ebda>=0x80000&&a<ebda+1024&&!r;a+=16){ const uint8_t *p=(const uint8_t*)(uintptr_t)a; if(sig4(p,"RSD ")&&sig4(p+4,"PTR ")&&acpi_ok(p,20)) r=p; }
+    for(u64 a=0xE0000;a<0x100000&&!r;a+=16){ const uint8_t *p=(const uint8_t*)(uintptr_t)a; if(sig4(p,"RSD ")&&sig4(p+4,"PTR ")&&acpi_ok(p,20)) r=p; }
+    if(r){ u64 x=r[15]>=2?*(const u64*)(r+24):0; const uint8_t *t=acpi_table(x,"XSDT"); int es=8;
+        if(!t){ t=acpi_table(*(const uint32_t*)(r+16),"RSDT"); es=4; }
+        if(t){ uint32_t l=*(const uint32_t*)(t+4); for(uint32_t o=36;o+es<=l;o+=(uint32_t)es){ u64 e=es==8?*(const u64*)(t+o):*(const uint32_t*)(t+o); const uint8_t *f=acpi_table(e,"FACP"); if(f) return f; } } }
+    /* UEFI: la tabla esta en memoria "ACPI" del mapa de memoria; se busca la firma directamente */
+    if(mbi_copy.mmap_len){ u64 p=mbi_copy.mmap_addr, e=p+mbi_copy.mmap_len;
+        while(p<e){ struct mb_mmap *m=(struct mb_mmap*)(uintptr_t)p;
+            if((m->type==3||m->type==4)&&m->base+m->len<=0x100000000ull)
+                for(u64 a=m->base&~3ull;a+36<m->base+m->len;a+=4){ const uint8_t *q=(const uint8_t*)(uintptr_t)a; if(q[0]=='F'&&sig4(q,"FACP")){ const uint8_t *f=acpi_table(a,"FACP"); if(f) return f; } }
+            p+=m->size+4; } }
+    return 0;
+}
+static void acpi_poweroff(void){
+    const uint8_t *f=acpi_fadt(); if(!f) return;
+    uint32_t fl=*(const uint32_t*)(f+4); u64 ds=*(const uint32_t*)(f+40); if(fl>=148&&*(const u64*)(f+140)) ds=*(const u64*)(f+140);
+    uint32_t smi=*(const uint32_t*)(f+48); uint8_t en=f[52]; uint16_t pa=(uint16_t)*(const uint32_t*)(f+64), pb=(uint16_t)*(const uint32_t*)(f+68);
+    const uint8_t *d=acpi_table(ds,"DSDT"); if(!d||!pa) return;
+    uint32_t dl=*(const uint32_t*)(d+4); int ta=-1, tb=0;
+    for(uint32_t i=36;i+8<dl;i++) if(sig4(d+i,"_S5_")&&(d[i-1]==0x08||(d[i-2]==0x08&&d[i-1]=='\\'))&&d[i+4]==0x12){
+        const uint8_t *q=d+i+5; q+=((*q&0xC0)>>6)+2;                  /* largo del paquete + numero de elementos */
+        if(*q==0x0A){ q++; } ta=*q++; if(*q==0x0A){ q++; } tb=*q; break; }
+    if(ta<0) return;
+    if(!(inw_(pa)&1)&&smi&&en){ outb((uint16_t)smi,en); for(int k=0;k<300&&!(inw_(pa)&1);k++) for(volatile int z=0;z<100000;z++); }
+    outw(pa,(uint16_t)((ta<<10)|0x2000)); if(pb) outw(pb,(uint16_t)((tb<<10)|0x2000));
+    for(volatile int z=0;z<5000000;z++);
+}
+void khalt(void){ kprintf("Apagando...\n"); if(kngfs_active()) (void)kngfs_save(); acpi_poweroff(); outw(0x604,0x2000); outw(0xB004,0x2000); outw(0x4004,0x3400); for(;;) __asm__ volatile("cli;hlt"); }
 static uint8_t cmos(uint8_t r){ outb(0x70,r); return inb(0x71); }
 /* fecha y hora completas del reloj de la placa (se supone UTC), en segundos desde 1970 */
 static uint64_t days_from_civil(int y,int m,int d){ y-=m<=2; int era=(y>=0?y:y-399)/400; unsigned yoe=(unsigned)(y-era*400); unsigned doy=(153u*(unsigned)(m+(m>2?-3:9))+2)/5+(unsigned)d-1; unsigned doe=yoe*365+yoe/4-yoe/100+doy; return (uint64_t)((long)era*146097+(long)doe-719468); }

@@ -2,6 +2,7 @@
  * barra superior, dock / barra de tareas, animaciones (abrir, cerrar, minimizar, maximizar) y el inicio de sesion.
  * Se incluye desde gui.c (comparte sus variables estaticas). Sin coma flotante. */
 
+static char cu_user[28];                                           /* usuario configurado ("" = sin usuario: entra directo) */
 /* ---------------- seno entero: periodo 256, resultado -1024..1024 ---------------- */
 static const short SIN64[65]={0,25,50,75,100,125,150,175,200,224,249,273,297,321,345,369,392,415,438,460,483,505,526,548,569,590,610,630,650,669,688,706,
     724,742,759,775,792,807,822,837,851,865,878,891,903,915,926,936,946,955,964,972,980,987,993,999,1004,1009,1013,1016,1019,1021,1023,1024,1024};
@@ -278,6 +279,80 @@ static void aero_clock(int cx,int cy,int R){
     clip_set(cx-R,cy-R,2*R,R*9/10); circle(cx,cy-R/6,R*9/10,0xffffff,70); clip_set(X0,Y0,X1-X0,Y1-Y0);
 }
 
+/* ---------------- Ajustes: menu lateral con iconos ---------------- */
+static void set_icon(int i,int x,int y,int sel){                     /* 20x20 */
+    uint32_t c = ESTILO==1 ? (sel?ACCENT:0xd0d0d0) : 0xffffff;
+    if(ESTILO==2){ static const uint32_t MC[5]={0x8e8e93,0x0a84ff,0x30d158,0x5e5ce6,0xff9f0a};   /* Mac: cuadritos de color */
+        rrect(x,y,20,20,5,MC[i],255); c=0xffffff; }
+    else if(ESTILO==0){ static const uint32_t AC[5]={0x6fb5e8,0x3fa3ff,0x47c46a,0x8a7cf0,0xf0a63c};
+        rrect_grad(x,y,20,20,5,mix(AC[i],0xffffff,90),AC[i],255); clip_set(x,y,20,9); rrect(x,y,20,20,5,0xffffff,70); clip_reset(); c=0xffffff; }
+    int cx=x+10, cy=y+10;
+    switch(i){
+    case 0: circle(cx,cy,6,c,255); circle(cx,cy,3,ESTILO==1?0x1a1a1a:0x000000,ESTILO==1?255:90); for(int k=0;k<8;k++) circle(cx+isin(k*32)*7/1024,cy-icos(k*32)*7/1024,1,c,255); break;   /* engranaje */
+    case 1: rrect(x+3,y+4,14,10,2,c,255); rrect(x+5,y+6,10,6,1,ESTILO==1?0x1a1a1a:0x000000,ESTILO==1?255:90); fill(x+8,y+14,4,2,c,255); fill(x+6,y+16,8,1,c,255); break;            /* pantalla */
+    case 2: rrect(x+3,y+5,14,10,3,c,255); fill(x+5,y+11,10,1,ESTILO==1?0x1a1a1a:0x000000,ESTILO==1?255:90); circle(x+14,y+8,1,ESTILO==1?0x1a1a1a:0x000000,200); break;          /* disco */
+    case 3: circle(cx,cy,7,c,255); circle(cx,cy,5,ESTILO==1?0x1a1a1a:0x000000,ESTILO==1?255:90); fill(cx-1,cy-1,2,5,c,255); fill(cx-1,cy-4,2,2,c,255); break;                    /* informacion */
+    default: circle(cx,cy-3,3,c,255); rrect(cx-6,cy+2,12,6,3,c,255); break;                                                                                                 /* persona */
+    }
+}
+static int set_item_at(int ly){ if(ly<86) return -1; int i=(ly-86)/40; return i<5?i:-1; }
+static void set_sidebar(int cx,int cy,int ch){
+    static const char *TT[5]={"General","Pantalla","Almacenamiento","Sistema","Cuenta"};
+    int X0,Y0,X1,Y1; clip_get(&X0,&Y0,&X1,&Y1);
+    if(ESTILO==0){ rrect_grad(cx,cy,SBW,ch,0,0x3b86cf,0x123f78,255); clip_set(cx,cy,SBW,60); fill(cx,cy,SBW,60,0xffffff,30); clip_set(X0,Y0,X1-X0,Y1-Y0); fill(cx+SBW-1,cy,1,ch,0xffffff,70); }
+    else if(ESTILO==1) { fill(cx,cy,SBW,ch,0x1a1a1a,255); }
+    else { fill(cx,cy,SBW,ch,0x2a2a2c,255); fill(cx+SBW-1,cy,1,ch,0x000000,120); }
+    const char *un=cu_user[0]?cu_user:"Usuario local";                   /* arriba: la cuenta */
+    circle(cx+30,cy+40,18,ACCENT,255); { char in[2]={un[0]>='a'&&un[0]<='z'?(char)(un[0]-32):un[0],0}; text_bold(cx+26,cy+32,in,0xffffff); }
+    { char nb[16]; k_strcpy(nb,un,sizeof nb); text_bold(cx+56,cy+26,nb,0xffffff); } text(cx+56,cy+44,cu_user[0]?"con contrasena":"sin contrasena",ESTILO==0?0xd6ecff:C_DIM);
+    for(int i=0;i<5;i++){ int y=cy+86+i*40, sel=i==set_tab;
+        if(sel){
+            if(ESTILO==2) rrect(cx+8,y+2,SBW-16,34,7,ACCENT,255);
+            else if(ESTILO==1){ rrect(cx+6,y+2,SBW-12,34,5,0xffffff,18); rrect(cx+6,y+11,3,16,1,ACCENT,255); }
+            else { rrect(cx+6,y+2,SBW-12,34,7,0xffffff,190); rrect_grad(cx+7,y+3,SBW-14,32,6,0xe6f6ff,0x8ccdf6,255); clip_set(cx+6,y+2,SBW-12,17); rrect(cx+7,y+3,SBW-14,32,6,0xffffff,90); clip_set(X0,Y0,X1-X0,Y1-Y0); }
+        }
+        set_icon(i,cx+18,y+9,sel);
+        uint32_t tc=ESTILO==0?(sel?0x0a2e55:0xffffff):(ESTILO==2&&sel?0xffffff:C_TXT);
+        if(ESTILO==0&&!sel) text(cx+49,y+12,TT[i],0x0a2e55);
+        text(cx+48,y+11,TT[i],tc);
+    }
+}
+
+/* ---------------- menu de apagado (boton de la barra) ---------------- */
+static int pw_open, pw_hov=-1;
+static int pw_n(void){ return cu_user[0]?4:3; }
+static int pw_act(int i){ return cu_user[0]?i:(i==0?0:i+1); }        /* 0 ajustes, 1 bloquear, 2 reiniciar, 3 apagar */
+static void pw_geom(int *x,int *y,int *w,int *h){ *w=210; *h=12+pw_n()*38; *x=gw-*w-8; *y=ESTILO==1?gh-48-*h-8:BARH+6; }
+static void pw_mark(void){ int x,y,w,h; pw_geom(&x,&y,&w,&h); dmark(x-12,y-12,w+24,h+28); }
+static int pw_item_at(int px,int py){ int x,y,w,h; pw_geom(&x,&y,&w,&h); if(!in_rect(px,py,x,y+6,w,h-12)) return -1; return (py-y-6)/38; }
+static void pw_draw(void){
+    if(!pw_open) return;
+    static const char *L[4]={"Ajustes","Bloquear","Reiniciar","Apagar"};
+    int x,y,w,h; pw_geom(&x,&y,&w,&h);
+    for(int i=3;i>=1;i--) rrect(x-i,y-i+4,w+2*i,h+2*i,12+i,0x000000,24);
+    glass_panel(x,y,w,h,12);
+    for(int i=0;i<pw_n();i++){ int a=pw_act(i), iy=y+6+i*38, hv=i==pw_hov;
+        if(hv){ if(ESTILO==0){ rrect(x+6,iy,w-12,36,8,0xffffff,170); rrect_grad(x+7,iy+1,w-14,34,7,0xe0f4ff,0x86c9f4,240); } else rrect(x+6,iy,w-12,36,8,a==3?0xc42b1c:ACCENT,ESTILO==1?200:230); }
+        uint32_t c=ESTILO==0&&hv?0x0a2e55:0xffffff; int cx=x+26, cy=iy+18;
+        if(a==0){ circle(cx,cy,7,c,255); circle(cx,cy,3,hv?(ESTILO==0?0xbfe4fa:ACCENT):0x1c2a40,255); }
+        else if(a==1){ rrect(cx-6,cy-2,12,9,2,c,255); circle(cx,cy-4,5,c,255); circle(cx,cy-4,3,hv?(ESTILO==0?0xbfe4fa:ACCENT):0x1c2a40,255); rrect(cx-6,cy-2,12,9,2,c,255); }
+        else if(a==2){ circle(cx,cy,7,c,255); circle(cx,cy,5,hv?(ESTILO==0?0xbfe4fa:ACCENT):0x1c2a40,255); fill(cx,cy-8,6,5,hv?(ESTILO==0?0xbfe4fa:ACCENT):0x1c2a40,255); line(cx+1,cy-8,cx+5,cy-5,2,c,255); }
+        else { circle(cx,cy,7,c,255); circle(cx,cy,5,hv?(ESTILO==0?0xbfe4fa:a==3?0xc42b1c:ACCENT):0x1c2a40,255); fill(cx-2,cy-9,4,6,hv?(ESTILO==0?0xbfe4fa:0xc42b1c):0x1c2a40,255); fill(cx-1,cy-9,2,8,c,255); }
+        if(ESTILO==0&&!hv) text(x+49,iy+11,L[a],0x08294d);
+        text(x+48,iy+10,L[a],c); }
+}
+static void bloquear(void);
+static int pw_click(void){                                            /* 1 si el clic fue para el menu */
+    int i=pw_item_at(mx,my); pw_mark(); pw_open=0; dirty=1;
+    if(i<0){ int tray=(my<BARH&&mx>gw-48)||(ESTILO==1&&my>=gh-48&&mx>gw-170); return tray; }
+    int a=pw_act(i);
+    if(a==0) open_app(A_SETTINGS);
+    else if(a==1) bloquear();
+    else if(a==2){ if(kngfs_active()) (void)kngfs_save(); kreboot(); }
+    else khalt();
+    return 1;
+}
+
 /* ---------------- marco de las ventanas segun el tema ---------------- */
 static int ctl_hw=-1, ctl_hk=-1;                                   /* boton de ventana bajo el raton (ventana, boton) */
 static void ctl_geom(const Win *w,int k,int *x,int *y,int *cw,int *ch){   /* k: 0 cerrar, 1 maximizar, 2 minimizar */
@@ -514,7 +589,6 @@ static void sha256_hex(const char *m,char *out){                   /* out: 65 by
     sha_blk(h,b);
     static const char HX[]="0123456789abcdef"; for(int j=0;j<32;j++){ unsigned v=(h[j/4]>>(24-(j%4)*8))&255; out[j*2]=HX[v>>4]; out[j*2+1]=HX[v&15]; } out[64]=0;
 }
-static char cu_user[28];                                           /* usuario configurado ("" = sin usuario: entra directo) */
 static void clave_hash(const char *sal,const char *pw,char *out){
     char m[200]=""; cat(m,sizeof m,"kng:"); cat(m,sizeof m,sal); cat(m,sizeof m,":"); cat(m,sizeof m,pw);
     sha256_hex(m,out);

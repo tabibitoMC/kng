@@ -109,7 +109,7 @@ int main(void){
     closeall();
     dock(0); shot("07_acerca");
     closeall();
-    dock(7); { Win *st=&wins[win_top()]; click(st->x+1+20+44+14,st->y+TB+50+54); click(st->x+1+20+112+40,st->y+TB+50+114+30); } shot("08_ajustes_cambio");
+    dock(7); { Win *st=&wins[win_top()]; click(st->x+1+SBW+20+44+14,st->y+TB+SOY+54); click(st->x+1+SBW+20+96+40,st->y+TB+SOY+114+25); } shot("08_ajustes_cambio");
     closeall();
     /* buscador */
     dock(1);
@@ -169,7 +169,7 @@ int main(void){
       closeall();
       dock(4); SC(0x27); SC(0xA7); SC(0x1E); SC(0x9E); { Win *n=&wins[win_top()]; if(n->nlen!=3||memcmp(n->note,"\xC3\xB1""a",3)){ puts("FALLO nota ñ"); return 1; } gui_key('\b'); gui_key('\b'); if(n->nlen!=0){ puts("FALLO borrar ñ"); return 1; } } closeall();
       kbd_set_layout(KBD_US);
-      dock(7); { Win *st=&wins[win_top()]; click(st->x+1+170+60,st->y+TB+50+322+13); if(kbd_layout()!=KBD_LATAM){ puts("FALLO boton teclado"); return 1; } } shot("20_ajustes_teclado"); closeall();
+      dock(7); { Win *st=&wins[win_top()]; click(st->x+1+SBW+170+60,st->y+TB+SOY+322+13); if(kbd_layout()!=KBD_LATAM){ puts("FALLO boton teclado"); return 1; } } shot("20_ajustes_teclado"); closeall();
       kbd_set_layout(KBD_US); { char kv[16]; cfg_get("teclado",kv,sizeof kv); kbd_set_layout(layout_from_name(kv)); if(kbd_layout()!=KBD_LATAM){ puts("FALLO leer cfg"); return 1; } }
       gui_panic("Falta de pagina","eip",0x1234abcdULL,0x2,0xdeadbeefULL,1); shot("21_panic"); gui_force_redraw(); puts("TECLADO GUI OK"); }
     /* escritorio lleno */
@@ -181,8 +181,9 @@ int main(void){
         { char v[8]; cfg_get("tema",v,sizeof v); if(v[0]!='0'+t){ puts("FALLO guardar tema"); return 1; } }
         snprintf(n,sizeof n,"29_tema%d_escritorio",t); shot(n);
         dock(2); dock(3); typestr("ls /\\"); dock(7);
-        { Win *st=&wins[win_top()]; click(st->x+1+12+1*120+58,st->y+TB+24); }
+        { Win *st=&wins[win_top()]; click(st->x+1+80,st->y+TB+86+1*40+18); }
         snprintf(n,sizeof n,"30_tema%d_ventanas",t); shot(n);
+        pw_open=1; pw_hov=1; dirty=1; snprintf(n,sizeof n,"34_tema%d_apagar",t); shot(n); pw_open=0; pw_hov=-1; dirty=1;
         { int x,y; dock_base_center(2,&x,&y); gui_mouse_abs(x,y,0); gui_frame(); snprintf(n,sizeof n,"31_tema%d_dock",t); shot(n); gui_mouse_abs(500,300,0); }
         /* minimizar y volver */
         { int top=win_top(); Win *w=&wins[top]; int x,y,cw,ch; ctl_geom(w,2,&x,&y,&cw,&ch); click(x+cw/2,y+ch/2); if(!w->minim){ puts("FALLO minimizar"); return 1; }
@@ -197,8 +198,8 @@ int main(void){
     /* usuario y contrasena */
     tema_aplicar(0,1);
     dock(7); { Win *st=&wins[win_top()]; int ox=st->x+1, oy=st->y+TB;
-      click(ox+12+4*120+58,oy+24); shot("40_cuenta_vacia");
-      click(ox+20+100,oy+50+112+15); typestr("nick\\clave1\\clave1"); shot("41_cuenta_escribiendo"); gui_key('\n');
+      click(ox+80,oy+86+4*40+18); shot("40_cuenta_vacia");
+      click(ox+SBW+20+100,oy+SOY+112+15); typestr("nick\\clave1\\clave1"); shot("41_cuenta_escribiendo"); gui_key('\n');
       if(!cu_user[0]){ puts(cf_msg); puts("FALLO crear usuario"); return 1; }
       shot("42_cuenta_creada"); }
     closeall();
@@ -208,8 +209,8 @@ int main(void){
     dock(3); if(nord){ puts("FALLO el bloqueo deja abrir programas"); return 1; }
     typestr("mala\\"); T+=5; shot("44_bloqueo_error"); if(!bloqueado){ puts("FALLO contrasena mala"); return 1; }
     T+=60; typestr("clave1\\"); if(bloqueado){ puts("FALLO contrasena buena"); return 1; } T+=8; shot("45_desbloqueando"); T+=40; shot("46_desbloqueado");
-    dock(7); { Win *st=&wins[win_top()]; int ox=st->x+1, oy=st->y+TB; click(ox+12+4*120+58,oy+24);
-      click(ox+20+100,oy+50+196+15); typestr("clave1"); click(ox+200+100,oy+50+300+15); if(cu_user[0]){ puts(cf_msg); puts("FALLO quitar usuario"); return 1; } shot("47_cuenta_quitada"); }
+    dock(7); { Win *st=&wins[win_top()]; int ox=st->x+1, oy=st->y+TB; click(ox+80,oy+86+4*40+18);
+      click(ox+SBW+20+100,oy+SOY+196+15); typestr("clave1"); click(ox+SBW+200+100,oy+SOY+300+15); if(cu_user[0]){ puts(cf_msg); puts("FALLO quitar usuario"); return 1; } shot("47_cuenta_quitada"); }
     closeall();
     puts("SESION OK");
     /* programas de Linux: los .desktop instalados aparecen solos */

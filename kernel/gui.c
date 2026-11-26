@@ -17,6 +17,8 @@ enum { A_ABOUT, A_BROWSER, A_FILES, A_TERM, A_SETTINGS, A_VIEWER, A_NOTES, A_CAL
 #define KNGFS_CAP (2*1024*1024)
 #define MAXW 24
 #define TB 30
+#define SBW 176                                                            /* Ajustes: ancho del menu lateral */
+#define SOY 56                                                             /* Ajustes: donde empieza el contenido */
 static int bar_h=28;                                               /* alto de la barra superior (0 en el estilo Windows 11) */
 #define BARH bar_h
 #define TW 80
@@ -44,7 +46,7 @@ static Win wins[MAXW];
 static void chrome_draw(Win *w,int f); static void chrome_title(Win *w,int f); static void tema_card(int i,int x,int y,int sel);
 static void cuenta_draw(int cx,int oy,int cw); static void cuenta_click(int lx,int y); static int cuenta_key(int c);
 static void tema_aplicar(int t,int guardar); static void dmark_bars(void); static void dmark_dock(void);
-static void xw_draw(Win *w); static void xw_shadow(Win *w,int f); static void xw_corners(const Win *w,int restore); static void launch_set(const char *nm); static void glass_panel(int x,int y,int w,int h,int r); static void aero_clock(int cx,int cy,int R);
+static void set_sidebar(int cx,int cy,int ch); static int set_item_at(int ly); static void xw_draw(Win *w); static void xw_shadow(Win *w,int f); static void xw_corners(const Win *w,int restore); static void launch_set(const char *nm); static void glass_panel(int x,int y,int w,int h,int r); static void aero_clock(int cx,int cy,int R);
 static char ed_suf[96]; static const char *ed_owner;                   /* extension que se conserva al reescribir un nombre (se muestra y se agrega al final) */
 static void fm_edit_done(char *buf,int *len,int max);
 static int open_new;                                               /* open_app: crear otra ventana aunque ya haya una del mismo tipo */
@@ -318,7 +320,7 @@ static Win *open_app(int type){
     case A_FILES:    w->w=660; w->h=440; set_title(w,"Archivos"); w->dir=fs_root(); break;
     case A_TERM:     w->w=TW*8+2; w->h=TH*16+TB+1; set_title(w,"Terminal"); w->cwd=fs_root();
                      memset(w->grid,' ',sizeof w->grid); tp(w,"Königreich OS - terminal. Escribe 'help'.\n"); term_prompt(w); break;
-    case A_SETTINGS: w->w=620; w->h=560; set_title(w,"Ajustes"); break;
+    case A_SETTINGS: w->w=SBW+622; w->h=560; set_title(w,"Ajustes"); break;
     case A_VIEWER:   w->w=600; w->h=420; set_title(w,"Visor de texto"); break;
     case A_NOTES:    w->w=520; w->h=400; set_title(w,"Notas"); break;
     case A_CALC:     w->w=272; w->h=TB+1+316; set_title(w,"Calculadora"); w->cdec=-1; break;
@@ -1364,9 +1366,9 @@ static void draw_window(int wi,int focused){
             text(cx+cw/2-text_w("Espacio para reintentar")/2,oy+SGH*SCELL/2+10,"Espacio para reintentar",C_DIM); }
         break; }
     case A_SETTINGS:{
-        static const char *TABS[5]={"General","Pantalla","Almacenamiento","Sistema","Cuenta"};
-        for(int i=0;i<5;i++) button(cx+12+i*120,cy+10,116,28,TABS[i],i==set_tab);
-        int oy=cy+50;
+        set_sidebar(cx,cy,ch); cx+=SBW; cw-=SBW;                          /* menu lateral (como Windows 11 / macOS / Panel de control) */
+        { static const char *TT[5]={"General","Pantalla","Almacenamiento","Sistema","Cuenta"}; text_scaled(cx+20,cy+14,TT[set_tab],C_TXT,26); }
+        int oy=cy+SOY;
         if(set_tab==0){
             text_bold(cx+20,oy+14,"Color de acento",C_TXT);
             for(int i=-1;i<6;i++){ int sx=cx+20+(i+1)*44+14, sy=oy+54; if(i==acc_i) circle(sx,sy,18,0xffffff,255); circle(sx,sy,14,i<0?TM->acento:ACC[i],255); if(i<0) circle(sx,sy,5,0xffffff,200); }
@@ -1618,14 +1620,14 @@ static void render(void){
     } }
     for(int k=0;k<nord;k++){ Win *w=&wins[order[k]]; if(w->type==A_XWIN&&w->xpop&&rect_hit(w->x,w->y,w->w,w->h,x0,y0,rw,rh)) draw_window(order[k],0); }   /* menus de Linux: siempre encima */
     ghosts_draw();
-    draw_topbar(); draw_dock(); launch_draw();
+    draw_topbar(); draw_dock(); launch_draw(); pw_draw();
     if(fd_on){ char g[FS_NAME+4]; k_strcpy(g,fd_name,sizeof g); g[26]=0; int tw=text_w(g)+44;                    /* lo que se esta arrastrando */
         rrect(fd_gx,fd_gy,tw,28,7,0x05060c,200); rrect(fd_gx,fd_gy,tw,28,7,ACCENT,90); draw_doc(fd_gx+8,fd_gy+3); text(fd_gx+34,fd_gy+6,g,0xffffff); }
     mu_draw();
 listo:
     gfx_present_rect(x0,y0,rw,rh);
     clip_base(0,0,gw,gh);
-    cur_x=-100; cursor_draw(); dirty=0; cursor_dirty=0;
+    cursor_restore(); cursor_draw(); dirty=0; cursor_dirty=0;          /* borrar el cursor viejo aunque quede fuera del rectangulo redibujado (dejaba rastro) */
 }
 static int w_files_editing(void){ int top=win_top(); if(top>=0&&wins[top].type==A_FILES&&wins[top].editing){ static int p; int q=(kticks()/50)&1; if(q!=p){ p=q; dwin(&wins[top]); } } return dren>=0; }
 void gui_frame(void){
@@ -1676,8 +1678,9 @@ static void files_click(Win *w,int lx,int ly,int cw,int ch){
     fd_cand=1; fd_on=0; fd_sx=mx; fd_sy=my; fd_win=wi; fs_path(f,fd_path,sizeof fd_path); k_strcpy(fd_name,f->name,sizeof fd_name);
 }
 static void settings_click(int lx,int ly,int cw,int ch){
-    for(int i=0;i<5;i++) if(in_rect(lx,ly,12+i*120,10,116,28)){ set_tab=i; fmt_confirm=0; cf_sel=-1; cf_msg[0]=0; dirty=1; return; }
-    int y=ly-50;
+    if(lx<SBW){ int i=set_item_at(ly); if(i>=0&&i!=set_tab){ set_tab=i; fmt_confirm=0; cf_sel=-1; cf_msg[0]=0; dirty=1; } return; }
+    lx-=SBW; cw-=SBW;
+    int y=ly-SOY;
     if(set_tab==0){
         for(int i=-1;i<6;i++){ int dx=lx-(20+(i+1)*44+14), dy=y-54; if(dx*dx+dy*dy<=18*18){ char b[4]=""; acc_i=i; icache_ok=0; cat_int(b,4,i); cfg_set("acento",b); dirty=1; return; } }
         for(int i=0;i<NFONDOS;i++) if(in_rect(lx,y,20+i*96,114,80,50)){ if(wall_i!=i){ char b[4]=""; wall_i=i; build_wall(); cat_int(b,4,i); cfg_set("fondo",b); } dirty=1; return; }
@@ -1747,6 +1750,7 @@ static void app_click(Win *w,int lx,int ly){
 }
 static void on_press(void){
     if(bloqueado){ lock_press(); return; }
+    if(pw_open&&pw_click()) return;
     if(mu_open){ int i=mu_item_at(mx,my); mu_open=0; dirty=1; if(i>=0) mu_exec(i); return; }
     if(dren>=0) dren_commit();
     int d=dock_hit(mx,my);
@@ -1755,8 +1759,8 @@ static void on_press(void){
         dirty=1; return; }
     if(d>=0){ int had=0; for(int k=0;k<nord;k++) if(wins[order[k]].type==DOCK_APP[d]) had=1;
         open_app(DOCK_APP[d]); if(!had&&ESTILO!=1){ bnc_i=d; bnc_t=kticks(); } dirty=1; return; }
-    if(d==-2){ if(ESTILO==1&&mx>gw-170) open_app(A_SETTINGS); return; }
-    if(my<BARH){ if(mx>gw-48) open_app(A_SETTINGS); return; }
+    if(d==-2){ if(ESTILO==1&&mx>gw-170){ pw_open=!pw_open; pw_mark(); } return; }
+    if(my<BARH){ if(mx>gw-48){ pw_open=!pw_open; pw_mark(); } return; }
     for(int k=nord-1;k>=0;k--){
         int wi=order[k]; Win *w=&wins[wi]; if(w->minim) continue;
         int rs=win_resizable(w)&&!w->maxed;
@@ -1862,6 +1866,7 @@ static void mouse_set(int x,int y,int b){
         if(released){ if(fd_on) fm_drop(); fd_cand=0; fd_on=0; fd_gx=-1000; dirty=1; }
     }
     if(mu_open){ int h=mu_item_at(mx,my); if(h!=mu_hover){ mu_hover=h; dmark(mu_x-6,mu_y-6,mu_w+12,mu_h+12); } }
+    if(pw_open){ int h=pw_item_at(mx,my); if(h!=pw_hov){ pw_hov=h; pw_mark(); } }
     if(pressed||rpressed){ char d[48]="[raton] "; cat_int(d,48,mx); cat(d,48,","); cat_int(d,48,my); cat(d,48,pressed?" izq\n":" der\n"); kserial_puts(d); }   /* para las pruebas automaticas */
     { int xh=xw_mouse(b,omb); if(xh){ pressed=0; rpressed=0; } }      /* clic dentro de un programa de Linux */
     if(pressed) on_press();
