@@ -166,7 +166,7 @@ static struct gdesc g_rxd[G_NRX] __attribute__((aligned(256)));
 static struct gdesc g_txd[G_NTX] __attribute__((aligned(256)));
 static u8 g_rxb[G_NRX][2048] __attribute__((aligned(16)));
 static u8 g_txb[G_NTX][2048] __attribute__((aligned(16)));
-static u16 g_io; static int g_rx_cur, g_tx_cur; static unsigned n_tx, n_txfail, n_rx, n_rxbad, n_dhcp;   /* contadores para 'red' */
+static u16 g_io; static int g_rx_cur, g_tx_cur; static unsigned g_xid; static unsigned n_tx, n_txfail, n_rx, n_rxbad, n_dhcp;   /* contadores para 'red' */
 static int g_send(const u8 *f,int n){
     volatile struct gdesc *d=&g_txd[g_tx_cur];
     int t=200000; while((d->cmd&0x80000000u) && --t) __asm__ volatile("" ::: "memory");
@@ -194,8 +194,25 @@ static int g_recv(u8 *buf,int max){
 }
 static int g_link(void){ return (io_i8((u16)(g_io+0x6C))&2)!=0; }
 static const struct nicdrv g_drv={"Realtek RTL8111/8168",g_send,g_recv,g_link};
+/* 8111G/H y posteriores (los de casi todas las placas actuales): al encender, el firmware de la placa puede dejar el
+ * chip en modo "fuera de banda" (OOB) y la entrada de datos cerrada (RXDV gated): asi el enlace sube pero no llega nada.
+ * Se hace lo mismo que el driver r8169 de Linux (rtl_hw_init_8168g + rtl_disable_rxdvgate). */
+static void g_ocp_w(u16 io,u32 reg,u32 v){ io_o32((u16)(io+0xB0),0x80000000u|(reg<<15)|v); }
+static u32 g_ocp_r(u16 io,u32 reg){ io_o32((u16)(io+0xB0),reg<<15); return io_i32((u16)(io+0xB0))&0xFFFF; }
+static void g_wait_ll(u16 io){ for(int t=0;t<200000&&!(io_i8((u16)(io+0xD3))&0x02);t++); }
+static void g_init_new(u16 io){
+    io_o32((u16)(io+0xF0),io_i32((u16)(io+0xF0))|(1u<<19));          /* cerrar la entrada mientras se prepara */
+    for(int t=0;t<200000&&!(io_i32((u16)(io+0x40))&(1u<<11));t++);     /* cola de salida vacia */
+    io_o8((u16)(io+0x37),(u8)(io_i8((u16)(io+0x37))&~0x0C));
+    for(volatile int z=0;z<200000;z++);
+    io_o8((u16)(io+0xD3),(u8)(io_i8((u16)(io+0xD3))&~0x80));        /* quitar NOW_IS_OOB: el sistema manda, no el firmware */
+    g_ocp_w(io,0xE8DE,g_ocp_r(io,0xE8DE)&~(1u<<14)); g_wait_ll(io);
+    g_ocp_w(io,0xE8DE,g_ocp_r(io,0xE8DE)|(1u<<15)); g_wait_ll(io);
+}
 static int g_init(u16 io){
     g_io=io;
+    g_xid=(io_i32((u16)(io+0x40))>>20)&0xFCF;                       /* version del chip (como Linux) */
+    if(g_xid>=0x4C0) g_init_new(io);
     io_o8((u16)(io+0x37),0x10); int t=200000; while((io_i8((u16)(io+0x37))&0x10) && --t);
     if(!t) return -1;
     for(int i=0;i<6;i++) mac[i]=io_i8((u16)(io+i));
@@ -216,6 +233,7 @@ static int g_init(u16 io){
     io_o32((u16)(io+0xE8),0); io_o32((u16)(io+0xE4),(u32)(uintptr_t)g_rxd);
     io_o16((u16)(io+0x3C),0);                                     /* sin interrupciones: se atiende por sondeo */
     io_o16((u16)(io+0x3E),0xFFFF);
+    if(g_xid>=0x4C0) io_o32((u16)(io+0xF0),io_i32((u16)(io+0xF0))&~(1u<<19));   /* abrir la entrada de datos (RXDV) */
     io_o8((u16)(io+0x37),0x0C);                                   /* recibir y transmitir */
     io_o32((u16)(io+0x40),0x03000700u);                           /* los 8111 nuevos piden la configuracion con Rx/Tx ya encendidos */
     io_o32((u16)(io+0x44),0x0000E70Fu);
@@ -881,7 +899,7 @@ int net_cmd(char *l){
         kprintf("Tarjeta: %s  MAC %s  enlace %s\n",nic_desc,m,nic->link&&nic->link()?"activo":"sin senal");
         if(net_st==2){ kprintf("IP %s  mascara %s  puerta %s  DNS %s%s\n",ipstr(my_ip),ipstr(mask),ipstr(gw),ipstr(dns_ip),ip_static?"  (configuracion de reserva: no hubo DHCP; se sigue intentando, o escribe: red renovar)":""); }
         else kprintf("Esperando respuesta DHCP...\n");
-        if(nic==&g_drv) kprintf("Paquetes: enviados %u (fallos %u), recibidos %u (malos %u), respuestas DHCP %u, estado del chip %x\n",n_tx,n_txfail,n_rx,n_rxbad,n_dhcp,(unsigned)io_i16((u16)(g_io+0x3E)));
+        if(nic==&g_drv) kprintf("Paquetes: enviados %u (fallos %u), recibidos %u (malos %u), respuestas DHCP %u | chip %x estado %x misc %x mcu %x\n",n_tx,n_txfail,n_rx,n_rxbad,n_dhcp,g_xid,(unsigned)io_i16((u16)(g_io+0x3E)),io_i32((u16)(g_io+0xF0)),(unsigned)io_i8((u16)(g_io+0xD3)));
         else kprintf("Respuestas DHCP recibidas: %u\n",n_dhcp);
         return 1;
     }
