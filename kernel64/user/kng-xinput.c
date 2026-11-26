@@ -118,9 +118,10 @@ static void get_icon(XV *v){                                       /* el tamano 
     uint8_t hd[8]; put32(hd,w); put32(hd+4,h); wr_all(fd,hd,8); wr_all(fd,d+best*4+8,(size_t)w*h*4); close(fd); rename(t,p);
     v->icon_try=99;
 }
-static unsigned nscan;
+static unsigned nscan; static int wm_on; static void wm_stop(void);
 static void scan(void){
     nscan++;
+    if(wm_on&&access("/tmp/.kng-sin-gestor",F_OK)==0) wm_stop();      /* un programa fallo con el gestor: seguir sin el */
     uint8_t q[8]; q[0]=15; q[1]=0; put16(q+2,2); put32(q+4,root_win); req(q,8);
     size_t l; uint8_t *r=reply(seq,&l); if(!r) return;
     int nc=le16(r+16); if(nc>1024) nc=1024;
@@ -151,7 +152,7 @@ static void scan(void){
     static char out[sizeof last_out]; int o=snprintf(out,sizeof out,"kngx 1\n");
     for(int k=0;k<no&&o<(int)sizeof out-200;k++){ XV *v=&vs[order[k]];
         if(v->ovr==9) continue;
-        o+=snprintf(out+o,sizeof out-o,"%x %d %d %d %d %d %s\n",v->id,v->x,v->y,v->w,v->h,v->ovr?1:v->csd?2:0,v->ovr?"":v->title); }
+        o+=snprintf(out+o,sizeof out-o,"%x %d %d %d %d %d %s\n",v->id,v->x,v->y,v->w,v->h,v->ovr?1:(v->csd&&wm_on)?2:0,v->ovr?"":v->title); }
     if(strcmp(out,last_out)){
         char t[128]; snprintf(t,sizeof t,"%s.tmp",list_path);
         int fd=open(t,O_WRONLY|O_CREAT|O_TRUNC,0644); if(fd>=0){ wr_all(fd,out,(size_t)o); close(fd); rename(t,list_path); strcpy(last_out,out); } }
@@ -194,7 +195,11 @@ static void report(char kind,uint32_t id,int arg){                 /* peticion p
     char t[128]; snprintf(t,sizeof t,"%s.tmp",req_path); int fd=open(t,O_WRONLY|O_CREAT|O_TRUNC,0644); if(fd<0) return;
     for(int i=0;i<nreq;i++){ wr_all(fd,reqs[i],strlen(reqs[i])); } close(fd); rename(t,req_path);
 }
-static int wm_on;
+static void wm_stop(void){
+    uint8_t q[16]; memset(q,0,sizeof q); q[0]=2; put16(q+2,4); put32(q+4,root_win); put32(q+8,1u<<11); put32(q+12,0); req(q,16);
+    uint8_t d[12]; memset(d,0,sizeof d); d[0]=19; put16(d+2,3); put32(d+4,root_win); put32(d+8,A_CHECK); req(d,12); put32(d+8,A_SUPPORTED); req(d,12);
+    wm_on=0; printf("kng-xinput: gestor de ventanas apagado\n"); fflush(stdout);
+}
 static void wm_start(void){
     uint8_t q[16]; memset(q,0,sizeof q); q[0]=2; put16(q+2,4); put32(q+4,root_win); put32(q+8,1u<<11); put32(q+12,(1u<<19)|(1u<<20));   /* SubstructureNotify|Redirect */
     req(q,16);

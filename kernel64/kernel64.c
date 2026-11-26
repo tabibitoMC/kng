@@ -351,7 +351,7 @@ static void x_start(void){
     gw&=~7; gh&=~7; if(gw<640) gw=640; if(gh<480) gh=480; x_gw=gw; x_gh=gh;
     char geo[40]; { int n=0; int v1=gw; char t[12]; int k=0; while(v1){ t[k++]=(char)('0'+v1%10); v1/=10; } while(k) geo[n++]=t[--k]; geo[n++]='x'; v1=gh; k=0; while(v1){ t[k++]=(char)('0'+v1%10); v1/=10; } while(k) geo[n++]=t[--k]; const char *e="x24"; while(*e) geo[n++]=*e++; geo[n]=0; }
     char *a[16]; int n=0; a[n++]="Xvfb"; a[n++]=":0"; a[n++]="-screen"; a[n++]="0"; a[n++]=geo; a[n++]="-fbdir"; a[n++]="/var/lib/xvfb"; a[n++]="-ac"; a[n++]="-nolisten"; a[n++]="tcp";
-    { FsNode *tm=fs_find(fs_root(),"tmp"); if(!tm) tm=fs_mkdir(fs_root(),"tmp"); if(tm) fs_create(tm,".kng-sin-wm","1\n",2); }      /* abrir-x: sin matchbox, kng hace de gestor de ventanas */
+    { FsNode *tm=fs_find(fs_root(),"tmp"); if(!tm) tm=fs_mkdir(fs_root(),"tmp"); if(tm){ fs_create(tm,".kng-sin-wm","1\n",2); FsNode *o=fs_find(tm,".kng-sin-gestor"); if(o) fs_remove(o); } }      /* abrir-x: sin matchbox, kng hace de gestor de ventanas */
     kprintf("pantalla: iniciando el servidor X (%s)...\n",geo);
     proc_exec(xvfb,n,a,1);
     if(find_program("kng-xinput",xin,sizeof xin)){ char *b[2]={"kng-xinput",0}; proc_exec(xin,1,b,1); }

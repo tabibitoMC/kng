@@ -7,5 +7,6 @@ for intento in 1 2; do
   c=$?
   [ $c -eq 0 ] && exit 0
   echo "[kng] el navegador se cerro con codigo $c; se vuelve a abrir" >&2
+  [ $intento -eq 1 ] && { touch /tmp/.kng-sin-gestor; sleep 1; }   # segundo intento sin el gestor de ventanas de kng (con la barra de kng)
 done
 exit $c
