@@ -1,0 +1,40 @@
+raton 600 500
+clic
+raton 677 724
+clic
+esperar 1
+raton 311 106
+clic
+esperar 1
+captura 01-aero-pantalla
+raton 427 410
+clic
+esperar 2
+captura 02-windows11
+raton 623 410
+clic
+esperar 2
+captura 03-mac
+raton 400 735
+esperar 1
+captura 04-mac-dock-lupa
+raton 671 106
+clic
+raton 400 410
+clic
+escribir nick
+tecla tab
+escribir abc
+tecla tab
+escribir abc
+tecla ret
+esperar 3
+captura 05-cuenta-creada
+raton 200 390
+clic
+esperar 2
+captura 06-bloqueada
+escribir abc
+tecla ret
+esperar 2
+captura 07-desbloqueada
