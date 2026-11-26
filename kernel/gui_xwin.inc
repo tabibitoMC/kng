@@ -1,3 +1,20 @@
+static void xw_requests(void);
+/* aviso "Abriendo ..." mientras un programa de Linux tarda en mostrar su ventana */
+static char launch_nm[40]; static uint32_t launch_t;
+static void launch_mark(void){ dmark(gw/2-260,gh-dock_res()-70,520,60); }
+static void launch_set(const char *nm){ k_strcpy(launch_nm,nm,sizeof launch_nm); launch_t=kticks(); if(!launch_t) launch_t=1; launch_mark(); }
+static void launch_done(void){ if(launch_t){ launch_mark(); launch_t=0; } }
+static void launch_tick(uint32_t t){ if(!launch_t) return; if(t-launch_t>12000){ launch_done(); return; } static uint32_t nx; if((int)(t-nx)>=0){ nx=t+6; launch_mark(); } }
+static void launch_draw(void){
+    if(!launch_t) return;
+    char b[90]="Abriendo "; cat(b,sizeof b,launch_nm); cat(b,sizeof b,"...");
+    const char *sub="La primera vez puede tardar 1 o 2 minutos";
+    int w=k_max(text_w(b),text_w(sub))+80, x=gw/2-w/2, y=gh-dock_res()-66;
+    glass_panel(x,y,w,52,14);
+    int cx=x+28, cy=y+26; uint32_t t=kticks();
+    for(int i=0;i<8;i++){ int a=i*32+(int)(t*6); circle(cx+isin(a)*11/1024,cy-icos(a)*11/1024,2+(i>5),0xffffff,40+i*27); }   /* ruedita */
+    text_bold(x+52,y+9,b,0xffffff); text(x+52,y+28,sub,ESTILO==0?0xe6f4ff:C_DIM);
+}
 /* gui_xwin.inc — programas de Linux en ventanas propias de kng ("sin pantalla X").
  * kng-xinput (dentro de Debian) escribe en /tmp/.kng-xwin la lista de ventanas visibles del servidor X:
  *   "kngx 1" y luego una linea por ventana, de abajo hacia arriba:  id x y ancho alto emergente titulo
@@ -42,7 +59,16 @@ static uint32_t xw_hash(const Win *w){                                /* muestra
     return h;
 }
 static void xw_content(const Win *w,int *cx,int *cy,int *cw,int *ch){
-    if(w->xpop){ *cx=w->x; *cy=w->y; *cw=w->w; *ch=w->h; } else { *cx=w->x+1; *cy=w->y+TB; *cw=w->w-2; *ch=w->h-TB-1; }
+    if(w->xpop||w->xcsd){ *cx=w->x; *cy=w->y; *cw=w->w; *ch=w->h; } else { *cx=w->x+1; *cy=w->y+TB; *cw=w->w-2; *ch=w->h-TB-1; }
+}
+static void xw_shadow(Win *w,int f){                              /* sombra de las ventanas con marco propio */
+    int x=w->x, y=w->y, W=w->w, H=w->h, n=f?4:3, al=f?20:12;
+    for(int bnd=0;bnd<4;bnd++){
+        if(bnd==0) clip_set(x-10,y-6,W+20,6); else if(bnd==1) clip_set(x-10,y+H,W+20,16);
+        else if(bnd==2) clip_set(x-10,y,10,H); else clip_set(x+W,y,10,H);
+        for(int i=n;i>=1;i--) rrect(x-i*2,y-i*2+5,W+4*i,H+4*i,6+i*2,0x000000,al);
+        if(ESTILO==0&&f) rrect(x-2,y-2,W+4,H+4,6,0xbfe6ff,50); }
+    clip_reset();
 }
 static void xw_draw(Win *w){
     int cx,cy,cw,ch; xw_content(w,&cx,&cy,&cw,&ch);
@@ -83,23 +109,28 @@ static void xw_sync(void){
         Win *w;
         if(wi<0){
             open_new=1; w=open_app(A_XWIN); open_new=0; if(!w) continue;
-            wi=(int)(w-wins); w->xid=id; w->xpop=v[4];
+            wi=(int)(w-wins); w->xid=id; w->xpop=v[4]==1; w->xcsd=v[4]==2;
+            if(!w->xpop) launch_done();
             w->xgx=v[0]; w->xgy=v[1]; w->xgw=v[2]; w->xgh=v[3];
             if(w->xpop){ w->aopen=0; w->x=v[0]; w->y=v[1]; w->w=v[2]; w->h=v[3]; }
             else {
                 set_title(w,title[0]?title:"Programa de Linux");
-                int maxw=gw-24, maxh=gh-BARH-dock_res()-TB-14, cw=k_min(v[2],maxw), ch=k_min(v[3],maxh);
-                int placed=v[0]>=1&&v[1]>=BARH+TB&&v[0]+cw<=gw&&v[1]+ch<=gh-dock_res();
-                if(placed){ w->x=v[0]-1; w->y=v[1]-TB; }
-                else { w->x=k_max(0,(gw-cw-2)/2+(nord%4)*24-36); w->y=k_max(BARH,BARH+12+(nord%4)*24); }
-                w->w=cw+2; w->h=ch+TB+1;
-                xw_conf(w,w->x+1,w->y+TB,cw,ch); xw_icon_load(w);
+                int fw=w->xcsd?0:2, fh=w->xcsd?0:TB+1, ox=w->xcsd?0:1, oy=w->xcsd?0:TB;   /* marco de kng (no en los que traen el suyo) */
+                int maxw=gw-24, maxh=gh-BARH-dock_res()-fh-14, cw=k_min(v[2],maxw), ch=k_min(v[3],maxh);
+                int placed=v[0]>=ox&&v[1]>=BARH+oy&&v[0]+cw<=gw&&v[1]+ch<=gh-dock_res();
+                if(placed){ w->x=v[0]-ox; w->y=v[1]-oy; }
+                else { w->x=k_max(0,(gw-cw-fw)/2+(nord%4)*24-36); w->y=k_max(BARH,BARH+12+(nord%4)*24); }
+                w->w=cw+fw; w->h=ch+fh;
+                xw_conf(w,w->x+ox,w->y+oy,cw,ch); xw_icon_load(w);
             }
             dirty=1;
         } else {
             w=&wins[wi];
             if(w->xgx!=v[0]||w->xgy!=v[1]||w->xgw!=v[2]||w->xgh!=v[3]){ dwin(w); w->xgx=v[0]; w->xgy=v[1]; w->xgw=v[2]; w->xgh=v[3]; dwin(w);
                 if(w->xpop){ w->x=v[0]; w->y=v[1]; w->w=v[2]; w->h=v[3]; dwin(w); } }
+            if(!w->xpop&&(v[4]==2)!=w->xcsd){ dwin(w);                                       /* el programa cambio: con o sin marco propio */
+                if(v[4]==2){ w->x+=1; w->y+=TB; w->w-=2; w->h-=TB+1; } else { w->x-=1; w->y-=TB; w->w+=2; w->h+=TB+1; }
+                w->xcsd=v[4]==2; dwin(w); }
             if(!w->xpop&&title[0]&&k_strcmp(title,w->title)){ set_title(w,title); dwin(w); dmark_bars(); }
             if(!w->xpop) xw_icon_load(w);
         }
@@ -113,6 +144,8 @@ static void xw_sync(void){
 static void xw_tick(uint32_t t){
     static uint32_t next, nexth;
     if((int)(t-next)>=0){ next=t+8; xw_sync(); }
+    { static uint32_t nr; if((int)(t-nr)>=0){ nr=t+2; xw_requests(); } }
+    launch_tick(t);
     int top=win_top();
     if(top!=xw_top_last){ xw_top_last=top; if(top>=0&&wins[top].type==A_XWIN&&!wins[top].xpop) xw_send(2,wins[top].xid); }
     int hash_now=(int)(t-nexth)>=0; if(hash_now) nexth=t+3;
@@ -120,20 +153,48 @@ static void xw_tick(uint32_t t){
         if(hash_now&&!w->minim){ uint32_t hh=xw_hash(w); if(hh!=w->xhash){ w->xhash=hh; int cx,cy,cw,ch; xw_content(w,&cx,&cy,&cw,&ch); dmark(cx,cy,cw,ch); } }
         if(w->xpop) continue;
         int dx,dy,dw,dh;
-        if(w->minim){ dx=-w->w-60; dy=w->y+TB; dw=w->w-2; dh=w->h-TB-1; }        /* minimizada: fuera de la pantalla de X */
-        else { dx=w->x+1; dy=w->y+TB; dw=w->w-2; dh=w->h-TB-1; }
+        int ox=w->xcsd?0:1, oy=w->xcsd?0:TB, fw=w->xcsd?0:2, fh=w->xcsd?0:TB+1;
+        if(w->minim){ dx=-w->w-60; dy=w->y+oy; dw=w->w-fw; dh=w->h-fh; }        /* minimizada: fuera de la pantalla de X */
+        else { dx=w->x+ox; dy=w->y+oy; dw=w->w-fw; dh=w->h-fh; }
+        if(w->maxed!=w->xmaxsent){ w->xmaxsent=w->maxed; kinput_event(0x31,0,w->maxed); xw_send(5,w->xid); }   /* que el programa sepa si esta maximizado */
         int busy=(drag==wi||rsz==wi);
         if(dx!=w->xsx||dy!=w->xsy||dw!=w->xsw||dh!=w->xsh){ if(!busy||(int)(t-w->xsent)>=4) xw_conf(w,dx,dy,dw,dh); }
         else if(!busy&&!w->minim&&(int)(t-w->xsent)>60&&(w->xgx!=w->xsx||w->xgy!=w->xsy||w->xgw!=w->xsw||w->xgh!=w->xsh)){    /* el programa se movio o cambio solo */
-            dwin(w); w->x=w->xgx-1; w->y=w->xgy-TB; w->w=w->xgw+2; w->h=w->xgh+TB+1; w->xsx=w->xgx; w->xsy=w->xgy; w->xsw=w->xgw; w->xsh=w->xgh; dwin(w); }
+            dwin(w); w->x=w->xgx-ox; w->y=w->xgy-oy; w->w=w->xgw+fw; w->h=w->xgh+fh; w->xsx=w->xgx; w->xsy=w->xgy; w->xsw=w->xgw; w->xsh=w->xgh; dwin(w); }
     }
+}
+/* peticiones de los programas con marco propio (kng-xinput las deja en /tmp/.kng-xreq) */
+static unsigned xr_last;
+static int xw_find(uint32_t id){ for(int i=0;i<MAXW;i++) if(wins[i].used&&wins[i].type==A_XWIN&&wins[i].xid==id) return i; return -1; }
+static void xw_requests(void){
+    FsNode *f=fs_resolve(fs_root(),"/tmp/.kng-xreq"); if(!f||f->dir||!f->data||!f->size) return;
+    static const char *ld; static int ls; if(f->data==ld&&f->size==ls) return; ld=f->data; ls=f->size;
+    const char *p=f->data, *e=f->data+f->size; unsigned maxn=0;
+    for(const char *q=p;q<e;){ unsigned n=0; while(q<e&&*q>='0'&&*q<='9') n=n*10+(unsigned)(*q++-'0'); if(n>maxn) maxn=n; while(q<e&&*q!='\n') q++; q++; }
+    if(maxn<xr_last) xr_last=0;                                       /* kng-xinput se reinicio */
+    while(p<e){ const char *le=p; while(le<e&&*le!='\n') le++;
+        unsigned n=0; const char *q=p; while(q<le&&*q>='0'&&*q<='9') n=n*10+(unsigned)(*q++-'0');
+        if(q<le){ q++; } char kind=q<le?*q:0; q+=2; uint32_t id=0; while(q<le&&*q!=' '){ char c=*q++; id=id*16+(uint32_t)(c>='a'?c-'a'+10:c-'0'); }
+        if(q<le){ q++; } int neg=0, arg=0; if(q<le&&*q=='-'){ neg=1; q++; } while(q<le&&*q>='0'&&*q<='9'){ arg=arg*10+(*q++-'0'); } if(neg) arg=-arg;
+        p=le<e?le+1:le;
+        if(n<=xr_last){ continue; } xr_last=n;
+        int wi=xw_find(id); if(wi<0) continue; Win *w=&wins[wi];
+        if(kind=='m'&&(mb&1)&&!w->minim){                               /* mover o cambiar el tamano con el raton */
+            kinput_event(1,0x110,0); kinput_event(0,0,0); xw_grab=-1; focus(wi);
+            if(arg==8){ if(w->maxed){ win_restore(w); w->x=k_max(0,mx-w->w/2); w->y=k_max(BARH,my-12); } drag=wi; dragdx=mx-w->x; dragdy=my-w->y; }
+            else if(arg>=0&&arg<8&&!w->maxed){ static const int E[8]={1|8,8,2|8,2,2|4,4,1|4,1};
+                rsz=wi; rsz_e=E[arg]; rsz_mx=mx; rsz_my=my; rsz_x=w->x; rsz_y=w->y; rsz_w=w->w; rsz_h=w->h; } }
+        else if(kind=='x'){ if((arg==2&&!w->maxed)||(arg==1&&!w->maxed)) win_set_max(w,0,BARH,gw,gh-BARH-dock_res()); else if(arg!=1&&w->maxed) win_restore(w); }
+        else if(kind=='i'&&!w->minim) win_minimize(wi);
+        else if(kind=='a'){ if(w->minim){ w->minim=0; w->aopen=1; w->at0=kticks(); } focus(wi); }
+        dirty=1; }
 }
 /* raton sobre ventanas X: devuelve la ventana (o -1) y la posicion dentro de la pantalla X */
 static int xw_at(int px,int py,int *xx,int *xy){
     for(int k=nord-1;k>=0;k--){ Win *w=&wins[order[k]]; if(w->type!=A_XWIN||!w->xpop) continue;
         if(in_rect(px,py,w->x,w->y,w->w,w->h)){ *xx=w->xgx+px-w->x; *xy=w->xgy+py-w->y; return order[k]; } }
     for(int k=nord-1;k>=0;k--){ Win *w=&wins[order[k]]; if(w->minim||w->xpop) continue;
-        if(!in_rect(px,py,w->x-5,w->y,w->w+10,w->h+5)) continue;
+        if(!in_rect(px,py,w->x-5,w->y-(w->xcsd?5:0),w->w+10,w->h+(w->xcsd?10:5))) continue;
         if(w->type!=A_XWIN) return -1;
         int cx,cy,cw,ch; xw_content(w,&cx,&cy,&cw,&ch);
         if(!in_rect(px,py,cx,cy,cw,ch)) return -1;

@@ -1,0 +1,10 @@
+# Brave en su propia ventana del escritorio, con su propio marco (pestanas arriba, como en Windows)
+600|actualizar
+2400|instalar brave
+20|pantalla
+@esperar 10
+20|ejecutar /usr/local/bin/abrir-x brave https://example.com &
+@esperar 120
+@captura x1
+@esperar 60
+@captura x2

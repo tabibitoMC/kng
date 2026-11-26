@@ -259,5 +259,25 @@ int main(void){
       fs_create(tm,".kng-xwin","kngx 1\n",7); T+=10; gui_frame(); T+=30; gui_frame();
       for(int i=0;i<MAXW;i++) if(wins[i].used&&wins[i].type==A_XWIN){ puts("FALLO ventana X no se cerro"); return 1; }
       free(x); puts("VENTANAS LINUX OK"); }
+    /* programa con su propio marco (Chromium/Brave): sin barra de kng; pide maximizar, minimizar, mover */
+    { FsNode *tm=fs_find(fs_root(),"tmp"); launch_set("Brave"); T+=20; shot("62_abriendo_brave");
+      const char *l1="kngx 1\n500001 0 0 800 520 2 Brave\n"; fs_create(tm,".kng-xwin",l1,(int)strlen(l1)); nkev=0; T+=10; gui_frame();
+      int bi=-1; for(int i=0;i<MAXW;i++) if(wins[i].used&&wins[i].type==A_XWIN&&wins[i].xid==0x500001) bi=i;
+      if(bi<0||!wins[bi].xcsd||launch_t){ puts("FALLO ventana con marco propio"); return 1; }
+      Win *bw=&wins[bi]; if(bw->xsx!=bw->x||bw->xsy!=bw->y||bw->xsw!=bw->w||bw->xsh!=bw->h){ puts("FALLO tamano sin marco"); return 1; }
+      T+=30; gui_frame(); shot("63_brave_sin_marco");
+      fs_create(tm,".kng-xreq","1 x 500001 2\n",13); T+=3; gui_frame(); if(!bw->maxed){ puts("FALLO maximizar pedido"); return 1; }
+      { int st=0; for(int i=0;i<nkev;i++) if(kev[i][0]==0x30&&kev[i][1]==5) st=1; if(!st){ puts("FALLO estado maximizado a X"); return 1; } }
+      fs_create(tm,".kng-xreq","1 x 500001 2\n2 x 500001 2\n",26); T+=3; gui_frame(); if(bw->maxed){ puts("FALLO restaurar pedido"); return 1; }
+      fs_create(tm,".kng-xreq","1 x 500001 2\n2 x 500001 2\n3 i 500001 0\n",39); T+=3; gui_frame(); if(!bw->minim){ puts("FALLO minimizar pedido"); return 1; }
+      fs_create(tm,".kng-xreq","2 x 500001 2\n3 i 500001 0\n4 a 500001 0\n",39); T+=3; gui_frame(); if(bw->minim){ puts("FALLO activar pedido"); return 1; }
+      T+=30; gui_frame();
+      int ox=bw->x, oy=bw->y; gui_mouse_abs(bw->x+300,bw->y+15,0); gui_frame(); gui_mouse_abs(bw->x+300,bw->y+15,1); gui_frame();
+      fs_create(tm,".kng-xreq","3 i 500001 0\n4 a 500001 0\n5 m 500001 8\n",39); T+=3; gui_frame();
+      gui_mouse_abs(ox+300+70,oy+15+40,1); T+=5; gui_frame(); gui_mouse_abs(ox+300+70,oy+15+40,0); T+=5; gui_frame();
+      if(bw->x!=ox+70||bw->y!=oy+40){ printf("%d,%d -> %d,%d\n",ox,oy,bw->x,bw->y); puts("FALLO mover pedido"); return 1; }
+      T+=40; gui_frame(); shot("64_brave_movida");
+      fs_create(tm,".kng-xwin","kngx 1\n",7); T+=10; gui_frame(); T+=30; gui_frame();
+      puts("MARCO PROPIO OK"); }
     return 0;
 }

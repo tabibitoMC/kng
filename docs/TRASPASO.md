@@ -86,3 +86,9 @@ Estado honesto. "VERIFICADO" = lo ejecuto GitHub Actions arrancando kng en QEMU 
 - Aero: marco grueso de vidrio, resplandor del titulo, botones de gel, menus y widgets de vidrio, reloj de aguja,
   orbe de inicio, reflejo de los iconos en la repisa del dock, burbujas tornasoladas, aurora y destellos.
 - Probado: kng-xinput contra Xvfb real (lista, icono, mover, foco, clic, tecla, cerrar); simulador VENTANAS LINUX OK.
+- (3) kng-xinput es ademas un gestor de ventanas minimo (SubstructureRedirect en la raiz, _NET_SUPPORTED, ventana de
+  comprobacion "kng"): cumple MapRequest/ConfigureRequest y pasa al escritorio por `/tmp/.kng-xreq` las peticiones de
+  _NET_WM_MOVERESIZE, _NET_WM_STATE (maximizar), WM_CHANGE_STATE (minimizar) y _NET_ACTIVE_WINDOW. Las ventanas con
+  _MOTIF_WM_HINTS sin decoraciones (Chromium, Brave, Chrome, GTK con barra propia) salen SIN la barra de kng: se ven
+  como en Windows, con sus pestanas y botones, y esos botones funcionan. Orden 5 = poner/quitar maximizada en _NET_WM_STATE.
+- Aviso "Abriendo <programa>..." con ruedita hasta que aparece su ventana (o 2 minutos).
