@@ -341,7 +341,9 @@ static void chrome_draw(Win *w,int f){
             rrect(x-F,y-F,W+2*F,H+2*F,r+F,0xffffff,f?40:20); }
         clip_reset(); }
     uint32_t bord=f?(e==0?0x1b5a98:e==1?mix(0x3a3a3a,ACCENT,50):0x5c5c5e):TM->border;
-    clip_set(x,y+TB,W,H-TB); rrect(x,y,W,H,r,bord,255); rrect(x+1,y+1,W-2,H-2,r-1,C_BG,255); clip_reset();
+    clip_set(x,y+TB,W,H-TB); rrect(x,y,W,H,r,bord,255);
+    if(e==0) rrect_grad(x+1,y+1,W-2,H-2,r-1,0x1d3a60,0x0e1b31,255); else rrect(x+1,y+1,W-2,H-2,r-1,C_BG,255);      /* Aero: fondo con degradado */
+    clip_reset();
     clip_set(x,y,W,TB);
     int ta=f?TM->ta:TM->ta-40;
     if(e==0){
