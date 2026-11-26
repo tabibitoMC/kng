@@ -199,12 +199,15 @@ static int g_init(u16 io){
     io_o8((u16)(io+0x37),0x10); int t=200000; while((io_i8((u16)(io+0x37))&0x10) && --t);
     if(!t) return -1;
     for(int i=0;i<6;i++) mac[i]=io_i8((u16)(io+i));
+    for(volatile int z=0;z<200000;z++);                            /* el chip tarda un poco tras el reinicio */
     io_o8((u16)(io+0x50),0xC0);                                   /* desbloquear la configuracion */
+    io_o8((u16)(io+0x53),(u8)(io_i8((u16)(io+0x53))&~0x80));        /* Config2: sin ClkReq */
+    io_o8((u16)(io+0x56),(u8)(io_i8((u16)(io+0x56))&~0x01));        /* Config5: sin ASPM (en varias placas la DMA se queda trabada) */
     for(int i=0;i<G_NRX;i++){ g_rxd[i].vlan=0; g_rxd[i].lo=(u32)(uintptr_t)g_rxb[i]; g_rxd[i].hi=0; g_rxd[i].cmd=0x80000000u|(i==G_NRX-1?0x40000000u:0)|2048u; }
     for(int i=0;i<G_NTX;i++){ g_txd[i].cmd=(i==G_NTX-1?0x40000000u:0); g_txd[i].vlan=0; g_txd[i].lo=0; g_txd[i].hi=0; }
     g_rx_cur=g_tx_cur=0;
     io_o16((u16)(io+0xE0),(u16)(io_i16((u16)(io+0xE0))|0x0008));   /* C+: lectura/escritura multiple por PCI */
-    io_o32((u16)(io+0x44),0x0000E70Eu);                           /* RxConfig: propia, multidifusion, difusion; DMA sin limite */
+    io_o32((u16)(io+0x44),0x0000E70Fu);                           /* RxConfig: propia, multidifusion, difusion; DMA sin limite */
     io_o8((u16)(io+0x37),0x04);                                   /* encender el transmisor antes de TxConfig */
     io_o32((u16)(io+0x40),0x03000700u);                           /* TxConfig */
     io_o16((u16)(io+0xDA),2047);                                  /* paquete maximo de recepcion */
@@ -215,7 +218,7 @@ static int g_init(u16 io){
     io_o16((u16)(io+0x3E),0xFFFF);
     io_o8((u16)(io+0x37),0x0C);                                   /* recibir y transmitir */
     io_o32((u16)(io+0x40),0x03000700u);                           /* los 8111 nuevos piden la configuracion con Rx/Tx ya encendidos */
-    io_o32((u16)(io+0x44),0x0000E70Eu);
+    io_o32((u16)(io+0x44),0x0000E70Fu);
     io_o32((u16)(io+0x08),0xFFFFFFFFu); io_o32((u16)(io+0x0C),0xFFFFFFFFu);   /* multidifusion: aceptar todo */
     io_o8((u16)(io+0x50),0x00);
     return 0;
@@ -830,6 +833,8 @@ void net_poll(void){
     for(int i=0;i<NPEND;i++) if(pq[i].len && (int)(now-pq[i].t)>=100){
         if(++pq[i].tr>3) pq[i].len=0; else { arp_request(pq[i].ip); pq[i].t=now; }
     }
+    if(nic==&g_drv&&!n_rx&&net_st!=0){ static u32 t0, last; u32 now2=kticks(); if(!t0) t0=now2;      /* Realtek sin recibir nada en 15 s: reiniciar el chip */
+        if((int)(now2-t0)>1500&&(int)(now2-last)>1500&&g_link()){ last=now2; g_init(g_io); } }
     dhcp_tick(); dns_tick(); tcp_tick(); http_step(); ping_step(); dns_job(); wget_step();
     if(sock_tick_hook) sock_tick_hook();
 }
