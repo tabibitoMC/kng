@@ -337,6 +337,22 @@ static Win *open_app(int type){
 }
 static int ext_is(const FsNode *f,const char *e);
 static const char *ext_of(const char *n);
+static void run_quiet(const char *cmd);
+static int linux_open(FsNode *n){                                  /* 1 si se abrio con un programa de Linux */
+    static const char *OFI[]={"odt","ods","odp","doc","docx","xls","xlsx","ppt","pptx","rtf",0}, *WEB[]={"pdf","svg","webp",0}, *IMG[]={"png","jpg","jpeg","gif","bmp",0};
+    static const char *P_OFI[][2]={{"/usr/bin/libreoffice","libreoffice"},{"/opt/openoffice4/program/soffice","openoffice"},{0,0}};
+    static const char *P_WEB[][2]={{"/usr/bin/chromium","chromium"},{"/usr/bin/brave-browser","brave"},{"/usr/bin/firefox-esr","firefox-esr"},{"/usr/bin/google-chrome-stable","chrome"},{0,0}};
+    static const char *P_IMG[][2]={{"/usr/bin/gimp","gimp"},{"/usr/bin/eog","eog"},{"/usr/bin/ristretto","ristretto"},{"/usr/bin/feh","feh"},{"/usr/bin/chromium","chromium"},{"/usr/bin/firefox-esr","firefox-esr"},{0,0}};
+    const char *(*pp)[2]=0;
+    for(int i=0;OFI[i];i++) if(ext_is(n,OFI[i])) pp=P_OFI;
+    for(int i=0;WEB[i];i++) if(ext_is(n,WEB[i])) pp=P_WEB;
+    for(int i=0;IMG[i];i++) if(ext_is(n,IMG[i])) pp=P_IMG;
+    if(!pp) return 0;
+    for(int i=0;pp[i][0];i++){ FsNode *b=fs_resolve(fs_root(),pp[i][0]); if(!b||b->dir) continue;
+        char c[200]="abrir "; cat(c,sizeof c,pp[i][1]); cat(c,sizeof c," "); { char path[150]; fs_path(n,path,sizeof path); cat(c,sizeof c,path); }
+        run_quiet(c); return 1; }
+    return 0;
+}
 static void open_file(FsNode *n){
     if(n->dir) return;
     int l=k_strlen(n->name);
@@ -344,6 +360,7 @@ static void open_file(FsNode *n){
         Win *b=open_app(A_BROWSER); char u[192]="file://"; char p[80]; fs_path(n,p,sizeof p); cat(u,sizeof u,p); if(b) nav(b,u,1);
     } else if(n->size<NOTEMAX && (ext_is(n,"txt")||ext_is(n,"md")||ext_is(n,"sh")||ext_is(n,"py")||ext_is(n,"c")||ext_is(n,"h")||ext_is(n,"json")||ext_is(n,"css")||ext_is(n,"js")||ext_is(n,"csv")||ext_is(n,"conf")||ext_is(n,"cfg")||ext_is(n,"log")||(!*ext_of(n->name)&&(!n->size||n->data[0]!=0x7f)))){
         Win *nw=open_app(A_NOTES); if(nw){ nw->file=n; nw->nlen=n->size; if(n->size) memcpy(nw->note,n->data,(size_t)n->size); nw->note[nw->nlen]=0; nw->nstat[0]=0; set_title(nw,n->name); dirty=1; }
+    } else if(linux_open(n)){                                       /* documentos de oficina, PDF, imagenes...: con un programa de Linux instalado */
     } else { Win *v=open_app(A_VIEWER); if(v){ v->file=n; v->scroll=0; set_title(v,n->name); } }
 }
 
