@@ -9,7 +9,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Herramientas
-        run: sudo apt-get update && sudo apt-get install -y gcc gcc-multilib binutils grub-pc-bin xorriso mtools python3 debootstrap debian-archive-keyring cpio gzip
+        run: sudo apt-get update && sudo apt-get install -y gcc gcc-multilib binutils grub-pc-bin grub-efi-amd64-bin xorriso mtools dosfstools fdisk python3 debootstrap debian-archive-keyring cpio gzip
       - name: Debian real (cache)
         uses: actions/cache@v4
         with:
