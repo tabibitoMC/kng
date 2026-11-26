@@ -44,7 +44,7 @@ static Win wins[MAXW];
 static void chrome_draw(Win *w,int f); static void chrome_title(Win *w,int f); static void tema_card(int i,int x,int y,int sel);
 static void cuenta_draw(int cx,int oy,int cw); static void cuenta_click(int lx,int y); static int cuenta_key(int c);
 static void tema_aplicar(int t,int guardar); static void dmark_bars(void); static void dmark_dock(void);
-static void xw_draw(Win *w); static void xw_shadow(Win *w,int f); static void launch_set(const char *nm); static void glass_panel(int x,int y,int w,int h,int r); static void aero_clock(int cx,int cy,int R);
+static void xw_draw(Win *w); static void xw_shadow(Win *w,int f); static void xw_corners(const Win *w,int restore); static void launch_set(const char *nm); static void glass_panel(int x,int y,int w,int h,int r); static void aero_clock(int cx,int cy,int R);
 static char ed_suf[96]; static const char *ed_owner;                   /* extension que se conserva al reescribir un nombre (se muestra y se agrega al final) */
 static void fm_edit_done(char *buf,int *len,int max);
 static int open_new;                                               /* open_app: crear otra ventana aunque ya haya una del mismo tipo */
@@ -1192,7 +1192,7 @@ static void draw_window(int wi,int focused){
     Win *w=&wins[wi]; int x=w->x,y=w->y; int focused_cursor=focused;
     (void)x; (void)y;
     if(w->type==A_XWIN&&w->xpop){ xw_draw(w); return; }               /* menu o lista de un programa de Linux: sin marco */
-    if(w->type==A_XWIN&&w->xcsd){ xw_shadow(w,focused); xw_draw(w); return; }   /* programa con su propio marco (Chromium, Brave, GTK) */
+    if(w->type==A_XWIN&&w->xcsd){ xw_shadow(w,focused); if(!w->maxed) xw_corners(w,0); xw_draw(w); if(!w->maxed) xw_corners(w,1); return; }   /* programa con su propio marco (Chromium, Brave, GTK) */
     chrome_draw(w,focused);
 
     int cx,cy,cw,ch; crect(w,&cx,&cy,&cw,&ch);

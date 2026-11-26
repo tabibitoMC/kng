@@ -70,6 +70,19 @@ static void xw_shadow(Win *w,int f){                              /* sombra de l
         if(ESTILO==0&&f) rrect(x-2,y-2,W+4,H+4,6,0xbfe6ff,50); }
     clip_reset();
 }
+/* esquinas redondeadas para las ventanas con marco propio: se guarda lo de debajo y se devuelve fuera del arco */
+#define XR 8
+static uint32_t xr_save[4][XR*XR];
+static void xw_corners(const Win *w,int restore){
+    int X0,Y0,X1,Y1; clip_get(&X0,&Y0,&X1,&Y1);
+    for(int c=0;c<4;c++){ int ox=(c&1)?w->x+w->w-XR:w->x, oy=(c&2)?w->y+w->h-XR:w->y;
+        for(int j=0;j<XR;j++) for(int i=0;i<XR;i++){ int px=ox+i, py=oy+j; if(px<X0||px>=X1||py<Y0||py>=Y1) continue;
+            uint32_t *d=bb+py*gw+px;
+            if(!restore){ xr_save[c][j*XR+i]=*d; continue; }
+            int li=(c&1)?i:XR-1-i, lj=(c&2)?j:XR-1-j, in=0;                  /* distancia al centro del arco (en la esquina) */
+            for(int sy=0;sy<4;sy++) for(int sx=0;sx<4;sx++){ int ex=li*4+sx-0, ey=lj*4+sy-0; if((2*ex+1)*(2*ex+1)+(2*ey+1)*(2*ey+1)<=4*XR*4*XR*4) in++; }
+            if(in<16) *d=mix(xr_save[c][j*XR+i],*d,in*255/16); } }
+}
 static void xw_draw(Win *w){
     int cx,cy,cw,ch; xw_content(w,&cx,&cy,&cw,&ch);
     int pw,ph,st; const unsigned char *b=xw_fb(&pw,&ph,&st);
