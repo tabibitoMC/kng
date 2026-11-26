@@ -181,6 +181,7 @@ static int g_send(const u8 *f,int n){
     return 0;
 }
 static int g_recv(u8 *buf,int max){
+    { u16 st=io_i16((u16)(g_io+0x3E)); if(st) io_o16((u16)(g_io+0x3E),st); }   /* borrar avisos (sin esto algunos chips dejan de recibir) */
     volatile struct gdesc *d=&g_rxd[g_rx_cur];
     if(d->cmd&0x80000000u) return 0;                              /* aun es de la tarjeta */
     u32 c=d->cmd; int n=(int)(c&0x3FFF)-4, bad=((c&0x30000000u)!=0x30000000u)||(c&0x00200000u)||n<14||n>max;
@@ -208,10 +209,14 @@ static int g_init(u16 io){
     io_o32((u16)(io+0x40),0x03000700u);                           /* TxConfig */
     io_o16((u16)(io+0xDA),2047);                                  /* paquete maximo de recepcion */
     io_o8((u16)(io+0xEC),0x3B);
-    io_o32((u16)(io+0x20),(u32)(uintptr_t)g_txd); io_o32((u16)(io+0x24),0);
-    io_o32((u16)(io+0xE4),(u32)(uintptr_t)g_rxd); io_o32((u16)(io+0xE8),0);
+    io_o32((u16)(io+0x24),0); io_o32((u16)(io+0x20),(u32)(uintptr_t)g_txd);   /* parte alta primero (como el driver de Linux) */
+    io_o32((u16)(io+0xE8),0); io_o32((u16)(io+0xE4),(u32)(uintptr_t)g_rxd);
     io_o16((u16)(io+0x3C),0);                                     /* sin interrupciones: se atiende por sondeo */
+    io_o16((u16)(io+0x3E),0xFFFF);
     io_o8((u16)(io+0x37),0x0C);                                   /* recibir y transmitir */
+    io_o32((u16)(io+0x40),0x03000700u);                           /* los 8111 nuevos piden la configuracion con Rx/Tx ya encendidos */
+    io_o32((u16)(io+0x44),0x0000E70Eu);
+    io_o32((u16)(io+0x08),0xFFFFFFFFu); io_o32((u16)(io+0x0C),0xFFFFFFFFu);   /* multidifusion: aceptar todo */
     io_o8((u16)(io+0x50),0x00);
     return 0;
 }
@@ -372,17 +377,23 @@ static void dhcp_in(const u8 *p,int n){
         else if(c==54&&l>=4) sid=rd32(v);
         i+=2+l;
     }
+    if(type==2 && dh_state==4){ my_ip=0; ip_static=0; net_st=1; dh_state=1; }   /* llego un servidor DHCP despues de la reserva */
     if(type==2 && dh_state==1){ dh_offer=rd32(p+16); dh_server=sid; dh_state=2; dh_tries=0; dhcp_send(3); }
     else if(type==5 && dh_state==2){
         my_ip=rd32(p+16); mask=m?m:0xFFFFFF00u; gw=r; dns_ip=d?d:r; dh_state=3; net_st=2; ip_static=0;
     } else if(type==6){ dh_state=1; dh_tries=0; dh_xid+=7; dhcp_send(1); }
 }
 static void dhcp_tick(void){
+    if(dh_state==4){                                    /* con la configuracion de reserva se sigue pidiendo DHCP cada 10 s */
+        if((int)(kticks()-dh_t)<1000) return;
+        if(nic&&nic->link&&!nic->link()){ dh_t=kticks(); return; }
+        dh_xid+=13; dhcp_send(1); return; }
     if(dh_state!=1 && dh_state!=2) return;
     if((int)(kticks()-dh_t)<200) return;
-    if(++dh_tries>=5){                                  /* sin servidor DHCP: configuracion de reserva (red NAT tipica de QEMU) */
+    if(nic&&nic->link&&!nic->link()&&dh_tries<15){ dh_t=kticks(); dh_tries++; return; }   /* el cable aun negocia (PC reales: 2-5 s) */
+    if(++dh_tries>=20){                                 /* sin servidor DHCP: configuracion de reserva (red NAT tipica de QEMU) */
         my_ip=(10u<<24)|(0<<16)|(2<<8)|15; mask=0xFFFFFF00u; gw=(10u<<24)|(2<<8)|2; dns_ip=(10u<<24)|(2<<8)|3;
-        dh_state=4; net_st=2; ip_static=1; return;
+        dh_state=4; net_st=2; ip_static=1; dh_t=kticks(); return;
     }
     if(dh_state==2) { dh_state=1; }
     dhcp_send(1);
@@ -754,7 +765,7 @@ int net_state(void){ return net_st; }
 static void net_start(void){
     my_ip=mask=gw=dns_ip=0; net_st=1; dh_state=1; dh_tries=0; dh_xid=kticks()*2654435761u+0x1234u;
     arp_next=0; memset(arpt,0,sizeof arpt); for(int i=0;i<NPEND;i++) pq[i].len=0;
-    dhcp_send(1);
+    if(nic&&nic->link&&!nic->link()) dh_t=kticks(); else dhcp_send(1);
 }
 int net_init(void){
 #ifdef HOSTNET
@@ -857,11 +868,12 @@ static void wget_step(void){
 }
 int net_cmd(char *l){
     while(*l==' ') l++;
+    if(!k_strcmp(l,"red renovar")){ if(!nic){ kprintf("Sin tarjeta de red compatible.\n"); return 1; } net_start(); kprintf("Pidiendo direccion al router (DHCP)... escribe 'red' en unos segundos.\n"); return 1; }
     if(!k_strcmp(l,"red")||!k_strcmp(l,"ip")||!k_strcmp(l,"ifconfig")){
         if(!nic){ kprintf("Sin tarjeta de red compatible (soportadas: Intel e1000, Realtek RTL8139).\n"); return 1; }
         char m[20]; macstr(m);
         kprintf("Tarjeta: %s  MAC %s  enlace %s\n",nic_desc,m,nic->link&&nic->link()?"activo":"sin senal");
-        if(net_st==2){ kprintf("IP %s  mascara %s  puerta %s  DNS %s%s\n",ipstr(my_ip),ipstr(mask),ipstr(gw),ipstr(dns_ip),ip_static?"  (configuracion de reserva: no hubo DHCP)":""); }
+        if(net_st==2){ kprintf("IP %s  mascara %s  puerta %s  DNS %s%s\n",ipstr(my_ip),ipstr(mask),ipstr(gw),ipstr(dns_ip),ip_static?"  (configuracion de reserva: no hubo DHCP; se sigue intentando, o escribe: red renovar)":""); }
         else kprintf("Esperando respuesta DHCP...\n");
         return 1;
     }
