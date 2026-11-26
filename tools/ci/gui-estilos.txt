@@ -20,7 +20,7 @@ esperar 1
 captura 04-mac-dock-lupa
 raton 671 106
 clic
-raton 400 410
+raton 250 259
 clic
 escribir nick
 tecla tab
@@ -30,7 +30,7 @@ escribir abc
 tecla ret
 esperar 3
 captura 05-cuenta-creada
-raton 200 390
+raton 220 271
 clic
 esperar 2
 captura 06-bloqueada
