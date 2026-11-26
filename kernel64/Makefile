@@ -34,8 +34,7 @@ sock.o: sock.c sock.h $(K)/net.h $(K)/kng.h
 	$(CC) $(KFLAGS) -c $< -o $@
 kernel64.o: kernel64.c $(K)/kng.h $(K)/gui.h $(K)/net.h
 	$(CC) $(KFLAGS) -c $< -o $@
-%.o: $(K)/%.c $(K)/kng.h $(K)/gfx.h $(K)/gui.h $(K)/fs.h $(K)/html.h $(K)/net.h $(K)/disk.h $(K)/kbd.h $(K)/net_pcnet_virtio.h
-gui.o: $(K)/gui_estilo.inc
+%.o: $(K)/%.c $(K)/gui_estilo.inc $(K)/kng.h $(K)/gfx.h $(K)/gui.h $(K)/fs.h $(K)/html.h $(K)/net.h $(K)/disk.h $(K)/kbd.h $(K)/net_pcnet_virtio.h
 	$(CC) $(KFLAGS) -c $< -o $@
 run: kng-kernel64-text.elf
 	qemu-system-x86_64 -kernel kng-kernel64-text.elf -serial stdio -m 256M -netdev user,id=n0 -device e1000,netdev=n0
