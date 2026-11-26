@@ -347,10 +347,11 @@ static void x_start(void){
     if(!find_program("Xvfb",xvfb,sizeof xvfb)){ kprintf("pantalla: falta el servidor X. Instalalo con:  instalar xvfb\n"); return; }
     FsNode *v=fs_find(fs_root(),"var"); FsNode *lib=v?fs_find(v,"lib"):0; if(v&&!lib){ lib=fs_mkdir(v,"lib"); if(lib) lib->sys=1; }
     FsNode *xd=lib?fs_find(lib,"xvfb"):0; if(lib&&!xd){ xd=fs_mkdir(lib,"xvfb"); if(xd) xd->sys=1; }
-    int gw=1280, gh=800; if(gui_mode&&gui_screen_size(&gw,&gh)==0){ gw-=80; gh-=170; if(gw>1600) gw=1600; if(gh>1000) gh=1000; }
+    int gw=1280, gh=800; if(gui_mode) gui_screen_size(&gw,&gh);        /* mismo tamano que la pantalla: cada programa sale en su propia ventana de kng, en el mismo sitio */
     gw&=~7; gh&=~7; if(gw<640) gw=640; if(gh<480) gh=480; x_gw=gw; x_gh=gh;
     char geo[40]; { int n=0; int v1=gw; char t[12]; int k=0; while(v1){ t[k++]=(char)('0'+v1%10); v1/=10; } while(k) geo[n++]=t[--k]; geo[n++]='x'; v1=gh; k=0; while(v1){ t[k++]=(char)('0'+v1%10); v1/=10; } while(k) geo[n++]=t[--k]; const char *e="x24"; while(*e) geo[n++]=*e++; geo[n]=0; }
     char *a[16]; int n=0; a[n++]="Xvfb"; a[n++]=":0"; a[n++]="-screen"; a[n++]="0"; a[n++]=geo; a[n++]="-fbdir"; a[n++]="/var/lib/xvfb"; a[n++]="-ac"; a[n++]="-nolisten"; a[n++]="tcp";
+    { FsNode *tm=fs_find(fs_root(),"tmp"); if(!tm) tm=fs_mkdir(fs_root(),"tmp"); if(tm) fs_create(tm,".kng-sin-wm","1\n",2); }      /* abrir-x: sin matchbox, kng hace de gestor de ventanas */
     kprintf("pantalla: iniciando el servidor X (%s)...\n",geo);
     proc_exec(xvfb,n,a,1);
     if(find_program("kng-xinput",xin,sizeof xin)){ char *b[2]={"kng-xinput",0}; proc_exec(xin,1,b,1); }
@@ -371,12 +372,12 @@ static void cmd_probar_ram(void){
     u64 u,f,m; heap_stats(&u,&f,&m);
     kprintf("probar-ram: %lu MB reservados en %d trozos, direccion mas alta 0x%lx (%lu MB), %lu marcas, %lu errores, heap usado tras liberar %lu B -> %s\n",tot>>20,n,hi,hi>>20,marks,bad,u,bad==0&&n>0?"OK":"FALLO");
 }
-static void cmd_pantalla(void){ if(!x_up) x_start(); if(x_up&&gui_mode) gui_open_xscreen(x_gw,x_gh); }
+static void cmd_pantalla(int ver){ if(!x_up) x_start(); if(x_up&&gui_mode&&ver) gui_open_xscreen(x_gw,x_gh); }   /* 'pantalla ver': toda la pantalla X en una ventana */
 /* abrir <programa> [argumentos]: arranca la pantalla X si hace falta y abre el programa dentro de ella */
 static void cmd_abrir(char *args){
     char *a[40]; int n=tokenize(args,a,38); if(!n){ kprintf("uso: abrir <programa> [argumentos]   (ej: abrir brave)\n"); return; }
     char w[160]; if(!find_program("abrir-x",w,sizeof w)){ kprintf("abrir: falta /usr/local/bin/abrir-x (sistema base incompleto)\n"); return; }
-    cmd_pantalla(); if(!x_up) return;
+    cmd_pantalla(0); if(!x_up) return;
     char *b[42]; b[0]="abrir-x"; for(int i=0;i<n;i++) b[i+1]=a[i]; b[n+1]=0;
     proc_exec(w,n+1,b,1);
 }
@@ -399,7 +400,8 @@ static void run(char *l){
         int v[3]={0,0,0},k=0,neg=0; for(const char *q=l+8;*q&&k<3;q++){ if(*q==' '){ k++; neg=0; } else if(*q=='-') neg=1; else if(*q>='0'&&*q<='9') v[k]=neg?v[k]*10-(*q-'0'):v[k]*10+(*q-'0'); }
         kinput_event(v[0],v[1],v[2]); kprintf("evento enviado %d %d %d\n",v[0],v[1],v[2]); }
     else if(startswith(l,"abrir ")||streq(l,"abrir")) cmd_abrir(l+(l[5]?6:5));
-    else if(streq(l,"pantalla")) cmd_pantalla();
+    else if(streq(l,"pantalla")) cmd_pantalla(0);
+    else if(streq(l,"pantalla ver")) cmd_pantalla(1);
     else if(streq(l,"procesos")||streq(l,"ps")) proc_ps();
     else if(startswith(l,"matar ")){ int pid=0; for(const char *q=l+6;*q>='0'&&*q<='9';q++) pid=pid*10+(*q-'0'); kprintf(proc_kill(pid,9)?"senal enviada\n":"no existe ese proceso\n"); }
     else if(streq(l,"programas")||streq(l,"progs")) proc_list();

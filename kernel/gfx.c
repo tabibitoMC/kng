@@ -235,3 +235,14 @@ void blur_rect(int x,int y,int w,int h,int r){
         for(int j=y0;j<y1;j++) blur_line(bb+j*gw+x0,x1-x0,1,r,tmp);
         for(int i=x0;i<x1;i++) blur_line(bb+y0*gw+i,y1-y0,gw,r,tmp); }
 }
+/* reflejo: la imagen (alfa premultiplicado) volteada de arriba abajo, cada vez mas transparente */
+void blit_pm_reflect(int x,int y,int dw,int dh,const uint32_t *src,int sw,int sh,int alpha){
+    if(dw<=0||dh<=0||alpha<=0) return;
+    int X0=k_max(x,cx0), Y0=k_max(y,cy0), X1=k_min(x+dw,cx1), Y1=k_min(y+dh,cy1);
+    for(int j=Y0;j<Y1;j++){ int sy=sh-1-(j-y)*sh/dh; if(sy<0) sy=0; int al=alpha*(dh-(j-y)*3)/dh; if(al<=0) break;
+        uint32_t *d=&bb[j*gw];
+        for(int i=X0;i<X1;i++){ uint32_t p=src[sy*sw+(i-x)*sw/dw]; int a=(int)(p>>24)*al/255; if(!a) continue;
+            uint32_t o=d[i]; int ia=255-a;
+            int r=(int)((p>>16)&255)*al/255+(int)((o>>16)&255)*ia/255, g=(int)((p>>8)&255)*al/255+(int)((o>>8)&255)*ia/255, b=(int)(p&255)*al/255+(int)(o&255)*ia/255;
+            d[i]=((uint32_t)k_min(r,255)<<16)|((uint32_t)k_min(g,255)<<8)|(uint32_t)k_min(b,255); } }
+}

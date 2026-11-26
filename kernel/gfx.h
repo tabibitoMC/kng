@@ -32,4 +32,5 @@ void rrect_grad(int x,int y,int w,int h,int r,uint32_t c0,uint32_t c1,int a);
 int  text_scaled(int x,int y,const char *s,uint32_t c,int h);   /* texto grande suave, alto h */
 int  text_scaled_w(const char *s,int h);
 void blur_rect(int x,int y,int w,int h,int r);                  /* desenfoca lo ya dibujado (vidrio) */
+void blit_pm_reflect(int x,int y,int dw,int dh,const uint32_t *src,int sw,int sh,int alpha);
 #endif

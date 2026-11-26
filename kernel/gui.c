@@ -9,13 +9,13 @@
 #include "disk.h"
 #include "zip.h"
 
-enum { A_ABOUT, A_BROWSER, A_FILES, A_TERM, A_SETTINGS, A_VIEWER, A_NOTES, A_CALC, A_SNAKE, A_MONITOR, A_XSCR, A_PROGS };
+enum { A_ABOUT, A_BROWSER, A_FILES, A_TERM, A_SETTINGS, A_VIEWER, A_NOTES, A_CALC, A_SNAKE, A_MONITOR, A_XSCR, A_PROGS, A_XWIN };
 #define SGW 20
 #define SGH 16
 #define SCELL 20
 #define NOTEMAX 3000
 #define KNGFS_CAP (2*1024*1024)
-#define MAXW 10
+#define MAXW 24
 #define TB 30
 static int bar_h=28;                                               /* alto de la barra superior (0 en el estilo Windows 11) */
 #define BARH bar_h
@@ -35,6 +35,7 @@ typedef struct {
     long long cacc, ccur; int cop, cfresh, cerr, cdec;                          /* calculadora: valores x10000 (4 decimales); cdec = decimales tecleados (-1 sin punto) */
     int rx, ry, rw, rh, maxed; uint32_t tclick;                                   /* maximizar / ajustar */
     int minim, aopen, vanim, vx0, vy0, vw0, vh0; uint32_t at0, vt0;              /* minimizada; animaciones (abrir, cambio de tamano) */
+    uint32_t xid, xsent, xhash, *xicon; int xpop, xgx, xgy, xgw, xgh, xsx, xsy, xsw, xsh, xiw, xih;   /* ventana de un programa de Linux (gui_xwin.inc) */
     unsigned char sx[SGW*SGH], sy[SGW*SGH]; int slen, sdir, sndir, fx, fy, score, sover, sstart; uint32_t snext, seed;   /* snake */
 } Win;
 
@@ -43,6 +44,7 @@ static Win wins[MAXW];
 static void chrome_draw(Win *w,int f); static void chrome_title(Win *w,int f); static void tema_card(int i,int x,int y,int sel);
 static void cuenta_draw(int cx,int oy,int cw); static void cuenta_click(int lx,int y); static int cuenta_key(int c);
 static void tema_aplicar(int t,int guardar); static void dmark_bars(void); static void dmark_dock(void);
+static void xw_draw(Win *w); static void glass_panel(int x,int y,int w,int h,int r); static void aero_clock(int cx,int cy,int R);
 static char ed_suf[96]; static const char *ed_owner;                   /* extension que se conserva al reescribir un nombre (se muestra y se agrega al final) */
 static void fm_edit_done(char *buf,int *len,int max);
 static int open_new;                                               /* open_app: crear otra ventana aunque ya haya una del mismo tipo */
@@ -145,7 +147,7 @@ static void build_wall(void){
 }
 
 /* ---------------- ventanas ---------------- */
-static int win_top(void){ for(int k=nord-1;k>=0;k--) if(!wins[order[k]].minim) return order[k]; return -1; }
+static int win_top(void){ for(int k=nord-1;k>=0;k--){ Win *w=&wins[order[k]]; if(!w->minim&&!(w->type==A_XWIN&&w->xpop)) return order[k]; } return -1; }
 static void focus(int wi){
     int k=0; while(k<nord && order[k]!=wi) k++;
     if(k==nord) return;
@@ -157,7 +159,7 @@ static void win_close(int wi){
     if(wins[wi].type==A_TERM&&wins[wi].busy){ char kc[32]="matar "; cat_int(kc,sizeof kc,wins[wi].bpid); kshell_exec(kc); wins[wi].busy=0; }
     int k=0; while(k<nord && order[k]!=wi) k++;
     for(;k<nord-1;k++) order[k]=order[k+1];
-    doc_free(&wins[wi]);
+    doc_free(&wins[wi]); if(wins[wi].xicon){ kfree(wins[wi].xicon); wins[wi].xicon=0; }
     nord--; wins[wi].used=0; dirty=1;
 }
 static void set_title(Win *w,const char *t){ k_strcpy(w->title,t,sizeof w->title); }
@@ -323,6 +325,7 @@ static Win *open_app(int type){
     case A_MONITOR:  w->w=420; w->h=TB+1+300; set_title(w,"Monitor del sistema"); break;
     case A_PROGS:    w->w=600; w->h=k_min(TB+1+560,gh-BARH-100); set_title(w,"Programas de Linux"); break;
     case A_XSCR:     w->xw=xs_w; w->xh=xs_h; w->w=w->xw+2; w->h=w->xh+TB+1; set_title(w,"Pantalla X (programas de Linux)"); w->xlx=w->xly=-1; break;
+    case A_XWIN:     w->w=402; w->h=300+TB+1; set_title(w,"Programa de Linux"); break;
     case A_SNAKE:    w->w=SGW*SCELL+2; w->h=TB+1+34+SGH*SCELL; set_title(w,"Snake"); snake_reset(w); break;
     }
     w->x=60+off+(gw>800?60:0); w->y=BARH+24+off;
@@ -784,9 +787,20 @@ static void snake_tick(uint32_t t){
 
 /* ---------------- dibujo comun ---------------- */
 static void button(int x,int y,int w,int h,const char *label,int primary){
-    rrect(x,y,w,h,6,0xffffff,primary?40:20); rrect(x+1,y+1,w-2,h-2,5,primary?ACCENT:C_BTN,255);
-    clip_set(x+1,y+1,w-2,h/2); rrect(x+1,y+1,w-2,h-2,5,0xffffff,14); clip_reset();
-    text(x+(w-text_w(label))/2,y+(h-16)/2,label,0xffffff);
+    int X0,Y0,X1,Y1; clip_get(&X0,&Y0,&X1,&Y1); int tx=x+(w-text_w(label))/2, ty=y+(h-16)/2;
+    if(ESTILO==0){                                                  /* Aero: boton de gel con brillo */
+        rrect(x,y,w,h,7,0x0b2e55,210);
+        rrect_grad(x+1,y+1,w-2,h-2,6,primary?mix(0x9fdcff,ACCENT,60):0x7da3cc,primary?mix(0x1060c0,ACCENT,90):0x1f3d62,255);
+        clip_set(x,y,w,h/2); rrect(x+1,y+1,w-2,h-2,6,0xffffff,primary?85:55); clip_set(X0,Y0,X1-X0,Y1-Y0);
+        fill(x+6,y+h-3,w-12,1,0x9ff0ff,primary?120:60);
+        text(tx+1,ty+1,label,0x061c38);
+    } else if(ESTILO==1){                                           /* Windows 11: plano */
+        rrect(x,y,w,h,5,primary?ACCENT:0x3c3c3c,255); rrect(x+1,y+1,w-2,h-2,4,primary?ACCENT:0x2d2d2d,255);
+        if(!primary) fill(x+4,y+h-1,w-8,1,0x000000,90);
+    } else {                                                        /* Mac */
+        rrect_grad(x,y,w,h,6,primary?mix(ACCENT,0xffffff,50):0x606062,primary?ACCENT:0x4a4a4c,255); fill(x+5,y+1,w-10,1,0xffffff,primary?70:40);
+    }
+    text(tx,ty,label,0xffffff);
 }
 static void draw_folder(int x,int y){ rrect(x,y+2,10,6,2,0xe0a62d,255); rrect(x,y+5,22,14,3,0xf5b83d,255); }
 static void draw_doc(int x,int y){ rrect(x+2,y+1,16,20,2,0xe8eaf4,255); fill(x+5,y+8,10,1,0x8a8fa8,255); fill(x+5,y+12,10,1,0x8a8fa8,255); fill(x+5,y+16,7,1,0x8a8fa8,255); }
@@ -1013,11 +1027,12 @@ static int mu_item_at(int px,int py){
 static void mu_draw(void){
     if(!mu_open) return;
     for(int i=3;i>=1;i--) rrect(mu_x-i,mu_y-i+3,mu_w+2*i,mu_h+2*i,10+i,0x000000,22);
-    rrect(mu_x,mu_y,mu_w,mu_h,9,C_BORDER,255); rrect(mu_x+1,mu_y+1,mu_w-2,mu_h-2,8,0x1b1d30,255);
+    if(ESTILO==0) glass_panel(mu_x,mu_y,mu_w,mu_h,9); else { rrect(mu_x,mu_y,mu_w,mu_h,9,C_BORDER,255); rrect(mu_x+1,mu_y+1,mu_w-2,mu_h-2,8,ESTILO==1?0x2b2b2b:0x242426,255); }
     int y=mu_y+4;
     for(int i=0;i<mu_n;i++){ int h=mu_ih(i);
         if(!mu_it[i].act) fill(mu_x+10,y+4,mu_w-20,1,0xffffff,30);
-        else { if(i==mu_hover) rrect(mu_x+4,y,mu_w-8,h,6,ACCENT,200); text(mu_x+16,y+4,mu_it[i].l,i==mu_hover?0xffffff:C_TXT); }
+        else { if(i==mu_hover){ if(ESTILO==0){ rrect(mu_x+4,y,mu_w-8,h,6,0xffffff,150); rrect_grad(mu_x+5,y+1,mu_w-10,h-2,5,0xd8f2ff,0x7cc4f2,230); } else rrect(mu_x+4,y,mu_w-8,h,6,ACCENT,200); }
+            if(ESTILO==0){ text(mu_x+17,y+5,mu_it[i].l,0x06203f); } text(mu_x+16,y+4,mu_it[i].l,ESTILO==0&&i==mu_hover?0x06203f:(i==mu_hover?0xffffff:C_TXT)); }
         y+=h; }
 }
 static void mu_exec(int i){
@@ -1159,6 +1174,7 @@ static int set_resolution(int w,int h){
 static void draw_window(int wi,int focused){
     Win *w=&wins[wi]; int x=w->x,y=w->y; int focused_cursor=focused;
     (void)x; (void)y;
+    if(w->type==A_XWIN&&w->xpop){ xw_draw(w); return; }               /* menu o lista de un programa de Linux: sin marco */
     chrome_draw(w,focused);
 
     int cx,cy,cw,ch; crect(w,&cx,&cy,&cw,&ch);
@@ -1177,6 +1193,7 @@ static void draw_window(int wi,int focused){
         for(int r=0;r<TH;r++){ char u[TW*2+1]; l1_to_utf8((unsigned char*)w->grid[r],TW,u); text(cx,cy+r*16,u,0xd6dbe8); }
         if(focused && ((kticks()/50)&1)) fill(cx+w->tc*8,cy+w->tr*16+13,8,3,ACCENT,255);
         break; }
+    case A_XWIN: clip_reset(); xw_draw(w); break;
     case A_XSCR:{
         FsNode *xf=fs_resolve(fs_root(),"/var/lib/xvfb/Xvfb_screen0");
         fill(cx,cy,cw,ch,0x000000,255);
@@ -1412,8 +1429,14 @@ static void dock_geom(int *bx,int *by,int *bw,int *bh);
 static const int DOCK_APP[NDOCK]={A_ABOUT,A_BROWSER,A_FILES,A_TERM,A_NOTES,A_CALC,A_SNAKE,A_SETTINGS,A_MONITOR,A_PROGS};
 static const char *DOCK_LBL[NDOCK]={"Inicio","Navegador","Archivos","Terminal","Notas","Calculadora","Snake","Ajustes","Monitor","Programas"};
 static void draw_icon(int i,int x,int y){
-    if(ESTILO==0){ rrect(x,y,TILE,TILE,13,0xffffff,120); rrect_grad(x+1,y+1,TILE-2,TILE-2,12,0x3d8fd8,0x0d3770,255);
-        clip_set(x,y,TILE,TILE/2); rrect(x+1,y+1,TILE-2,TILE-2,12,0xffffff,46); clip_reset(); }            /* Aero: vidrio con brillo */
+    if(ESTILO==0&&i==0){ int ox=x+TILE/2, oy=y+TILE/2;                                                     /* Aero: boton de inicio redondo (orbe) */
+        circle(ox,oy,25,0xffffff,150); circle(ox,oy,24,0x07306a,255);
+        for(int k=0;k<10;k++) circle(ox,oy+10-k,14-k,mix(0x30d0ff,0x0b4a9a,k*25),110);
+        clip_set(x,y,TILE,TILE/2); circle(ox,oy-1,22,0xffffff,70); clip_reset();
+        crown(x+12,y+15,28,0xffe08a,0xffffff,255); return; }
+    if(ESTILO==0){ rrect(x,y,TILE,TILE,13,0xffffff,140); rrect_grad(x+1,y+1,TILE-2,TILE-2,12,0x58aef0,0x0b3268,255);
+        rrect(x+5,y+TILE-20,TILE-10,16,8,0x5ff0ff,45);                                                         /* luz desde abajo */
+        clip_set(x,y,TILE,TILE*9/20); rrect(x+1,y+1,TILE-2,TILE-2,12,0xffffff,62); clip_reset(); }            /* Aero: vidrio con brillo */
     else if(ESTILO==2){ rrect_grad(x,y,TILE,TILE,12,0x3a3c44,0x1c1d24,255); rrect(x,y,TILE,TILE,12,0xffffff,14); }   /* Mac: esquinas suaves */
     else if(ESTILO==1){ rrect(x+4,y+4,TILE-8,TILE-8,10,0x2a2d3a,255); }                                               /* Windows: sin baldosa grande */
     else { rrect(x,y,TILE,TILE,13,0x1a1d33,255); clip_set(x,y,TILE,TILE/2); rrect(x,y,TILE,TILE,13,0xffffff,13); clip_reset(); rrect(x,y,TILE,TILE,13,0xffffff,10); }
@@ -1473,12 +1496,15 @@ static void draw_dobj(const DObj *o){
         int lw=text_w(DOCK_LBL[o->kind]); rrect(o->x+o->w/2-lw/2-5,o->y+TILE+6,lw+10,20,6,0x05060c,130);
         text(o->x+o->w/2-lw/2,o->y+TILE+8,DOCK_LBL[o->kind],0xffffff);
     } else if(o->kind==100){
-        rrect(o->x,o->y,o->w,o->h,16,0x05060c,130); rrect(o->x,o->y,o->w,o->h,16,0xffffff,12);
+        glass_panel(o->x,o->y,o->w,o->h,16);
         char t[16]=""; int h=clk_h; if(h<10) cat(t,16,"0"); cat_int(t,16,h); cat(t,16,":"); if(clk_m<10) cat(t,16,"0"); cat_int(t,16,clk_m);
-        { int tw=k_strlen(t)*12; text_big(o->x+(o->w-tw)/2,o->y+22,t,0xffffff); text_big(o->x+(o->w-tw)/2+1,o->y+22,t,0xffffff); }
-        { char z[40]="Zona horaria UTC"; if(tz>=0) cat(z,40,"+"); cat_int(z,40,tz); text(o->x+(o->w-text_w(z))/2,o->y+62,z,C_DIM); }
+        char z[40]="UTC"; if(tz>=0) cat(z,40,"+"); cat_int(z,40,tz);
+        if(ESTILO==0){ aero_clock(o->x+48,o->y+o->h/2,37);                      /* Aero: reloj de aguja como los gadgets de Vista */
+            text_big(o->x+102,o->y+24,t,0x08294d); text_big(o->x+101,o->y+23,t,0xffffff); text_big(o->x+102,o->y+23,t,0xffffff); text(o->x+104,o->y+56,z,0xe6f4ff); }
+        else { int tw=k_strlen(t)*12; text_big(o->x+(o->w-tw)/2,o->y+22,t,0xffffff); text_big(o->x+(o->w-tw)/2+1,o->y+22,t,0xffffff);
+            char zz[48]="Zona horaria "; cat(zz,48,z); text(o->x+(o->w-text_w(zz))/2,o->y+62,zz,C_DIM); }
     } else if(o->kind==101){
-        rrect(o->x,o->y,o->w,o->h,16,0x05060c,130); rrect(o->x,o->y,o->w,o->h,16,0xffffff,12);
+        glass_panel(o->x,o->y,o->w,o->h,16);
         text_bold(o->x+14,o->y+10,"Sistema",0xffffff);
         char b[48]; b[0]=0; cat(b,48,"RAM: "); cat_int(b,48,(int)(kram_kb()/1024)); cat(b,48," MB"); text(o->x+14,o->y+34,b,C_TXT);
         b[0]=0; cat(b,48,"Activo: "); cat_int(b,48,(int)(kticks()/6000)); cat(b,48," min"); text(o->x+14,o->y+54,b,C_TXT);
@@ -1546,7 +1572,9 @@ static void cursor_draw(void){
     cur_x=mx; cur_y=my;
 }
 
+static int rsz;
 #include "gui_estilo.inc"
+#include "gui_xwin.inc"
 
 /* ---------------- render ---------------- */
 static int rect_in(int ax,int ay,int aw,int ah,int bx,int by,int bw,int bh){ return ax>=bx&&ay>=by&&ax+aw<=bx+bw&&ay+ah<=by+bh; }
@@ -1563,13 +1591,14 @@ static void render(void){
     for(int i=0;i<NDO;i++) if(dobj[i].kind>=0 && rect_hit(dobj[i].x-6,dobj[i].y-6,dobj[i].w+12,dobj[i].h+12,x0,y0,rw,rh)) draw_dobj(&dobj[i]);
     { int top=win_top();
     for(int k=0;k<nord;k++){
-        Win *w=&wins[order[k]]; if(w->minim) continue;
+        Win *w=&wins[order[k]]; if(w->minim||(w->type==A_XWIN&&w->xpop)) continue;
         int sx=w->x, sy=w->y, sw=w->w, sh=w->h; win_vis(w,&w->x,&w->y,&w->w,&w->h);          /* durante maximizar/restaurar se dibuja el tamano intermedio */
         if(rect_hit(w->x-14,w->y-10,w->w+28,w->h+32,x0,y0,rw,rh)){
             int hidden=0; for(int j=k+1;j<nord;j++){ Win *o=&wins[order[j]]; if(!o->minim&&!o->vanim&&!o->aopen&&rect_in(w->x-14,w->y-10,w->w+28,w->h+32,o->x,o->y,o->w,o->h)){ hidden=1; break; } }
             if(!hidden){ if(w->aopen) draw_window_anim(order[k],order[k]==top); else draw_window(order[k],order[k]==top); } }
         w->x=sx; w->y=sy; w->w=sw; w->h=sh;
     } }
+    for(int k=0;k<nord;k++){ Win *w=&wins[order[k]]; if(w->type==A_XWIN&&w->xpop&&rect_hit(w->x,w->y,w->w,w->h,x0,y0,rw,rh)) draw_window(order[k],0); }   /* menus de Linux: siempre encima */
     ghosts_draw();
     draw_topbar(); draw_dock();
     if(fd_on){ char g[FS_NAME+4]; k_strcpy(g,fd_name,sizeof g); g[26]=0; int tw=text_w(g)+44;                    /* lo que se esta arrastrando */
@@ -1591,7 +1620,7 @@ void gui_frame(void){
     { for(int i=0;i<nord;i++){ Win *xw=&wins[order[i]]; if(xw->type==A_XSCR&&(int)(t-xw->xnext)>=0){ xw->xnext=t+3; int ng; uint32_t h=xs_sum(&ng); if(h!=xw->xsum||ng!=xw->xnegro){ xw->xsum=h; xw->xnegro=ng; dmark(xw->x+1,xw->y+TB,xw->w-2,xw->h-TB); } } else if(xw->type==A_PROGS&&(int)(t-xw->xnext)>=0){ xw->xnext=t+100; dwin(xw); } } }       /* la pantalla X se redibuja ~30 veces por segundo */
     { static uint32_t lg, nxt; if((int)(t-nxt)>=0){ nxt=t+40; uint32_t g=fs_gen(); if(g!=lg){ lg=g; dsk_sync(); for(int i=0;i<nord;i++) if(wins[order[i]].type==A_FILES) dwin(&wins[order[i]]); } } }
     { static int pc; int on=w_files_editing(); if(on){ int p=(t/50)&1; if(p!=pc){ pc=p; if(dren>=0){ DObj *o=&dobj[dren]; dmark(o->x-40,o->y+TILE,o->w+80,30); } } } }
-    snake_tick(t); kngfs_tick(); anim_tick();
+    snake_tick(t); kngfs_tick(); anim_tick(); xw_tick(t);
     if(bloqueado){ static int pb; int q=(t/50)&1; if(q!=pb){ pb=q; dirty=1; } if(lk_shake&&t-lk_shake<45) dirty=1; }
     else if(set_tab==4&&cf_sel>=0){ static int pc2; int q=(t/50)&1; if(q!=pc2){ pc2=q; int tp=win_top(); if(tp>=0&&wins[tp].type==A_SETTINGS) dwin(&wins[tp]); } }
     if(dirty||dr1x>dr0x) render();
@@ -1687,7 +1716,7 @@ static void app_click(Win *w,int lx,int ly){
         if(w->sover||!w->sstart) snake_key(w,' ');
         break;
     case A_PROGS:
-        if(in_rect(lx,ly,cw-196,8,86,24)){ run_quiet("pantalla"); dirty=1; }
+        if(in_rect(lx,ly,cw-196,8,86,24)){ run_quiet("pantalla ver"); dirty=1; }
         else if(in_rect(lx,ly,cw-100,8,84,24)){ run_in_terminal("actualizar"); }
         else { int cwid=(cw-48)/2; for(int i=0;i<NPAPPS;i++){ int x=16+(i%2)*(cwid+16), y=64+(i/2)*76;
             if(in_rect(lx,ly,x,y,cwid,66)){ if(papp_installed(i)){ char c[80]="abrir "; cat(c,sizeof c,PAPPS[i].cmd); run_quiet(c); } else run_in_terminal(PAPPS[i].inst); dirty=1; return; } }
@@ -1704,6 +1733,9 @@ static void on_press(void){
     if(mu_open){ int i=mu_item_at(mx,my); mu_open=0; dirty=1; if(i>=0) mu_exec(i); return; }
     if(dren>=0) dren_commit();
     int d=dock_hit(mx,my);
+    if(d>=NDOCK){ int wi=dock_xw[d-NDOCK]; Win *w=&wins[wi];               /* programa de Linux: al frente, o minimizar si ya lo esta */
+        if(w->minim){ w->minim=0; w->aopen=1; w->at0=kticks(); focus(wi); } else if(win_top()==wi) win_minimize(wi); else focus(wi);
+        dirty=1; return; }
     if(d>=0){ int had=0; for(int k=0;k<nord;k++) if(wins[order[k]].type==DOCK_APP[d]) had=1;
         open_app(DOCK_APP[d]); if(!had&&ESTILO!=1){ bnc_i=d; bnc_t=kticks(); } dirty=1; return; }
     if(d==-2){ if(ESTILO==1&&mx>gw-170) open_app(A_SETTINGS); return; }
@@ -1812,6 +1844,7 @@ static void mouse_set(int x,int y,int b){
     }
     if(mu_open){ int h=mu_item_at(mx,my); if(h!=mu_hover){ mu_hover=h; dmark(mu_x-6,mu_y-6,mu_w+12,mu_h+12); } }
     if(pressed||rpressed){ char d[48]="[raton] "; cat_int(d,48,mx); cat(d,48,","); cat_int(d,48,my); cat(d,48,pressed?" izq\n":" der\n"); kserial_puts(d); }   /* para las pruebas automaticas */
+    { int xh=xw_mouse(b,omb); if(xh){ pressed=0; rpressed=0; } }      /* clic dentro de un programa de Linux */
     if(pressed) on_press();
     if(rpressed) on_rpress();
 }
@@ -1822,7 +1855,7 @@ void gui_rawkey(int byte){                                       /* bytes crudos
     if(e0){ e0=0; switch(sc){ case 0x1C: code=96; break; case 0x1D: code=97; break; case 0x35: code=98; break; case 0x38: code=100; break; case 0x47: code=102; break; case 0x48: code=103; break;
             case 0x49: code=104; break; case 0x4B: code=105; break; case 0x4D: code=106; break; case 0x4F: code=107; break; case 0x50: code=108; break; case 0x51: code=109; break;
             case 0x52: code=110; break; case 0x53: code=111; break; case 0x5B: code=125; break; case 0x5C: code=126; break; default: return; } }
-    if(top<0||wins[top].type!=A_XSCR||bloqueado) return;
+    if(top<0||(wins[top].type!=A_XSCR&&wins[top].type!=A_XWIN)||bloqueado) return;
     kinput_event(1,code,down); kinput_event(0,0,0);
 }
 void gui_mouse_abs(int x,int y,int b){ mouse_set(x,y,b); }

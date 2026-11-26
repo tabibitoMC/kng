@@ -22,11 +22,16 @@ static uint32_t wall_px_tema(int v,int x,int y,int W,int H){
         fx_glow(&f,nx,ny,800,70,560,0xffffff,200);
         { int yc=640+isin(nx/4+40)*120/1024, d=iabs(ny-yc); if(d<70){ int k=(70-d)*(70-d)*4096/4900; fx_mix(&f,0xffffff,k*90/255); } }
         { int yc=700+isin(nx/4+60)*100/1024, d=iabs(ny-yc); if(d<22){ int k=(22-d)*4096/22; fx_mix(&f,0xe8fbff,k*70/255); } }
+        { int yc=560+isin(nx/3+10)*90/1024, d=iabs(ny-yc); if(d<40){ int k=(40-d)*(40-d)*4096/1600; fx_mix(&f,0x7dffd9,k*55/255); } }   /* aurora verde agua */
+        { static const short SP[9][2]={{640,120},{120,420},{900,180},{330,600},{560,380},{760,520},{210,90},{960,420},{450,240}};      /* destellos */
+          for(int i=0;i<9;i++){ int ddx=iabs(nx-SP[i][0]), ddy=iabs(ny-SP[i][1]);
+              if(ddx<14&&ddy<2) fx_mix(&f,0xffffff,(14-ddx)*200); else if(ddy<14&&ddx<2) fx_mix(&f,0xffffff,(14-ddy)*200); else if(ddx<4&&ddy<4) fx_mix(&f,0xffffff,3000); } }
         fx_glow(&f,nx,ny,160,1200,640,0x67d14a,245); fx_glow(&f,nx,ny,780,1260,760,0x24a148,245); fx_glow(&f,nx,ny,480,1300,520,0x9be86a,160);
         for(int i=0;i<12;i++){ int px=BUB[i][0]*W/1024, py=BUB[i][1]*H/1024, R=BUB[i][2]*H/1024; int dx=x-px, dy=y-py, d2=dx*dx+dy*dy, R2=R*R;
             if(R<2||d2>=R2) continue;
             int t=d2*256/R2, a=t>180?30+(t-180)*2:16; if(t>245) a=a*(256-t)/11;     /* borde mas brillante, suavizado */
             fx_mix(&f,0xffffff,a*16);
+            if(t>200){ uint32_t rc=dx>0?(dy>0?0xff9ad5:0xfff3a0):(dy>0?0x9affc8:0xa0e8ff); fx_mix(&f,rc,(t-200)*40); }   /* borde tornasolado */
             int hx=dx+R*2/5, hy=dy+R*2/5, hr=R/3, h2=hx*hx+hy*hy, hr2=hr*hr; if(hr>0&&h2<hr2) fx_mix(&f,0xffffff,(hr2-h2)*2900/hr2); }
     } else if(v==4){                                              /* Windows 11: "flor" azul sobre fondo oscuro */
         f=fx_of(0x081430); fx_mix(&f,0x0d2a66,k_min(4096,ny*4)); fx_glow(&f,nx,ny,512,600,760,0x1d4ed8,210);
@@ -57,7 +62,7 @@ static uint32_t wall_px_tema(int v,int x,int y,int W,int H){
 }
 
 /* ---------------- cambio de tema y ajustes guardados ---------------- */
-static int dock_res(void){ return ESTILO==1?48:86; }               /* alto que se deja libre abajo al maximizar */
+static int dock_res(void){ return ESTILO==1?48:ESTILO==0?100:86; }               /* alto que se deja libre abajo al maximizar */
 static uint32_t *icache[NDOCK]; static int icache_ok;              /* iconos del dock ya dibujados (alfa premultiplicado) */
 static void tema_set(int t){ if(t<0||t>=NTEMAS) return; tema=t; acc_i=-1; wall_i=TM->fondo; bar_h=ESTILO==1?0:28; icache_ok=0; }
 static void tema_aplicar(int t,int guardar){
@@ -103,51 +108,83 @@ static void icon_at(int i,int x,int y,int s,int a){
 }
 
 /* ---------------- dock (Aero y Mac) o barra de tareas (Windows 11) ---------------- */
+/* Los primeros NDOCK iconos son los programas de kng; despues van los programas de Linux abiertos (gui_xwin.inc). */
+#define XW_EXTRA 8
+static int xw_count_dock(int *idx);
 typedef struct { int x,y,s; } DSlot;
-static DSlot dsl[NDOCK]; static int dbx,dby,dbw,dbh;
+static DSlot dsl[NDOCK+XW_EXTRA]; static int dbx,dby,dbw,dbh, dock_n=NDOCK, dock_xw[XW_EXTRA];
 static int bnc_i=-1; static uint32_t bnc_t;                        /* icono que rebota al abrir un programa */
+static int dock_count(void){ dock_n=NDOCK+xw_count_dock(dock_xw); return dock_n; }
+static int dock_bh(void){ return ESTILO==0?TILE+30:TILE+16; }        /* Aero: repisa mas alta para el reflejo */
+static int dock_itop(void){ return ESTILO==0?6:8; }
 static int dock_near(void){
-    int bw0=NDOCK*TILE+(NDOCK-1)*14+28, bx0=(gw-bw0)/2, by0=gh-(TILE+16)-10;
+    int n=dock_n, bw0=n*TILE+(n-1)*14+28, bx0=(gw-bw0)/2, by0=gh-dock_bh()-10;
     return mx>=bx0-20&&mx<bx0+bw0+20&&my>=by0-34&&my<gh;
 }
 static void dock_layout(void){
-    if(ESTILO==1){ int S=36, G=10, tot=NDOCK*S+(NDOCK-1)*G, x0=(gw-tot)/2;
+    int n=dock_count();
+    if(ESTILO==1){ int S=36, G=10, tot=n*S+(n-1)*G+(n>NDOCK?14:0), x0=(gw-tot)/2;
         dbx=0; dby=gh-48; dbw=gw; dbh=48;
-        for(int i=0;i<NDOCK;i++){ dsl[i].x=x0+i*(S+G); dsl[i].y=dby+6; dsl[i].s=S; }
+        for(int i=0;i<n;i++){ dsl[i].x=x0+i*(S+G)+(i>=NDOCK?14:0); dsl[i].y=dby+6; dsl[i].s=S; }
         return; }
-    int bh=TILE+16, by=gh-bh-10, s[NDOCK], tot=0, near=dock_near()&&!mu_open&&drag<0&&!bloqueado;
-    int bw0=NDOCK*TILE+(NDOCK-1)*14+28, bx0=(gw-bw0)/2;
+    int bh=dock_bh(), by=gh-bh-10, s[NDOCK+XW_EXTRA], tot=0, near=dock_near()&&!mu_open&&drag<0&&!bloqueado;
+    int bw0=n*TILE+(n-1)*14+28, bx0=(gw-bw0)/2, it=dock_itop();
     int gmax=ESTILO==2?30:12, rad=ESTILO==2?150:110;
-    for(int i=0;i<NDOCK;i++){ int c=bx0+14+i*(TILE+14)+TILE/2, g=0;
+    for(int i=0;i<n;i++){ int c=bx0+14+i*(TILE+14)+TILE/2, g=0;
         if(near){ int d=iabs(mx-c); if(d<rad) g=gmax*(1024+icos(d*128/rad))/2048; }
         s[i]=TILE+g; tot+=s[i]; }
-    int bw=tot+(NDOCK-1)*14+28, bx=(gw-bw)/2, x=bx+14;
+    int bw=tot+(n-1)*14+28, bx=(gw-bw)/2, x=bx+14;
     if(near){                                                     /* el punto bajo el raton se queda quieto al ampliar */
         int rel=mx-(bx0+7), j=rel/(TILE+14), f=rel%(TILE+14);
-        if(rel<0){ j=0; f=0; } if(j>=NDOCK){ j=NDOCK-1; f=TILE+14; }
+        if(rel<0){ j=0; f=0; }
+        if(j>=n){ j=n-1; f=TILE+14; }
         int mp=0; for(int i=0;i<j;i++) mp+=s[i]+14; mp+=f*(s[j]+14)/(TILE+14);
         x=mx-mp+7; bx=x-14; }
     uint32_t t=kticks();
-    for(int i=0;i<NDOCK;i++){ int up=0;
+    for(int i=0;i<n;i++){ int up=0;
         if(i==bnc_i&&t-bnc_t<70){ int e=(int)(t-bnc_t); up=iabs(isin(e*256/35))*16/1024*(70-e)/70; }
-        dsl[i].x=x; dsl[i].s=s[i]; dsl[i].y=by+8+TILE-s[i]-up; x+=s[i]+14; }
+        dsl[i].x=x; dsl[i].s=s[i]; dsl[i].y=by+it+TILE-s[i]-up; x+=s[i]+14; }
     dbx=bx; dby=by; dbw=bw; dbh=bh;
 }
 __attribute__((unused)) static void dock_base_center(int i,int *x,int *y){                 /* centro del icono sin ampliar (pruebas automaticas) */
     if(ESTILO==1){ dock_layout(); *x=dsl[i].x+dsl[i].s/2; *y=dsl[i].y+dsl[i].s/2; return; }
-    int bw0=NDOCK*TILE+(NDOCK-1)*14+28, bx0=(gw-bw0)/2, by0=gh-(TILE+16)-10; *x=bx0+14+i*(TILE+14)+TILE/2; *y=by0+8+TILE/2;
+    int n=dock_count(), bw0=n*TILE+(n-1)*14+28, bx0=(gw-bw0)/2, by0=gh-dock_bh()-10; *x=bx0+14+i*(TILE+14)+TILE/2; *y=by0+dock_itop()+TILE/2;
 }
 static void dock_geom(int *bx,int *by,int *bw,int *bh){ dock_layout(); *bx=dbx; *by=dby; *bw=dbw; *bh=dbh; }
-static void dmark_dock(void){ if(ESTILO==1) dmark(0,gh-90,gw,90); else dmark(0,gh-190,gw,190); }
+static void dmark_dock(void){ if(ESTILO==1) dmark(0,gh-90,gw,90); else dmark(0,gh-200,gw,200); }
 static void dmark_bars(void){ dmark(0,0,gw,BARH); dmark_dock(); }
 static int dock_hit(int px,int py){
     dock_layout();
     if(ESTILO==1){ if(py<dby) return -1;
-        for(int i=0;i<NDOCK;i++) if(px>=dsl[i].x-5&&px<dsl[i].x+dsl[i].s+5) return i;
+        for(int i=0;i<dock_n;i++) if(px>=dsl[i].x-5&&px<dsl[i].x+dsl[i].s+5) return i;
         return -2; }
-    for(int i=0;i<NDOCK;i++) if(in_rect(px,py,dsl[i].x-7,dsl[i].y-4,dsl[i].s+14,dby+dbh-dsl[i].y+4)) return i;
+    for(int i=0;i<dock_n;i++) if(in_rect(px,py,dsl[i].x-7,dsl[i].y-4,dsl[i].s+14,dby+dbh-dsl[i].y+4)) return i;
     if(in_rect(px,py,dbx,dby,dbw,dbh)) return -2;                        /* sobre el dock, pero entre iconos */
     return -1;
+}
+static const char *dock_label(int i){ return i<NDOCK?DOCK_LBL[i]:wins[dock_xw[i-NDOCK]].title; }
+static int dock_running(int i,int *act){
+    int top=win_top(); *act=0;
+    if(i>=NDOCK){ *act=dock_xw[i-NDOCK]==top; return 1; }
+    int run=0; for(int k=0;k<nord;k++) if(wins[order[k]].type==DOCK_APP[i]){ run=1; if(order[k]==top) *act=1; }
+    return run;
+}
+static void xicon_draw(const Win *w,int x,int y,int S,int a){      /* icono de un programa de Linux (el suyo o una letra) */
+    if(w->xicon){ int m=S/12; blit_pm_scaled(x+m,y+m,S-2*m,S-2*m,w->xicon,w->xiw,w->xih,a); return; }
+    uint32_t h=5381; for(const char *q=w->title;*q;q++) h=h*33u+(unsigned char)*q;
+    static const uint32_t PAL[6]={0x2f80ed,0x27ae60,0xeb5757,0xf2994a,0x9b51e0,0x00a3a3};
+    uint32_t c=PAL[h%6]; int m=S/10;
+    rrect_grad(x+m,y+m,S-2*m,S-2*m,S/5,mix(c,0xffffff,100),c,a);
+    char in[2]={w->title[0]?w->title[0]:'L',0}; if(in[0]>='a'&&in[0]<='z') in[0]=(char)(in[0]-32);
+    int th=S/2; text_scaled(x+(S-th/2)/2,y+(S-th)/2,in,0xffffff,th);
+}
+static void dock_icon(int i,int x,int y,int S,int a){ if(i<NDOCK) icon_at(i,x,y,S,a); else xicon_draw(&wins[dock_xw[i-NDOCK]],x,y,S,a); }
+static void dock_tip(int i,int cx,int ly){
+    char lb[40]; k_strcpy(lb,dock_label(i),sizeof lb); int lw=text_w(lb)+16, lx=k_max(4,k_min(gw-lw-4,cx-lw/2));
+    if(ESTILO==2){ rrect(lx,ly,lw,24,6,0x2a2a2c,235); rrect(lx,ly,lw,24,6,0xffffff,20); }
+    else if(ESTILO==1){ rrect(lx,ly,lw,26,6,0x2b2b2b,240); rrect(lx,ly,lw,26,6,0xffffff,14); ly+=1; }
+    else { rrect(lx,ly,lw,24,8,0xffffff,170); rrect_grad(lx+1,ly+1,lw-2,22,7,0x5fb0f0,0x165aa8,240); clip_set(lx,ly,lw,12); rrect(lx+1,ly+1,lw-2,22,7,0xffffff,60); clip_reset(); text(lx+9,ly+5,lb,0x08294d); }
+    text(lx+8,ly+4,lb,0xffffff);
 }
 static void clock_str(char *t){
     int h=clk_h; t[0]=0;
@@ -185,31 +222,60 @@ static void draw_dock(void){
     icon_cache_build(); dock_layout();
     if(ESTILO==1){                                                /* barra de tareas de Windows 11 */
         blur_rect(0,dby,gw,dbh,8); fill(0,dby,gw,dbh,0x1b1b1f,200); fill(0,dby,gw,1,0xffffff,26);
-        int top=win_top();
-        for(int i=0;i<NDOCK;i++){ int x=dsl[i].x, y=dsl[i].y, S=dsl[i].s, run=0, act=0;
-            for(int k=0;k<nord;k++) if(wins[order[k]].type==DOCK_APP[i]){ run=1; if(order[k]==top) act=1; }
+        for(int i=0;i<dock_n;i++){ int x=dsl[i].x, y=dsl[i].y, S=dsl[i].s, act, run=dock_running(i,&act);
             if(hover==i||act) rrect(x-5,y-4,S+10,S+8,6,0xffffff,act?26:18);
-            icon_at(i,x,y,S,255);
-            if(run) rrect(x+S/2-(act?9:3),dby+dbh-5,act?18:6,3,1,act?ACCENT:0x9a9a9a,255);
-            if(hover==i){ int lw=text_w(DOCK_LBL[i])+16; int lx=k_max(4,x+S/2-lw/2); rrect(lx,dby-34,lw,26,6,0x2b2b2b,240); rrect(lx,dby-34,lw,26,6,0xffffff,14); text(lx+8,dby-29,DOCK_LBL[i],0xffffff); } }
+            dock_icon(i,x,y,S,255);
+            if(run) rrect(x+S/2-(act?9:3),dby+dbh-5,act?18:6,3,1,act?ACCENT:0x9a9a9a,255); }
+        if(dock_n>NDOCK) fill(dsl[NDOCK].x-12,dby+12,1,dbh-24,0xffffff,40);
+        if(hover>=0&&hover<dock_n) dock_tip(hover,dsl[hover].x+dsl[hover].s/2,dby-34);
         char t[16]; clock_str(t); int tw=text_w(t); text(gw-14-tw,dby+16,t,0xffffff);
         tray_draw(gw-24-tw,dby+dbh/2,0xd0d0d0);
         return; }
     blur_rect(dbx+4,dby,dbw-8,dbh,6);
-    if(ESTILO==0){                                                /* Aero: vidrio con brillo */
-        rrect(dbx,dby,dbw,dbh,16,0xffffff,80); rrect(dbx+1,dby+1,dbw-2,dbh-2,15,0x2c86d8,115);
-        clip_set(dbx,dby,dbw,dbh/2); rrect(dbx+1,dby+1,dbw-2,dbh-2,15,0xffffff,52); clip_reset();
-        fill(dbx+16,dby+1,dbw-32,1,0xffffff,150);
+    if(ESTILO==0){                                                /* Aero: repisa de vidrio con brillo y reflejo de los iconos */
+        rrect(dbx,dby,dbw,dbh,18,0xffffff,110);
+        rrect_grad(dbx+1,dby+1,dbw-2,dbh-2,17,0x7cc6f5,0x1c5ea8,135);
+        clip_set(dbx,dby,dbw,dbh*2/5); rrect(dbx+1,dby+1,dbw-2,dbh-2,17,0xffffff,58); clip_reset();
+        fill(dbx+18,dby+1,dbw-36,1,0xffffff,190);
+        rrect(dbx+10,dby+dbh-20,dbw-20,12,6,0x9ff0ff,38);                     /* luz de la repisa */
+        clip_set(dbx+2,dby+6+TILE+1,dbw-4,dbh-TILE-8);
+        for(int i=0;i<dock_n;i++){ int x=dsl[i].x, S=dsl[i].s, ry=dby+6+TILE+1;           /* reflejo: el icono al reves, desvaneciendose */
+            if(i<NDOCK&&icache_ok&&icache[i]) blit_pm_reflect(x,ry,S,S,icache[i],TILE,TILE,90);
+            else if(i>=NDOCK&&wins[dock_xw[i-NDOCK]].xicon){ const Win *xw=&wins[dock_xw[i-NDOCK]]; blit_pm_reflect(x+S/12,ry,S-S/6,S-S/6,xw->xicon,xw->xiw,xw->xih,90); } }
+        clip_reset();
     } else { rrect(dbx,dby,dbw,dbh,18,0xffffff,46); rrect(dbx+1,dby+1,dbw-2,dbh-2,17,0x262628,150); }
-    for(int i=0;i<NDOCK;i++){ int x=dsl[i].x, y=dsl[i].y, S=dsl[i].s;
-        if(ESTILO==0&&hover==i) rrect(x-4,y-4,S+8,S+8,15,0xffffff,60);
-        icon_at(i,x,y,S,255);
-        for(int k=0;k<nord;k++) if(wins[order[k]].type==DOCK_APP[i]){ if(ESTILO==2) circle(x+S/2,dby+dbh-4,2,0xdddddd,255); else rrect(x+S/2-8,dby+dbh-5,16,3,1,0xffffff,230); break; }
-        if(hover==i){ int lw=text_w(DOCK_LBL[i])+16, lx=x+S/2-lw/2, ly=y-32;
-            if(ESTILO==2){ rrect(lx,ly,lw,24,6,0x2a2a2c,235); rrect(lx,ly,lw,24,6,0xffffff,20); }
-            else { rrect(lx,ly,lw,24,7,0xffffff,120); rrect(lx+1,ly+1,lw-2,22,6,0x1b5fa8,215); }
-            text(lx+8,ly+4,DOCK_LBL[i],0xffffff); }
+    if(dock_n>NDOCK){ int sx=dsl[NDOCK].x-8; fill(sx,dby+10,1,dbh-20,ESTILO==0?0xffffff:0xffffff,ESTILO==0?120:50); }
+    for(int i=0;i<dock_n;i++){ int x=dsl[i].x, y=dsl[i].y, S=dsl[i].s, act, run=dock_running(i,&act);
+        if(ESTILO==0&&(hover==i||act)){ rrect(x-5,y-5,S+10,S+10,16,0xffffff,hover==i?70:34); if(hover==i) circle(x+S/2,dby+dbh-6,S/3,0xbff4ff,40); }
+        dock_icon(i,x,y,S,255);
+        if(run){ if(ESTILO==2) circle(x+S/2,dby+dbh-4,2,0xdddddd,255); else { rrect(x+S/2-10,dby+dbh-6,20,4,2,0xffffff,act?250:150); circle(x+S/2,dby+dbh-4,6,0xbff4ff,act?70:30); } }
     }
+    if(hover>=0&&hover<dock_n) dock_tip(hover,dsl[hover].x+dsl[hover].s/2,dsl[hover].y-32);
+}
+
+/* ---------------- paneles de vidrio (widgets, menus) y reloj de aguja ---------------- */
+static void glass_panel(int x,int y,int w,int h,int r){
+    int X0,Y0,X1,Y1; clip_get(&X0,&Y0,&X1,&Y1);
+    blur_rect(x,y,w,h,6);
+    if(ESTILO==0){
+        rrect(x,y,w,h,r,0xffffff,150); rrect_grad(x+1,y+1,w-2,h-2,r-1,0x5fb0ee,0x123f80,190);
+        clip_set(x,y,w,h*2/5); rrect(x+1,y+1,w-2,h-2,r-1,0xffffff,62); clip_set(X0,Y0,X1-X0,Y1-Y0);
+        fill(x+r,y+1,w-2*r,1,0xffffff,200); rrect(x+8,y+h-14,w-16,8,4,0xbff4ff,40);
+    } else if(ESTILO==1){ rrect(x,y,w,h,r,0xffffff,22); rrect(x+1,y+1,w-2,h-2,r-1,0x202024,205); }
+    else { rrect(x,y,w,h,r,0xffffff,34); rrect(x+1,y+1,w-2,h-2,r-1,0x1c1c1e,175); }
+}
+static void aero_clock(int cx,int cy,int R){
+    circle(cx,cy+2,R+2,0x000000,50);
+    circle(cx,cy,R+1,0x0b3a6e,255); circle(cx,cy,R,0xd8eefc,255);
+    for(int k=0;k<6;k++) circle(cx-k,cy-k,R-4-k*3,mix(0xffffff,0xb7dcf5,k*40),255);   /* cara con degradado */
+    for(int i=0;i<12;i++){ int a=i*256/12, c=icos(a), s=isin(a), l=i%3?4:8;
+        line(cx+s*(R-3)/1024,cy-c*(R-3)/1024,cx+s*(R-3-l)/1024,cy-c*(R-3-l)/1024,i%3?1:2,0x173a63,255); }
+    int ah=(clk_h%12)*256/12+clk_m*256/720, am=clk_m*256/60;
+    line(cx,cy,cx+isin(ah)*(R*5/10)/1024,cy-icos(ah)*(R*5/10)/1024,3,0x10243e,255);
+    line(cx,cy,cx+isin(am)*(R*8/10)/1024,cy-icos(am)*(R*8/10)/1024,2,0x10243e,255);
+    circle(cx,cy,3,0xd23a20,255);
+    int X0,Y0,X1,Y1; clip_get(&X0,&Y0,&X1,&Y1);                    /* brillo de cristal en la mitad de arriba */
+    clip_set(cx-R,cy-R,2*R,R*9/10); circle(cx,cy-R/6,R*9/10,0xffffff,70); clip_set(X0,Y0,X1-X0,Y1-Y0);
 }
 
 /* ---------------- marco de las ventanas segun el tema ---------------- */
@@ -266,6 +332,14 @@ static void chrome_draw(Win *w,int f){
           if(e==0&&f) rrect(x-2,y-2,W+4,H+4,r+2,0xbfe6ff,40);          /* Aero: halo de luz */
       }
       clip_reset(); }
+    if(e==0){ int F=5;                                             /* Aero: marco grueso de vidrio alrededor de la ventana */
+        for(int bnd=0;bnd<4;bnd++){
+            if(bnd==0) clip_set(x-F,y-F,W+2*F,F); else if(bnd==1) clip_set(x-F,y+H,W+2*F,F);
+            else if(bnd==2) clip_set(x-F,y,F,H); else clip_set(x+W,y,F,H);
+            blur_rect(x-F,y-F,W+2*F,H+2*F,4);
+            rrect_grad(x-F,y-F,W+2*F,H+2*F,r+F,f?0xc6ebff:0xb4cde0,f?0x2f7fd0:0x7393b4,f?175:125);
+            rrect(x-F,y-F,W+2*F,H+2*F,r+F,0xffffff,f?40:20); }
+        clip_reset(); }
     uint32_t bord=f?(e==0?0x1b5a98:e==1?mix(0x3a3a3a,ACCENT,50):0x5c5c5e):TM->border;
     clip_set(x,y+TB,W,H-TB); rrect(x,y,W,H,r,bord,255); rrect(x+1,y+1,W-2,H-2,r-1,C_BG,255); clip_reset();
     clip_set(x,y,W,TB);
@@ -290,8 +364,10 @@ static void chrome_title(Win *w,int f){
     if(e==2){ int tw=text_w(w->title)+(w->type==A_ABOUT?26:0); tx=x+(W-tw)/2; if(tx<x+78) tx=x+78; lim=x+W-10; }
     else { int bx,by,bw,bh; ctl_geom(w,2,&bx,&by,&bw,&bh); tx=x+14; lim=bx-6; }
     if(w->type==A_ABOUT){ crown(tx-2,y+9,18,0xe9c46a,ACCENT,255); tx+=24; }
+    else if(w->type==A_XWIN&&w->xicon&&e!=2){ blit_pm_scaled(tx-2,y+(TB-18)/2,18,18,w->xicon,w->xiw,w->xih,255); tx+=22; }
     clip_set(x+1,y+1,lim-x-1,TB-1);
-    if(e==0){ text_bold(tx+1,y+8,w->title,0x08294d); text_bold(tx,y+7,w->title,f?0xffffff:0xe0ecf6); }
+    if(e==0){ int tw=text_w(w->title)+1; rrect(tx-8,y+6,tw+16,18,9,0xffffff,f?80:40); blur_rect(tx-12,y+2,tw+24,TB-4,4);   /* resplandor detras del titulo */
+        text_bold(tx+1,y+8,w->title,0x08294d); text_bold(tx,y+7,w->title,f?0xffffff:0xe0ecf6); }
     else if(e==1) text(tx,y+7,w->title,f?0xffffff:0x9a9a9a);
     else text_bold(tx,y+7,w->title,f?0xe6e6e6:0x8a8a8c);
     clip_reset();
@@ -378,7 +454,7 @@ static void win_close_anim(int wi){                                /* cerrar: se
 }
 static void win_minimize(int wi){                                  /* minimizar: vuela hacia su icono del dock */
     Win *w=&wins[wi]; int tx=gw/2, ty=gh-30, ts=40;
-    dock_layout(); for(int i=0;i<NDOCK;i++) if(DOCK_APP[i]==w->type){ tx=dsl[i].x+dsl[i].s/2; ty=dsl[i].y+dsl[i].s/2; ts=dsl[i].s; }
+    dock_layout(); for(int i=0;i<dock_n;i++) if(i<NDOCK?DOCK_APP[i]==w->type:dock_xw[i-NDOCK]==wi){ tx=dsl[i].x+dsl[i].s/2; ty=dsl[i].y+dsl[i].s/2; ts=dsl[i].s; }
     int th=ts*w->h/k_max(1,w->w); if(th<8) th=8;
     ghost_new(w->x,w->y,w->w,w->h,tx-ts/2,ty-th/2,ts,th,255,40,A_MINI,1);
     w->minim=1; w->aopen=0;

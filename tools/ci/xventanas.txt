@@ -1,0 +1,11 @@
+# Programas de Linux en ventanas propias del escritorio (sin pantalla X completa)
+600|actualizar
+900|instalar xterm x11-apps
+20|ejecutar /usr/local/bin/abrir-x xterm -e /bin/sh -c "echo HOLA-XTERM; ls /; sleep 600" &
+@esperar 30
+20|ejecutar /usr/local/bin/abrir-x xlogo &
+@esperar 25
+@captura x1
+20|cat /tmp/.kng-xwin
+20|procesos
+60|ejecutar /bin/sh -c "DISPLAY=:0 xwininfo -root -children | head -20"

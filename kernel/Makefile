@@ -18,7 +18,7 @@ boot.o: boot.S
 	$(CC) -m32 -c $< -o $@
 boot-text.o: boot.S
 	$(CC) -m32 -DNOVIDEO -c $< -o $@
-%.o: %.c gui_estilo.inc kng.h gfx.h gui.h fs.h html.h net.h disk.h net_pcnet_virtio.h
+%.o: %.c gui_estilo.inc gui_xwin.inc kng.h gfx.h gui.h fs.h html.h net.h disk.h net_pcnet_virtio.h
 	$(CC) $(KFLAGS) -c $< -o $@
 blob.o: blob.S $(UELF)
 	$(CC) -m32 -c blob.S -o $@

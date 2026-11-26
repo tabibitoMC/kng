@@ -51,7 +51,7 @@ int net_state(void){ return 2; }
 #include "../../kernel/zip.c"
 /* lo que en el kernel real ponen el shell y los procesos */
 int kattach_pid; char kshell_cwd[96]="/"; void (*kproc_done)(int,int); void kproc_key(int c){ (void)c; }
-void kinput_event(int t,int c,int v){ (void)t; (void)c; (void)v; } void kserial_puts(const char *s){ (void)s; }
+static int kev[4096][3], nkev; void kinput_event(int t,int c,int v){ if(nkev<4096){ kev[nkev][0]=t; kev[nkev][1]=c; kev[nkev][2]=v; nkev++; } } void kserial_puts(const char *s){ (void)s; }
 #include "../../kernel/gui.c"
 
 #define W 1024
@@ -221,5 +221,43 @@ int main(void){
       dock(9); shot("50_programas_linux");
       if(ndapps!=2||strcmp(dapps[0].name,"Editor de imagenes GIMP")&&strcmp(dapps[1].name,"Editor de imagenes GIMP")){ printf("%d\n",ndapps); puts("FALLO .desktop"); return 1; }
       puts("DEBIAN OK"); closeall(); }
+    /* programas de Linux en ventanas propias: framebuffer de Xvfb simulado + lista de kng-xinput */
+    { FsNode *r=fs_root(), *n; const char *pp[3]={"var","lib","xvfb"}; FsNode *d=r; for(int i=0;i<3;i++){ n=fs_find(d,pp[i]); d=n?n:fs_mkdir(d,pp[i]); }
+      int hs=104, sz=hs+W*H*4; unsigned char *x=calloc(1,sz);
+      #define PB(o,v) { x[o]=(unsigned char)((v)>>24); x[o+1]=(unsigned char)((v)>>16); x[o+2]=(unsigned char)((v)>>8); x[o+3]=(unsigned char)(v); }
+      PB(0,hs); PB(16,W); PB(20,H); PB(44,32); PB(48,W*4); PB(76,0);
+      uint32_t *px=(uint32_t*)(x+hs);
+      for(int yy=0;yy<H;yy++) for(int xx=0;xx<W;xx++) px[yy*W+xx]=0x000000;
+      FsNode *tm=fs_find(r,"tmp"); if(!tm) tm=fs_mkdir(r,"tmp");
+      FsNode *fbn=fs_create(d,"Xvfb_screen0",(char*)x,sz);
+      /* el programa abre su ventana en 0,0 (sin gestor de ventanas) */
+      const char *l1="kngx 1\n400001 0 0 500 320 0 Editor de imagenes GIMP\n";
+      fs_create(tm,".kng-xwin",l1,(int)strlen(l1)); nkev=0; T+=10; gui_frame();
+      int xi=-1; for(int i=0;i<MAXW;i++) if(wins[i].used&&wins[i].type==A_XWIN) xi=i;
+      if(xi<0){ puts("FALLO ventana X no creada"); return 1; }
+      Win *xw=&wins[xi]; int cx=xw->x+1, cy=xw->y+TB;
+      int ok=0; for(int i=0;i<nkev;i++) if(kev[i][0]==0x30&&kev[i][1]==1&&kev[i][2]==0x400001) ok=1;
+      if(!ok||xw->xsx!=cx||xw->xsy!=cy){ puts("FALLO no se pidio mover la ventana X"); return 1; }
+      /* X la movio: el contenido se pinta (rojo arriba, verde abajo) y aparece un menu emergente */
+      fbn=fs_resolve(r,"/var/lib/xvfb/Xvfb_screen0"); px=(uint32_t*)(fbn->data+hs);
+      for(int yy=cy;yy<cy+320;yy++) for(int xx=cx;xx<cx+500;xx++) px[yy*W+xx]=yy<cy+30?0xdddddd:(xx<cx+120?0xf0f0f0:0x3070c0);
+      for(int yy=cy+30;yy<cy+130;yy++) for(int xx=cx+10;xx<cx+150;xx++) px[yy*W+xx]=0xffffff;
+      char l2[200]; snprintf(l2,sizeof l2,"kngx 1\n400001 %d %d 500 320 0 Editor de imagenes GIMP\n400002 %d %d 140 100 1 \n",cx,cy,cx+10,cy+30);
+      fs_create(tm,".kng-xwin",l2,(int)strlen(l2)); T+=10; gui_frame(); T+=30; gui_frame();
+      { int pi=-1; for(int i=0;i<MAXW;i++) if(wins[i].used&&wins[i].type==A_XWIN&&wins[i].xpop) pi=i; if(pi<0){ puts("FALLO menu emergente"); return 1; } }
+      shot("60_linux_ventana");
+      /* clic dentro: se entrega a X en coordenadas de X */
+      nkev=0; click(cx+200,cy+200);
+      { int got=0; for(int i=0;i+1<nkev;i++) if(kev[i][0]==3&&kev[i][1]==0&&kev[i][2]==cx+200&&kev[i+1][2]==cy+200) got=1; int btn=0; for(int i=0;i<nkev;i++) if(kev[i][0]==1&&kev[i][1]==0x110) btn++;
+        if(!got||btn!=2){ printf("got=%d btn=%d\n",got,btn); puts("FALLO raton a X"); return 1; } }
+      /* arrastrar la barra de titulo: se pide mover la ventana X */
+      nkev=0; gui_mouse_abs(xw->x+200,xw->y+10,0); gui_frame(); gui_mouse_abs(xw->x+200,xw->y+10,1); gui_frame(); gui_mouse_abs(xw->x+260,xw->y+60,1); T+=5; gui_frame(); gui_mouse_abs(xw->x+260,xw->y+60,0); T+=5; gui_frame();
+      if(xw->xsx!=xw->x+1||xw->xsy!=xw->y+TB){ puts("FALLO mover ventana X"); return 1; }
+      dock_layout(); if(dock_n!=NDOCK+1){ puts("FALLO icono en el dock"); return 1; }
+      shot("61_linux_movida");
+      /* el programa se cierra: la ventana de kng desaparece */
+      fs_create(tm,".kng-xwin","kngx 1\n",7); T+=10; gui_frame(); T+=30; gui_frame();
+      for(int i=0;i<MAXW;i++) if(wins[i].used&&wins[i].type==A_XWIN){ puts("FALLO ventana X no se cerro"); return 1; }
+      free(x); puts("VENTANAS LINUX OK"); }
     return 0;
 }

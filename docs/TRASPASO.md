@@ -73,3 +73,16 @@ Estado honesto. "VERIFICADO" = lo ejecuto GitHub Actions arrancando kng en QEMU 
   (Name[es]/Name, Exec sin %U); clic = `abrir <exec>`.
 - kernel64: ptrace/mount -> EPERM, ioprio, rt_tgsigqueueinfo, epoll_pwait2, sched_getattr, io_uring -> ENOSYS sin aviso.
 - Simulador: `python3 tools/dev/hostgui.py` prueba temas, minimizar, tamano, cuenta/bloqueo y .desktop (TEMAS/SESION/DEBIAN OK).
+
+## 26-nov-2026 (2): programas de Linux en ventanas propias + Aero mejorado
+- Ya no hay "Pantalla X" con matchbox: Xvfb mide lo mismo que la pantalla y kng hace de gestor de ventanas.
+  `kng-xinput` (kernel64/user) ahora tambien lista las ventanas X visibles cada 150 ms en `/tmp/.kng-xwin`
+  (`id x y w h emergente titulo`), guarda el icono `_NET_WM_ICON` en `/tmp/.kng-xicon-<id>` y obedece ordenes del
+  escritorio por /dev/input/event0 (tipo 0x31 parametros, 0x30: 1 mover/tamano, 2 al frente+foco, 3 cerrar, 4 matar).
+- `kernel/gui_xwin.inc`: cada ventana X es una ventana de kng (A_XWIN) con su marco, en el dock (icono real), minimizable
+  (se manda fuera de la pantalla X), maximizable y con tamano por bordes. Los menus/listas (override-redirect) se pintan
+  sin marco y encima. El clic en una ventana X la trae al frente antes de entregarlo. `pantalla ver` muestra todo X.
+- `/tmp/.kng-sin-wm` (lo crea el kernel) hace que abrir-x no arranque matchbox.
+- Aero: marco grueso de vidrio, resplandor del titulo, botones de gel, menus y widgets de vidrio, reloj de aguja,
+  orbe de inicio, reflejo de los iconos en la repisa del dock, burbujas tornasoladas, aurora y destellos.
+- Probado: kng-xinput contra Xvfb real (lista, icono, mover, foco, clic, tecla, cerrar); simulador VENTANAS LINUX OK.
